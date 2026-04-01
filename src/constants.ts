@@ -32,7 +32,7 @@ export const VERSION_FILE = path.join(CACHE_DIR, 'version.json');
 
 export const SPEC_KIT_API_URL = 'https://api.github.com/repos/github/spec-kit/releases/latest';
 
-export const SPECS_DIR_NAME = '.specify/specs';
+export const SPECS_DIR_NAME = 'specs';
 export const META_FILE_NAME = '.caramelo-meta.json';
 
 export const PHASE_FILES: Record<string, string> = {

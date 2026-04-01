@@ -88,7 +88,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // CodeLens — phase actions (approve, regenerate, progress bar)
   const phaseActionsProvider = new PhaseActionsCodeLensProvider(workspaceFolder?.uri);
   context.subscriptions.push(
-    vscode.languages.registerCodeLensProvider({ pattern: '**/.specify/specs/**/*.md' }, phaseActionsProvider)
+    vscode.languages.registerCodeLensProvider({ pattern: '**/specs/**/*.md' }, phaseActionsProvider)
   );
 
   // Editor context tracker (sets when-clause contexts for editor/title buttons)
