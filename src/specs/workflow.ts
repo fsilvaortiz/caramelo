@@ -188,6 +188,11 @@ export class WorkflowEngine {
 
     if (phaseType === 'requirements') {
       parts.push(`Feature: ${spec.name}`);
+      // Include Jira context if available
+      const jiraContextPath = path.join(spec.dirPath, 'jira-context.md');
+      if (fs.existsSync(jiraContextPath)) {
+        parts.push(`## Jira Issue Context\n\n${fs.readFileSync(jiraContextPath, 'utf-8')}`);
+      }
     }
 
     if (phaseType === 'design' || phaseType === 'tasks') {

@@ -132,10 +132,21 @@ export class JiraClient {
   }
 
   async getIssue(key: string): Promise<JiraIssue> {
-    const res = await fetch(
-      `${this.instanceUrl}/rest/api/3/issue/${key}?fields=summary,description,status,assignee,comment`,
+    // Try API v2 first (returns description as string), then v3 (returns ADF)
+    const fields = 'summary,description,status,assignee,comment';
+    let res = await fetch(
+      `${this.instanceUrl}/rest/api/2/issue/${key}?fields=${fields}`,
       { headers: this.headers(), signal: AbortSignal.timeout(10000) }
     );
+
+    if (!res.ok) {
+      // Fallback to v3
+      res = await fetch(
+        `${this.instanceUrl}/rest/api/3/issue/${key}?fields=${fields}`,
+        { headers: this.headers(), signal: AbortSignal.timeout(10000) }
+      );
+    }
+
     if (!res.ok) throw new Error(`Failed to fetch issue ${key}: ${res.status}`);
     const data = await res.json() as RawIssue;
     return this.mapIssue(data);
@@ -194,22 +205,40 @@ export class JiraClient {
 }
 
 /**
- * Convert Atlassian Document Format (ADF) JSON to plain text.
- * Walks the tree extracting text nodes.
+ * Convert Atlassian Document Format (ADF) JSON or plain string to text.
  */
 function adfToPlainText(adf: unknown): string {
-  if (!adf || typeof adf !== 'object') return String(adf ?? '');
+  // If it's already a string (API v2), return as-is
+  if (typeof adf === 'string') return adf;
 
-  const node = adf as { type?: string; text?: string; content?: unknown[] };
+  if (!adf || typeof adf !== 'object') return '';
+
+  const node = adf as { type?: string; text?: string; content?: unknown[]; attrs?: Record<string, unknown> };
+
+  // Text node
   if (node.type === 'text' && node.text) return node.text;
+
+  // Mention node
+  if (node.type === 'mention') return `@${(node.attrs?.text as string) ?? 'user'}`;
+
+  // Emoji
+  if (node.type === 'emoji') return (node.attrs?.shortName as string) ?? '';
+
+  // Inline card (links)
+  if (node.type === 'inlineCard') return (node.attrs?.url as string) ?? '';
 
   if (Array.isArray(node.content)) {
     const parts = node.content.map((child) => adfToPlainText(child));
-    // Add newlines for block-level elements
-    const blockTypes = ['paragraph', 'heading', 'bulletList', 'orderedList', 'listItem', 'blockquote'];
+    const blockTypes = ['paragraph', 'heading', 'bulletList', 'orderedList', 'blockquote', 'codeBlock', 'panel', 'table'];
+    const lineTypes = ['listItem', 'tableRow', 'tableCell'];
+
     if (node.type && blockTypes.includes(node.type)) {
+      return parts.join('') + '\n\n';
+    }
+    if (node.type && lineTypes.includes(node.type)) {
       return parts.join('') + '\n';
     }
+    if (node.type === 'hardBreak') return '\n';
     return parts.join('');
   }
 
