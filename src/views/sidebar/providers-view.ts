@@ -215,24 +215,39 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    // Step 2: Fetch boards
+    // Step 2: Fetch ALL boards with pagination
     try {
       console.log('[Caramelo] Jira: fetching boards...');
-      const res = await fetch(`${url}/rest/agile/1.0/board?maxResults=100`, { headers, signal: AbortSignal.timeout(15000) });
-      if (!res.ok) {
-        sendResult(false, { error: `Failed to fetch boards (HTTP ${res.status}). Check permissions.` });
-        return;
-      }
-      const data = await res.json() as { values: Array<{ id: number; name: string; type: string }> };
-      const boards = (data.values || []).map((b) => ({ id: String(b.id), name: b.name, type: b.type }));
-      console.log('[Caramelo] Jira: found', boards.length, 'boards');
+      const allBoards: Array<{ id: string; name: string; type: string }> = [];
+      let startAt = 0;
+      const maxResults = 50;
+      let hasMore = true;
 
-      if (boards.length === 0) {
+      while (hasMore) {
+        const res = await fetch(
+          `${url}/rest/agile/1.0/board?maxResults=${maxResults}&startAt=${startAt}`,
+          { headers, signal: AbortSignal.timeout(15000) }
+        );
+        if (!res.ok) {
+          sendResult(false, { error: `Failed to fetch boards (HTTP ${res.status}). Check permissions.` });
+          return;
+        }
+        const data = await res.json() as { values: Array<{ id: number; name: string; type: string }>; isLast?: boolean; total?: number };
+        const batch = (data.values || []).map((b) => ({ id: String(b.id), name: b.name, type: b.type }));
+        allBoards.push(...batch);
+        startAt += maxResults;
+        hasMore = !data.isLast && batch.length === maxResults;
+      }
+
+      console.log('[Caramelo] Jira: found', allBoards.length, 'boards total');
+
+      if (allBoards.length === 0) {
         sendResult(false, { error: 'Connected but no boards found. Check Jira permissions.' });
         return;
       }
 
-      sendResult(true, { boards });
+      allBoards.sort((a, b) => a.name.localeCompare(b.name));
+      sendResult(true, { boards: allBoards });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       console.error('[Caramelo] Jira boards error:', error);
@@ -333,7 +348,8 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
           <input id="jiraEmail" class="input" placeholder="you@company.com" type="email" />
           <input id="jiraToken" class="input" placeholder="API token (from id.atlassian.com)" type="password" />
           <div id="jiraBoardSection" style="display:none">
-            <select id="jiraBoard" class="input"><option>Select a board...</option></select>
+            <input id="jiraBoardFilter" class="input" placeholder="Filter boards..." oninput="filterBoards()" />
+            <select id="jiraBoard" class="input" size="6"></select>
           </div>
           <button class="btn-primary" id="btnJira" onclick="testJira()" disabled>Enter credentials first</button>
           <div id="jiraStatus" class="form-status"></div>
@@ -469,14 +485,13 @@ window.addEventListener('message', (event) => {
 
     if (statusEl && btnJira) {
       if (msg.success && msg.boards) {
-        statusEl.textContent = '✓ Connected';
+        statusEl.textContent = '✓ Connected (' + msg.boards.length + ' boards)';
         statusEl.style.color = '#4CAF50';
         if (boardSection) boardSection.style.display = 'block';
-        if (boardSelect) {
-          boardSelect.innerHTML = msg.boards.map(b =>
-            '<option value="' + b.id + '" data-name="' + b.name.replace(/"/g, '&quot;') + '">' + b.name + ' (' + b.type + ')</option>'
-          ).join('');
-        }
+        allJiraBoards = msg.boards;
+        filterBoards();
+        const filterInput = document.getElementById('jiraBoardFilter');
+        if (filterInput) filterInput.focus();
         btnJira.textContent = 'Add Jira Provider';
         btnJira.disabled = false;
         btnJira.onclick = function() { submitJira(); };
@@ -491,6 +506,18 @@ window.addEventListener('message', (event) => {
   }
 });
 ` : ''}
+
+let allJiraBoards = [];
+
+function filterBoards() {
+  const filter = (document.getElementById('jiraBoardFilter')?.value || '').toLowerCase();
+  const select = document.getElementById('jiraBoard');
+  if (!select) return;
+  const filtered = filter ? allJiraBoards.filter(b => b.name.toLowerCase().includes(filter)) : allJiraBoards;
+  select.innerHTML = filtered.map(b =>
+    '<option value="' + b.id + '" data-name="' + b.name.replace(/"/g, '&quot;') + '">' + b.name + ' (' + b.type + ')</option>'
+  ).join('');
+}
 
 function testJira() {
   const url = document.getElementById('jiraUrl')?.value || '';
