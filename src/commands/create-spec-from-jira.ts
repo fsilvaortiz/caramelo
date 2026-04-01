@@ -60,33 +60,29 @@ export async function createSpecFromJira(workspaceUri: vscode.Uri | undefined): 
   quickPick.busy = true;
   quickPick.show();
 
-  let debounceTimer: ReturnType<typeof setTimeout>;
+  // Load all issues from board (Agile API) and filter client-side
+  type IssueItem = vscode.QuickPickItem & { issue?: { key: string; summary: string; description: string; acceptanceCriteria: string; comments: string[]; url: string } };
+  let allItems: IssueItem[] = [];
 
-  const loadIssues = async (query?: string) => {
-    quickPick.busy = true;
-    try {
-      const result = await client.searchIssues(query, 50);
-      quickPick.items = result.issues.map((issue) => ({
-        label: `${issue.key}  ${issue.summary}`,
-        description: `${issue.status} — ${issue.assignee}`,
-        detail: issue.description.slice(0, 200),
-        issue,
-      } as vscode.QuickPickItem & { issue: typeof issue }));
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      vscode.window.showErrorMessage(`Failed to load issues: ${msg}`);
-    }
-    quickPick.busy = false;
-  };
+  quickPick.busy = true;
+  try {
+    const result = await client.searchIssues(undefined, 100);
+    allItems = result.issues.map((issue) => ({
+      label: `${issue.key}  ${issue.summary}`,
+      description: `${issue.status} — ${issue.assignee}`,
+      detail: issue.description.slice(0, 200),
+      issue,
+    }));
+    quickPick.items = allItems;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    vscode.window.showErrorMessage(`Failed to load issues: ${msg}`);
+  }
+  quickPick.busy = false;
 
-  // Initial load
-  await loadIssues();
-
-  // Dynamic search
-  quickPick.onDidChangeValue((value) => {
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => loadIssues(value || undefined), 300);
-  });
+  // Client-side filtering (QuickPick already does this natively via matchOnDescription + matchOnDetail)
+  quickPick.matchOnDescription = true;
+  quickPick.matchOnDetail = true;
 
   // Handle selection
   const selected = await new Promise<(vscode.QuickPickItem & { issue?: { key: string; summary: string; description: string; acceptanceCriteria: string; comments: string[]; url: string } }) | undefined>((resolve) => {
