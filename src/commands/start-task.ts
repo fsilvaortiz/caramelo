@@ -92,7 +92,7 @@ Only output file blocks. No explanations outside file blocks.`;
       // Apply changes directly
       const applied = await applyChanges(fileBlocks);
       if (applied > 0) {
-        await markTaskComplete(docUri, lineNumber);
+        await markTaskComplete(docUri, lineNumber, taskText);
         channel.appendLine(`✓ Task complete. ${applied} file(s) created/updated.`);
         vscode.window.showInformationMessage(`Task complete. ${applied} file(s) created/updated.`);
       }
@@ -175,15 +175,39 @@ async function applyChanges(blocks: FileBlock[]): Promise<number> {
 // Mutex to prevent concurrent writes to the same tasks file
 let writeLock: Promise<void> = Promise.resolve();
 
-async function markTaskComplete(docUri: vscode.Uri, lineNumber: number): Promise<void> {
+async function markTaskComplete(docUri: vscode.Uri, lineNumber: number, taskText?: string): Promise<void> {
   // Serialize writes — wait for any pending write to finish
   writeLock = writeLock.then(async () => {
     const filePath = docUri.fsPath;
     const content = fs.readFileSync(filePath, 'utf-8');
     const lines = content.split('\n');
-    if (lineNumber < lines.length) {
+
+    // Strategy 1: try exact line number
+    if (lineNumber < lines.length && lines[lineNumber].includes('- [ ]')) {
       lines[lineNumber] = lines[lineNumber].replace('- [ ]', '- [x]');
       fs.writeFileSync(filePath, lines.join('\n'), 'utf-8');
+      return;
+    }
+
+    // Strategy 2: find by task text (handles shifted lines)
+    if (taskText) {
+      const searchStr = taskText.slice(0, 30);
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].includes('- [ ]') && lines[i].includes(searchStr)) {
+          lines[i] = lines[i].replace('- [ ]', '- [x]');
+          fs.writeFileSync(filePath, lines.join('\n'), 'utf-8');
+          return;
+        }
+      }
+    }
+
+    // Strategy 3: mark the first unchecked task (last resort)
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].trimStart().startsWith('- [ ]')) {
+        lines[i] = lines[i].replace('- [ ]', '- [x]');
+        fs.writeFileSync(filePath, lines.join('\n'), 'utf-8');
+        return;
+      }
     }
   });
   await writeLock;
