@@ -31,12 +31,7 @@ export async function createSpecFromJira(workspaceUri: vscode.Uri | undefined): 
     jiraConfig = (pick as { config: ProviderConfig }).config;
   }
 
-  // Get API token from secrets
-  const secrets = (await vscode.commands.executeCommand('caramelo._getSecrets')) as vscode.SecretStorage | undefined;
-  const tokenKey = `caramelo.jira.${jiraConfig.id}.token`;
-
-  // Create client — we need the token from SecretStorage
-  // Since we can't access SecretStorage directly from here, use a stored approach
+  // Get API token via internal command
   let token: string | undefined;
   try {
     // Try to get token via the extension context
