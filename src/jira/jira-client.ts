@@ -21,6 +21,17 @@ export interface JiraSearchResult {
   hasMore: boolean;
 }
 
+type RawIssue = {
+  key: string;
+  fields: {
+    summary: string;
+    description: unknown;
+    status: { name: string };
+    assignee: { displayName: string } | null;
+    comment?: { comments: Array<{ body: unknown }> };
+  };
+};
+
 export class JiraClient {
   private readonly authHeader: string;
 
@@ -56,46 +67,68 @@ export class JiraClient {
     return data.values.map((b) => ({ id: String(b.id), name: b.name, type: b.type }));
   }
 
-  async searchIssues(query?: string, maxResults = 50, startAt = 0): Promise<JiraSearchResult> {
-    // Use Agile API to get board issues (works on all Jira Cloud instances)
-    const url = this.boardId
-      ? `${this.instanceUrl}/rest/agile/1.0/board/${this.boardId}/backlog?maxResults=${maxResults}&startAt=${startAt}&fields=summary,description,status,assignee,comment`
-      : `${this.instanceUrl}/rest/api/2/search?jql=ORDER+BY+updated+DESC&maxResults=${maxResults}&startAt=${startAt}&fields=summary,description,status,assignee,comment`;
-
-    let res = await fetch(url, {
-      headers: this.headers(),
-      signal: AbortSignal.timeout(15000),
-    });
-
-    // Fallback: if backlog endpoint fails, try the board/issue endpoint
-    if (!res.ok && this.boardId) {
-      res = await fetch(
-        `${this.instanceUrl}/rest/agile/1.0/board/${this.boardId}/issue?maxResults=${maxResults}&startAt=${startAt}&fields=summary,description,status,assignee,comment`,
-        { headers: this.headers(), signal: AbortSignal.timeout(15000) }
-      );
+  async searchIssues(_query?: string, maxResults = 50, startAt = 0): Promise<JiraSearchResult> {
+    if (!this.boardId) {
+      throw new Error('No board configured');
     }
 
-    if (!res.ok) throw new Error(`Failed to search issues: ${res.status} ${res.statusText}`);
-    const data = await res.json() as {
-      issues: Array<{
-        key: string;
-        fields: {
-          summary: string;
-          description: unknown;
-          status: { name: string };
-          assignee: { displayName: string } | null;
-          comment?: { comments: Array<{ body: unknown }> };
-        };
-      }>;
-      total: number;
-    };
+    // Fetch from both endpoints in parallel to get all issues
+    const fields = 'summary,description,status,assignee,comment';
+    const endpoints = [
+      `${this.instanceUrl}/rest/agile/1.0/board/${this.boardId}/issue?maxResults=${maxResults}&startAt=${startAt}&fields=${fields}`,
+      `${this.instanceUrl}/rest/agile/1.0/board/${this.boardId}/backlog?maxResults=${maxResults}&startAt=${startAt}&fields=${fields}`,
+    ];
 
-    const issues = data.issues.map((i) => this.mapIssue(i));
-    return {
-      issues,
-      total: data.total,
-      hasMore: startAt + maxResults < data.total,
-    };
+    const allIssues = new Map<string, JiraIssue>();
+    let total = 0;
+
+    for (const url of endpoints) {
+      try {
+        const res = await fetch(url, {
+          headers: this.headers(),
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!res.ok) continue;
+        const data = await res.json() as { issues: Array<RawIssue>; total?: number };
+        total = Math.max(total, data.total ?? 0);
+        for (const issue of (data.issues || [])) {
+          if (!allIssues.has(issue.key)) {
+            allIssues.set(issue.key, this.mapIssue(issue));
+          }
+        }
+      } catch {
+        // Skip failed endpoint
+      }
+    }
+
+    // Also try the project-level search via API v2 as last resort
+    const projectKey = await this.getBoardProjectKey();
+    if (projectKey) {
+      try {
+        const res = await fetch(
+          `${this.instanceUrl}/rest/api/2/search?jql=${encodeURIComponent(`project = ${projectKey} ORDER BY updated DESC`)}&maxResults=${maxResults}&startAt=${startAt}&fields=${fields}`,
+          { headers: this.headers(), signal: AbortSignal.timeout(15000) }
+        );
+        if (res.ok) {
+          const data = await res.json() as { issues: Array<RawIssue>; total?: number };
+          total = Math.max(total, data.total ?? 0);
+          for (const issue of (data.issues || [])) {
+            if (!allIssues.has(issue.key)) {
+              allIssues.set(issue.key, this.mapIssue(issue));
+            }
+          }
+        }
+      } catch {
+        // v2 search not available — that's OK, we have Agile results
+      }
+    }
+
+    if (allIssues.size === 0) {
+      throw new Error('No issues found on this board');
+    }
+
+    const issues = Array.from(allIssues.values());
+    return { issues, total, hasMore: issues.length < total };
   }
 
   async getIssue(key: string): Promise<JiraIssue> {
@@ -104,29 +137,11 @@ export class JiraClient {
       { headers: this.headers(), signal: AbortSignal.timeout(10000) }
     );
     if (!res.ok) throw new Error(`Failed to fetch issue ${key}: ${res.status}`);
-    const data = await res.json() as {
-      key: string;
-      fields: {
-        summary: string;
-        description: unknown;
-        status: { name: string };
-        assignee: { displayName: string } | null;
-        comment?: { comments: Array<{ body: unknown }> };
-      };
-    };
+    const data = await res.json() as RawIssue;
     return this.mapIssue(data);
   }
 
-  private mapIssue(raw: {
-    key: string;
-    fields: {
-      summary: string;
-      description: unknown;
-      status: { name: string };
-      assignee: { displayName: string } | null;
-      comment?: { comments: Array<{ body: unknown }> };
-    };
-  }): JiraIssue {
+  private mapIssue(raw: RawIssue): JiraIssue {
     const desc = adfToPlainText(raw.fields.description);
     const comments = (raw.fields.comment?.comments ?? [])
       .slice(-5)
