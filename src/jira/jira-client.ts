@@ -57,34 +57,25 @@ export class JiraClient {
   }
 
   async searchIssues(query?: string, maxResults = 50, startAt = 0): Promise<JiraSearchResult> {
-    // Strategy: use Agile API to get board issues, or JQL search with text filter
-    let url: string;
-    let useAgile = false;
+    // Step 1: Get project key from board configuration
+    const projectKey = await this.getBoardProjectKey();
 
-    if (this.boardId && !query) {
-      // Use Agile API to list board issues (most reliable)
-      url = `${this.instanceUrl}/rest/agile/1.0/board/${this.boardId}/issue?maxResults=${maxResults}&startAt=${startAt}&fields=summary,description,status,assignee,comment`;
-      useAgile = true;
-    } else {
-      // Use JQL search — get project key from board config or search globally
-      let jql = '';
-      if (query) {
-        const escaped = query.replace(/"/g, '\\"');
-        jql = `text~"${escaped}" ORDER BY updated DESC`;
-      } else {
-        jql = 'ORDER BY updated DESC';
-      }
-
-      const params = new URLSearchParams({
-        jql,
-        fields: 'summary,description,status,assignee,comment',
-        maxResults: String(maxResults),
-        startAt: String(startAt),
-      });
-      url = `${this.instanceUrl}/rest/api/3/search?${params}`;
+    // Step 2: Use JQL with project key to get ALL issues (any status)
+    let jql = projectKey ? `project = "${projectKey}"` : '';
+    if (query) {
+      const escaped = query.replace(/"/g, '\\"');
+      jql = jql ? `${jql} AND text~"${escaped}"` : `text~"${escaped}"`;
     }
+    jql = jql ? `${jql} ORDER BY updated DESC` : 'ORDER BY updated DESC';
 
-    const res = await fetch(url, {
+    const params = new URLSearchParams({
+      jql,
+      fields: 'summary,description,status,assignee,comment',
+      maxResults: String(maxResults),
+      startAt: String(startAt),
+    });
+
+    const res = await fetch(`${this.instanceUrl}/rest/api/3/search?${params}`, {
       headers: this.headers(),
       signal: AbortSignal.timeout(15000),
     });
@@ -161,6 +152,26 @@ export class JiraClient {
       comments,
       url: `${this.instanceUrl}/browse/${raw.key}`,
     };
+  }
+
+  private boardProjectKey: string | null = null;
+
+  private async getBoardProjectKey(): Promise<string | null> {
+    if (this.boardProjectKey) return this.boardProjectKey;
+    if (!this.boardId) return null;
+
+    try {
+      const res = await fetch(
+        `${this.instanceUrl}/rest/agile/1.0/board/${this.boardId}/configuration`,
+        { headers: this.headers(), signal: AbortSignal.timeout(10000) }
+      );
+      if (!res.ok) return null;
+      const data = await res.json() as { location?: { projectKey?: string } };
+      this.boardProjectKey = data.location?.projectKey ?? null;
+      return this.boardProjectKey;
+    } catch {
+      return null;
+    }
   }
 
   private headers(): Record<string, string> {
