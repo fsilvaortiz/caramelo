@@ -57,28 +57,23 @@ export class JiraClient {
   }
 
   async searchIssues(query?: string, maxResults = 50, startAt = 0): Promise<JiraSearchResult> {
-    // Step 1: Get project key from board configuration
-    const projectKey = await this.getBoardProjectKey();
+    // Use Agile API to get board issues (works on all Jira Cloud instances)
+    const url = this.boardId
+      ? `${this.instanceUrl}/rest/agile/1.0/board/${this.boardId}/backlog?maxResults=${maxResults}&startAt=${startAt}&fields=summary,description,status,assignee,comment`
+      : `${this.instanceUrl}/rest/api/2/search?jql=ORDER+BY+updated+DESC&maxResults=${maxResults}&startAt=${startAt}&fields=summary,description,status,assignee,comment`;
 
-    // Step 2: Use JQL with project key to get ALL issues (any status)
-    let jql = projectKey ? `project = "${projectKey}"` : '';
-    if (query) {
-      const escaped = query.replace(/"/g, '\\"');
-      jql = jql ? `${jql} AND text~"${escaped}"` : `text~"${escaped}"`;
-    }
-    jql = jql ? `${jql} ORDER BY updated DESC` : 'ORDER BY updated DESC';
-
-    const params = new URLSearchParams({
-      jql,
-      fields: 'summary,description,status,assignee,comment',
-      maxResults: String(maxResults),
-      startAt: String(startAt),
-    });
-
-    const res = await fetch(`${this.instanceUrl}/rest/api/3/search?${params}`, {
+    let res = await fetch(url, {
       headers: this.headers(),
       signal: AbortSignal.timeout(15000),
     });
+
+    // Fallback: if backlog endpoint fails, try the board/issue endpoint
+    if (!res.ok && this.boardId) {
+      res = await fetch(
+        `${this.instanceUrl}/rest/agile/1.0/board/${this.boardId}/issue?maxResults=${maxResults}&startAt=${startAt}&fields=summary,description,status,assignee,comment`,
+        { headers: this.headers(), signal: AbortSignal.timeout(15000) }
+      );
+    }
 
     if (!res.ok) throw new Error(`Failed to search issues: ${res.status} ${res.statusText}`);
     const data = await res.json() as {
