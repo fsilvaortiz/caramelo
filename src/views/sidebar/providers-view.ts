@@ -224,9 +224,12 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
       let hasMore = true;
 
       while (hasMore) {
+        // Send progress to webview
+        this.view?.webview.postMessage({ command: 'jiraProgress', message: `Loading boards... (${allBoards.length} found)` });
+
         const res = await fetch(
           `${url}/rest/agile/1.0/board?maxResults=${maxResults}&startAt=${startAt}`,
-          { headers, signal: AbortSignal.timeout(15000) }
+          { headers, signal: AbortSignal.timeout(30000) }
         );
         if (!res.ok) {
           sendResult(false, { error: `Failed to fetch boards (HTTP ${res.status}). Check permissions.` });
@@ -476,6 +479,14 @@ window.addEventListener('message', (event) => {
     }
   }
 
+  // Handle Jira progress
+  if (msg.command === 'jiraProgress') {
+    const btn = document.getElementById('btnJira');
+    const statusEl = document.getElementById('jiraStatus');
+    if (btn) btn.textContent = msg.message || 'Loading...';
+    if (statusEl) { statusEl.textContent = msg.message || ''; statusEl.style.color = ''; }
+  }
+
   // Handle Jira test result
   if (msg.command === 'jiraTestResult') {
     const statusEl = document.getElementById('jiraStatus');
@@ -531,16 +542,16 @@ function testJira() {
   statusEl.textContent = '';
   msg('testJiraConnection', { url, email, token });
 
-  // Fallback: re-enable button after 15s if no response
+  // Fallback: re-enable button after 60s if no response
   setTimeout(() => {
-    if (btn.disabled && btn.textContent === 'Testing...') {
+    if (btn.disabled && (btn.textContent === 'Testing...' || btn.textContent.startsWith('Loading'))) {
       btn.textContent = 'Retry';
       btn.disabled = false;
       btn.onclick = function() { testJira(); };
       statusEl.textContent = 'Timeout — no response. Check URL and try again.';
       statusEl.style.color = '#f44';
     }
-  }, 15000);
+  }, 60000);
 }
 
 function submitJira() {
