@@ -13,6 +13,7 @@
   <a href="#installation">Installation</a> &bull;
   <a href="#quick-start">Quick Start</a> &bull;
   <a href="#providers">Providers</a> &bull;
+  <a href="#jira-integration">Jira</a> &bull;
   <a href="#contributing">Contributing</a>
 </p>
 
@@ -28,41 +29,63 @@
 
 ### Visual Workflow
 
-- **Sidebar with specs, providers, and progress** — see everything at a glance
+- **Unified sidebar** — providers, constitution, specs, progress, and task checklist in one panel
 - **Sequential phase flow** with approval gates: Requirements → Design → Tasks
-- **Constitution editor** — define project principles that guide all generation
+- **Constitution editor** — visual form to define project principles that guide all generation
 - **Workflow DAG** — interactive graph showing all specs and their phase statuses
+- **Progress ring** — overall completion percentage (phases 50% + tasks 50%)
+- **Stale alerts** — downstream phases flagged when upstream is regenerated
 
 ### LLM Agnostic
 
 - **Any provider**: Claude, OpenAI, Ollama, Groq, LM Studio, or any OpenAI-compatible endpoint
 - **Multiple providers** configured simultaneously — switch with one click
 - **Secure credential storage** via VS Code's native SecretStorage
-- **Streaming output** — see documents being written in real time
+- **Streaming output** — see documents being written in real time in the editor
+- **Output Channel** — watch LLM reasoning during task execution
 
 ### Spec Kit Compatible
 
 - **Uses `.specify/specs/`** directory — fully interoperable with Spec Kit CLI
 - **Auto-syncs templates** from GitHub Spec Kit releases
 - **Generates intermediate artifacts**: research.md, data-model.md, contracts/
+- **Constitution as LLM context** — project principles included in every generation
 - **Offline-first** — bundled fallback templates, no internet required
 
 ### Editor Integration
 
-- **CodeLens buttons** — Approve, Regenerate, Next Phase directly in documents
-- **Progress bar** — visual phase indicator at the top of every spec document
-- **Editor toolbar buttons** — contextual actions based on the open file
+- **CodeLens buttons** — Approve, Regenerate, Next Phase persistent in documents
+- **Phase progress bar** — visual step indicator at the top of every spec document
+- **Caramelo editor menu** — grouped contextual actions under a single icon
 - **Task CodeLens** — Run Task / Run All Tasks inline in tasks.md
 - **Parallel task execution** — tasks marked `[P]` run concurrently
+- **Non-intrusive progress** — status bar spinner instead of notification popups
 
 ### Quality Tools
 
 - **Clarify** — LLM identifies ambiguities, presents questions as QuickPick dialogs
-- **Analyze** — cross-artifact consistency check with severity-coded findings
+- **Analyze** — cross-artifact consistency check with severity-coded findings and auto-fix
 - **Checklists** — content-specific quality verification items
-- **Stale alerts** — downstream phases flagged when upstream is regenerated
+- **Fix issues** — CodeLens buttons on analysis.md to fix individual or all findings
+
+### Jira Integration
+
+- **Import issues as specs** — create specs directly from Jira Cloud issues
+- **Issue picker** — QuickPick with dynamic search and issue preview
+- **Jira badge** — spec cards show linked issue key with click-to-open
+- **Full context** — issue title, description, acceptance criteria, and comments used for generation
 
 ## Installation
+
+### From VS Code Marketplace
+
+Search for **"Caramelo"** in the Extensions panel, or install from the [Marketplace page](https://marketplace.visualstudio.com/items?itemName=fsilvaortiz.caramelo).
+
+### From VSIX
+
+```bash
+code --install-extension caramelo-0.0.1.vsix
+```
 
 ### From Source
 
@@ -73,70 +96,78 @@ npm install
 npm run build
 ```
 
-Then press **F5** in VS Code to launch the Extension Development Host.
-
-### From VSIX (coming soon)
-
-```bash
-npm run package
-code --install-extension caramelo-0.0.1.vsix
-```
+Press **F5** in VS Code to launch the Extension Development Host.
 
 ## Quick Start
 
-1. **Add a provider** — Click the `+` in the Providers section. Select Ollama, Claude, OpenAI, or any compatible endpoint.
+1. **Add a provider** — Click `+` in the Providers section. Select Ollama, Claude, OpenAI, or any compatible endpoint.
 
-2. **Set up your constitution** — Click the pencil icon in the Constitution section. Define your project's core principles.
+2. **Set up your constitution** — Click the Constitution bar in the Workflow panel. Define your project's core principles via the visual form.
 
-3. **Create a spec** — In the Progress panel, expand "New Spec", enter a name and description, click "Create Spec".
+3. **Create a spec** — Expand "New Spec" in the Workflow panel, enter a name and description, click "Create". Or click "From Jira" to import an issue.
 
-4. **Generate phases** — Click on each phase (Requirements → Design → Tasks) to generate with your LLM. Approve each before moving to the next.
+4. **Generate phases** — Click "Generate" on each phase (Requirements → Design → Tasks). Review and approve each before the next unlocks.
 
-5. **Execute tasks** — Open `tasks.md`, click "Run Task" on individual tasks or "Run All Tasks" to execute everything.
+5. **Execute tasks** — Click "Implement" on the Tasks phase, or open `tasks.md` and use "Run Task" / "Run All Tasks" buttons.
+
+6. **Quality checks** — Use the Caramelo menu (editor toolbar) to Clarify ambiguities, Analyze consistency, or Generate checklists.
 
 ## Providers
 
-Caramelo supports any LLM through two provider types:
+### LLM Providers
 
-| Provider Type | Examples | Auth |
-|--------------|---------|------|
-| **OpenAI Compatible** | Ollama, LM Studio, Groq, Together, vLLM, OpenAI | Optional API key |
-| **Anthropic** | Claude | API key required |
+| Provider | Endpoint | Auth |
+|----------|----------|------|
+| **Ollama** | `http://localhost:11434/v1` | None |
+| **Claude** | `https://api.anthropic.com` | API key |
+| **OpenAI** | `https://api.openai.com/v1` | API key |
+| **Groq** | `https://api.groq.com/openai/v1` | API key |
+| **LM Studio** | `http://localhost:1234/v1` | None |
+| **Custom** | Any OpenAI-compatible endpoint | Optional |
 
-### Adding a provider
+### Jira Integration
 
-Click `+` in the Providers section and select from presets:
+| Provider | Details | Auth |
+|----------|---------|------|
+| **Jira Cloud** | Any Atlassian Cloud instance | Email + API token |
 
-- **Ollama** — `http://localhost:11434/v1` (no key needed)
-- **Claude** — `https://api.anthropic.com` (key required)
-- **OpenAI** — `https://api.openai.com/v1` (key required)
-- **Groq** — `https://api.groq.com/openai/v1` (key required)
-- **LM Studio** — `http://localhost:1234/v1` (no key needed)
-- **Custom** — any OpenAI-compatible endpoint
+Click `+` in Providers, select the type, and follow the setup wizard.
 
 ## Workflow
 
 ```
 Constitution (project principles)
        │
-       ▼
-  ┌─────────┐     ┌─────────┐     ┌─────────┐
-  │Requirem.│────▶│ Design  │────▶│  Tasks  │
-  │ spec.md │     │ plan.md │     │tasks.md │
-  └─────────┘     │research │     └─────────┘
-                  │data-mod.│           │
-                  │contracts│           ▼
-                  └─────────┘     Implementation
+       ├──→ [Feature 1]
+       │     ├── Requirements (spec.md)
+       │     ├── Design (plan.md + research.md + data-model.md + contracts/)
+       │     ├── Tasks (tasks.md)
+       │     └── Implementation (task execution)
+       │
+       └──→ [Feature 2]
+             └── ...
 ```
 
-Each phase must be **approved** before the next unlocks. You can:
-- **Approve** — mark the phase as complete
-- **Regenerate** — re-run with LLM (marks downstream phases as stale)
-- **Edit manually** — modify the document before approving
+Each phase must be **approved** before the next unlocks:
+- **Generate** — LLM creates the document using templates + constitution + prior phases
+- **Approve** — mark as complete, unlock the next phase
+- **Regenerate** — re-run (marks downstream phases as stale)
+- **Edit manually** — modify before approving
+
+### Auxiliary Files
+
+| File | Phase | Description |
+|------|-------|-------------|
+| research.md | Design | Technical decisions with rationale |
+| data-model.md | Design | Entities, attributes, relationships |
+| contracts/ | Design | Interface definitions |
+| analysis.md | Tasks | Consistency check findings |
+| checklists/*.md | Any | Quality verification items |
+| jira-context.md | Requirements | Imported Jira issue content |
 
 ## Configuration
 
-Settings in VS Code (`settings.json`):
+VS Code settings (`settings.json`):
 
 ```json
 {
@@ -153,7 +184,7 @@ Settings in VS Code (`settings.json`):
 }
 ```
 
-API keys are stored securely in VS Code's SecretStorage, never in settings files.
+API keys and Jira tokens are stored securely in VS Code's SecretStorage, never in settings files.
 
 ## Contributing
 

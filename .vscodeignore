@@ -2,11 +2,16 @@
 src/**
 test/**
 node_modules/**
+specs/**
 .specify/**
+.claude/**
+.github/**
 .gitignore
 tsconfig.json
 esbuild.js
-.eslintrc.json
+eslint.config.js
+CLAUDE.md
+CONTRIBUTING.md
 *.map
 **/*.ts
 !dist/**

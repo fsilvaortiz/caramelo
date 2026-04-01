@@ -1,25 +1,30 @@
 # Changelog
 
-## [0.0.1] - 2026-04-01
+## [0.0.2] - 2026-04-01
 
 ### Added
 
 - **LLM Provider System**: Connect to any LLM — Ollama, Claude, OpenAI, Groq, LM Studio, or any OpenAI-compatible endpoint
-- **Visual Spec Management**: Sidebar with spec listing, phase status tracking, and progress indicators
-- **Constitution Editor**: Visual form to define project principles that guide spec generation
+- **Jira Integration**: Import Jira Cloud issues as specs with dynamic search, issue preview, and linked badges
+- **Visual Spec Management**: Unified sidebar with providers, constitution, specs, progress, and task checklist
+- **Constitution Editor**: Visual form to define project principles; mandatory before creating specs
 - **Sequential Workflow**: Requirements → Design → Tasks with approval gates between phases
 - **Streaming Generation**: Watch documents being written in real time by the LLM
 - **Intermediate Artifacts**: Design phase generates research.md, data-model.md, and contracts/
+- **Constitution as Context**: Project principles automatically included in every LLM generation
 - **CodeLens Actions**: Persistent Approve, Regenerate, and Next Phase buttons in spec documents
-- **Editor Toolbar Buttons**: Context-aware actions based on the open file
-- **Task Execution**: Run individual tasks or all tasks from CodeLens in tasks.md
-- **Parallel Task Support**: Tasks marked `[P]` execute concurrently
-- **Progress Dashboard**: Visual progress rings and phase dots in the sidebar
-- **Workflow DAG**: Interactive graph showing all specs and their phase statuses
+- **Caramelo Editor Menu**: Grouped contextual actions under a single icon in the editor toolbar
+- **Task Execution**: Run individual tasks or all tasks with parallel support for `[P]` markers
+- **LLM Output Channel**: Watch LLM reasoning in real time during task execution
+- **Progress Ring**: Overall completion percentage (phases 50% + tasks 50%), 100% only when all tasks done
+- **Workflow DAG**: Interactive graph showing constitution, features, and phase statuses
 - **Clarify Command**: LLM identifies ambiguities, presents questions as QuickPick dialogs
-- **Analyze Command**: Cross-artifact consistency check generating analysis.md with severity levels
-- **Checklist Generation**: Content-specific quality verification items
+- **Analyze Command**: Cross-artifact consistency check with severity levels and auto-fix (Fix This / Fix All)
+- **Checklist Generation**: Content-specific quality verification items per phase
 - **Stale Phase Alerts**: Downstream phases flagged when upstream is regenerated
-- **Inline Task Checklist**: Toggle tasks directly in the sidebar progress panel
+- **Inline Task Checklist**: Toggle tasks directly in the sidebar with immediate file sync
 - **Template Auto-Sync**: Automatically downloads latest Spec Kit templates from GitHub releases
 - **Offline Support**: Bundled fallback templates for offline-first usage
+- **Non-intrusive Progress**: Status bar spinner instead of notification popups for long operations
+- **Truncation-tolerant Parser**: File block parser handles incomplete LLM output gracefully
+- **Dark/Light Theme Support**: Editor menu icon adapts to VS Code theme
