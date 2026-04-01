@@ -57,21 +57,34 @@ export class JiraClient {
   }
 
   async searchIssues(query?: string, maxResults = 50, startAt = 0): Promise<JiraSearchResult> {
-    let jql = this.boardId ? `board=${this.boardId}` : '';
-    if (query) {
-      const escaped = query.replace(/"/g, '\\"');
-      jql = jql ? `${jql} AND text~"${escaped}"` : `text~"${escaped}"`;
+    // Strategy: use Agile API to get board issues, or JQL search with text filter
+    let url: string;
+    let useAgile = false;
+
+    if (this.boardId && !query) {
+      // Use Agile API to list board issues (most reliable)
+      url = `${this.instanceUrl}/rest/agile/1.0/board/${this.boardId}/issue?maxResults=${maxResults}&startAt=${startAt}&fields=summary,description,status,assignee,comment`;
+      useAgile = true;
+    } else {
+      // Use JQL search — get project key from board config or search globally
+      let jql = '';
+      if (query) {
+        const escaped = query.replace(/"/g, '\\"');
+        jql = `text~"${escaped}" ORDER BY updated DESC`;
+      } else {
+        jql = 'ORDER BY updated DESC';
+      }
+
+      const params = new URLSearchParams({
+        jql,
+        fields: 'summary,description,status,assignee,comment',
+        maxResults: String(maxResults),
+        startAt: String(startAt),
+      });
+      url = `${this.instanceUrl}/rest/api/3/search?${params}`;
     }
-    if (!jql) jql = 'ORDER BY updated DESC';
 
-    const params = new URLSearchParams({
-      jql,
-      fields: 'summary,description,status,assignee,comment',
-      maxResults: String(maxResults),
-      startAt: String(startAt),
-    });
-
-    const res = await fetch(`${this.instanceUrl}/rest/api/3/search?${params}`, {
+    const res = await fetch(url, {
       headers: this.headers(),
       signal: AbortSignal.timeout(15000),
     });
