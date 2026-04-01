@@ -59,8 +59,11 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
         case 'cancelAdd':
           this.refresh();
           break;
-        case 'addJira':
-          vscode.commands.executeCommand('caramelo.addProvider');
+        case 'testJiraConnection':
+          await this.handleTestJira(msg);
+          break;
+        case 'addJiraProvider':
+          await this.handleAddJira(msg);
           break;
       }
     });
@@ -181,6 +184,43 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     this.refresh();
   }
 
+  private async handleTestJira(msg: { url: string; email: string; token: string }): Promise<void> {
+    try {
+      const { JiraClient } = await import('../../jira/jira-client.js');
+      const client = new JiraClient(msg.url, msg.email, msg.token);
+      const connected = await client.testConnection();
+      if (!connected) {
+        this.view?.webview.postMessage({ command: 'jiraTestResult', success: false, error: 'Connection failed. Check URL, email, and token.' });
+        return;
+      }
+      const boards = await client.getBoards();
+      this.view?.webview.postMessage({ command: 'jiraTestResult', success: true, boards });
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      this.view?.webview.postMessage({ command: 'jiraTestResult', success: false, error });
+    }
+  }
+
+  private async handleAddJira(msg: { url: string; email: string; token: string; boardId: string; boardName: string }): Promise<void> {
+    const id = `jira-${msg.url.replace(/https?:\/\//, '').replace(/\.atlassian\.net.*/, '').replace(/[^a-z0-9]+/g, '-')}`;
+    const name = `Jira (${msg.boardName})`;
+
+    await this.secrets.store(`caramelo.jira.${id}.token`, msg.token);
+
+    const config: ProviderConfig = {
+      id, name, type: 'jira', endpoint: msg.url, model: '',
+      instanceUrl: msg.url, boardId: msg.boardId, boardName: msg.boardName, email: msg.email,
+    };
+
+    const vsConfig = vscode.workspace.getConfiguration();
+    const existing = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
+    existing.push(config);
+    await vsConfig.update(SETTINGS_KEYS.providers, existing, vscode.ConfigurationTarget.Workspace);
+
+    this.refresh();
+    vscode.window.showInformationMessage(`Jira provider "${name}" added.`);
+  }
+
   private async fetchModelsFromAPI(type: string, endpoint: string, apiKey?: string): Promise<ModelInfo[]> {
     try {
       const url = type === 'anthropic'
@@ -249,7 +289,15 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
       if (preset.type === 'jira') {
         addSection = `<div class="add-form">
           <div class="add-header">${preset.icon} ${preset.label}<button class="btn-cancel" onclick="msg('cancelAdd')">×</button></div>
-          <button class="btn-primary" onclick="msg('addJira')">Configure Jira</button>
+          <p class="form-hint">Connect to Jira Cloud to import issues as specs.</p>
+          <input id="jiraUrl" class="input" placeholder="https://mycompany.atlassian.net" value="https://" />
+          <input id="jiraEmail" class="input" placeholder="you@company.com" type="email" />
+          <input id="jiraToken" class="input" placeholder="API token (from id.atlassian.com)" type="password" />
+          <div id="jiraBoardSection" style="display:none">
+            <select id="jiraBoard" class="input"><option>Select a board...</option></select>
+          </div>
+          <button class="btn-primary" id="btnJira" onclick="testJira()" disabled>Enter credentials first</button>
+          <div id="jiraStatus" class="form-status"></div>
         </div>`;
       } else if (preset.type === 'copilot') {
         addSection = `<div class="add-form">
@@ -299,6 +347,22 @@ const vscode = acquireVsCodeApi();
 function msg(cmd, data) { vscode.postMessage({ command: cmd, ...data }); }
 
 ${addingPresetIndex !== undefined ? `
+// Enable Jira test button when all fields filled
+['jiraUrl','jiraEmail','jiraToken'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', () => {
+    const url = document.getElementById('jiraUrl')?.value || '';
+    const email = document.getElementById('jiraEmail')?.value || '';
+    const token = document.getElementById('jiraToken')?.value || '';
+    const btn = document.getElementById('btnJira');
+    if (btn && url.length > 8 && email.includes('@') && token.length > 5) {
+      btn.textContent = 'Test Connection';
+      btn.disabled = false;
+      btn.onclick = function() { testJira(); };
+    }
+  });
+});
+
 // Auto-fetch models when API key is entered
 const keyInput = document.getElementById('addApiKey');
 const endpointInput = document.getElementById('addEndpoint');
@@ -357,7 +421,57 @@ window.addEventListener('message', (event) => {
     }
   }
 });
+
+
+// Handle Jira test result
+if (msg.command === 'jiraTestResult') {
+  const statusEl = document.getElementById('jiraStatus');
+  const btnJira = document.getElementById('btnJira');
+  const boardSection = document.getElementById('jiraBoardSection');
+  const boardSelect = document.getElementById('jiraBoard');
+
+  if (msg.success && msg.boards) {
+    statusEl.textContent = '✓ Connected';
+    statusEl.style.color = '#4CAF50';
+    boardSection.style.display = 'block';
+    boardSelect.innerHTML = msg.boards.map(b =>
+      '<option value="' + b.id + '" data-name="' + b.name.replace(/"/g, '&quot;') + '">' + b.name + ' (' + b.type + ')</option>'
+    ).join('');
+    btnJira.textContent = 'Add Jira Provider';
+    btnJira.disabled = false;
+    btnJira.onclick = function() { submitJira(); };
+  } else {
+    statusEl.textContent = '✗ ' + (msg.error || 'Connection failed');
+    statusEl.style.color = '#f44';
+    btnJira.textContent = 'Retry';
+    btnJira.disabled = false;
+    btnJira.onclick = function() { testJira(); };
+  }
+}
 ` : ''}
+
+function testJira() {
+  const url = document.getElementById('jiraUrl')?.value || '';
+  const email = document.getElementById('jiraEmail')?.value || '';
+  const token = document.getElementById('jiraToken')?.value || '';
+  if (!url || !email || !token) return;
+  const btn = document.getElementById('btnJira');
+  btn.textContent = 'Testing...';
+  btn.disabled = true;
+  document.getElementById('jiraStatus').textContent = '';
+  msg('testJiraConnection', { url, email, token });
+}
+
+function submitJira() {
+  const url = document.getElementById('jiraUrl')?.value || '';
+  const email = document.getElementById('jiraEmail')?.value || '';
+  const token = document.getElementById('jiraToken')?.value || '';
+  const select = document.getElementById('jiraBoard');
+  const boardId = select?.value || '';
+  const boardName = select?.options[select.selectedIndex]?.dataset?.name || '';
+  if (!url || !email || !token || !boardId) return;
+  msg('addJiraProvider', { url, email, token, boardId, boardName });
+}
 
 function submitAdd(name, type) {
   const endpoint = document.getElementById('addEndpoint')?.value || '';
@@ -436,4 +550,5 @@ select.input { appearance: auto; }
 .btn-primary:hover { background: var(--vscode-button-hoverBackground); }
 .btn-primary:disabled { opacity: 0.5; cursor: default; }
 .form-hint { font-size: 0.8em; color: var(--vscode-descriptionForeground); margin-bottom: 6px; }
+.form-status { font-size: 0.8em; margin-top: 4px; font-weight: 500; }
 </style>`;
