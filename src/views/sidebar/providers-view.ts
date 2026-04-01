@@ -185,19 +185,31 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async handleTestJira(msg: { url: string; email: string; token: string }): Promise<void> {
+    const sendResult = (success: boolean, data?: { boards?: unknown[]; error?: string }) => {
+      this.view?.webview.postMessage({ command: 'jiraTestResult', success, ...data });
+    };
+
     try {
       const { JiraClient } = await import('../../jira/jira-client.js');
-      const client = new JiraClient(msg.url, msg.email, msg.token);
+      const url = msg.url.replace(/\/+$/, '');
+      const client = new JiraClient(url, msg.email, msg.token);
+
       const connected = await client.testConnection();
       if (!connected) {
-        this.view?.webview.postMessage({ command: 'jiraTestResult', success: false, error: 'Connection failed. Check URL, email, and token.' });
+        sendResult(false, { error: 'Connection failed. Check URL, email, and API token.' });
         return;
       }
+
       const boards = await client.getBoards();
-      this.view?.webview.postMessage({ command: 'jiraTestResult', success: true, boards });
+      if (boards.length === 0) {
+        sendResult(false, { error: 'Connected but no boards found. Check Jira permissions.' });
+        return;
+      }
+
+      sendResult(true, { boards });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      this.view?.webview.postMessage({ command: 'jiraTestResult', success: false, error });
+      sendResult(false, { error: `Error: ${error}` });
     }
   }
 
@@ -456,10 +468,22 @@ function testJira() {
   const token = document.getElementById('jiraToken')?.value || '';
   if (!url || !email || !token) return;
   const btn = document.getElementById('btnJira');
+  const statusEl = document.getElementById('jiraStatus');
   btn.textContent = 'Testing...';
   btn.disabled = true;
-  document.getElementById('jiraStatus').textContent = '';
+  statusEl.textContent = '';
   msg('testJiraConnection', { url, email, token });
+
+  // Fallback: re-enable button after 15s if no response
+  setTimeout(() => {
+    if (btn.disabled && btn.textContent === 'Testing...') {
+      btn.textContent = 'Retry';
+      btn.disabled = false;
+      btn.onclick = function() { testJira(); };
+      statusEl.textContent = 'Timeout — no response. Check URL and try again.';
+      statusEl.style.color = '#f44';
+    }
+  }, 15000);
 }
 
 function submitJira() {
