@@ -108,11 +108,36 @@ interface FileBlock {
 
 function parseFileBlocks(output: string): FileBlock[] {
   const blocks: FileBlock[] = [];
-  const regex = /=== FILE: (.+?) ===\n([\s\S]*?)\n=== END FILE ===/g;
+
+  // Try strict format first: === FILE: path === ... === END FILE ===
+  const strictRegex = /=== FILE: (.+?) ===\n([\s\S]*?)\n=== END FILE ===/g;
   let match;
-  while ((match = regex.exec(output)) !== null) {
+  while ((match = strictRegex.exec(output)) !== null) {
     blocks.push({ filePath: match[1].trim(), content: match[2] });
   }
+  if (blocks.length > 0) return blocks;
+
+  // Fallback: handle truncated output where === END FILE === is missing
+  // Split on === FILE: headers and take content until next header or end
+  const headerRegex = /=== FILE: (.+?) ===/g;
+  const headers: Array<{ path: string; start: number }> = [];
+  while ((match = headerRegex.exec(output)) !== null) {
+    headers.push({ path: match[1].trim(), start: match.index + match[0].length + 1 });
+  }
+
+  for (let i = 0; i < headers.length; i++) {
+    const start = headers[i].start;
+    const end = i + 1 < headers.length
+      ? headers[i + 1].start - headers[i + 1].path.length - 14 // back up past "=== FILE: x ==="
+      : output.length;
+    let content = output.slice(start, end).trim();
+    // Remove trailing === END FILE === if present
+    content = content.replace(/\n=== END FILE ===\s*$/, '');
+    if (content.length > 0) {
+      blocks.push({ filePath: headers[i].path, content });
+    }
+  }
+
   return blocks;
 }
 

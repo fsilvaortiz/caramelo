@@ -176,6 +176,16 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider {
     const taskPercent = spec.taskStats.total > 0
       ? Math.round((spec.taskStats.completed / spec.taskStats.total) * 100) : -1;
 
+    // Overall progress: phases = 50%, tasks = 50%
+    // If no tasks exist yet, phases = 100% of progress
+    let overallPercent: number;
+    if (spec.taskStats.total > 0) {
+      overallPercent = Math.round((phasePercent * 0.5) + (taskPercent * 0.5));
+    } else {
+      // Cap at 80% until tasks are generated and being worked on
+      overallPercent = Math.min(Math.round((spec.approvedCount / 3) * 80), 80);
+    }
+
     const phasesHtml = spec.phases.map((p) => {
       const cls = `phase-step ${p.status}`;
       const icon = { pending: '○', generating: '⟳', 'pending-approval': '●', approved: '✓', stale: '⚠' }[p.status] || '○';
@@ -255,10 +265,11 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider {
     }
 
     // Progress ring
+    const ringColor = overallPercent === 100 ? '#4CAF50' : overallPercent >= 50 ? '#2196F3' : 'var(--vscode-descriptionForeground)';
     const ringHtml = `<svg viewBox="0 0 36 36" class="ring">
       <circle cx="18" cy="18" r="15.9" class="ring-bg"/>
-      <circle cx="18" cy="18" r="15.9" class="ring-fill" stroke-dasharray="${phasePercent} 100"/>
-      <text x="18" y="21" class="ring-text">${phasePercent}%</text>
+      <circle cx="18" cy="18" r="15.9" class="ring-fill" style="stroke:${ringColor}" stroke-dasharray="${overallPercent} 100"/>
+      <text x="18" y="21" class="ring-text">${overallPercent}%</text>
     </svg>`;
 
     // Check for Jira link

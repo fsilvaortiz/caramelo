@@ -65,7 +65,10 @@
       {
         "id": "caramelo.editorMenu",
         "label": "Caramelo",
-        "icon": "resources/icons/caramelo_activity_bar.svg"
+        "icon": {
+          "dark": "resources/icons/caramelo-menu-dark.svg",
+          "light": "resources/icons/caramelo-menu-light.svg"
+        }
       }
     ],
     "commands": [

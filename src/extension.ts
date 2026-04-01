@@ -73,7 +73,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // CodeLens — analysis findings
   context.subscriptions.push(
-    vscode.languages.registerCodeLensProvider({ pattern: '**/analysis.md' }, new AnalysisCodeLensProvider())
+    vscode.languages.registerCodeLensProvider({ language: 'markdown', pattern: '**/*analysis*' }, new AnalysisCodeLensProvider())
   );
 
   // CodeLens — phase actions (approve, regenerate, progress bar)
