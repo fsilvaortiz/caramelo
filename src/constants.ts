@@ -41,7 +41,7 @@ export const PHASE_FILES: Record<string, string> = {
   tasks: 'tasks.md',
 };
 
-export type ProviderType = 'openai-compatible' | 'anthropic' | 'jira';
+export type ProviderType = 'openai-compatible' | 'anthropic' | 'copilot' | 'jira';
 
 export interface ProviderConfig {
   id: string;

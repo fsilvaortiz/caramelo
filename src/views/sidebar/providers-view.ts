@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import type { ProviderRegistry } from '../../providers/registry.js';
 import { OpenAICompatibleProvider } from '../../providers/openai-compatible.js';
 import { ClaudeProvider } from '../../providers/claude.js';
+import { CopilotProvider, getCopilotModels } from '../../providers/copilot.js';
 import { SETTINGS_KEYS } from '../../constants.js';
 import type { ProviderConfig } from '../../constants.js';
 
@@ -13,6 +14,7 @@ const PROVIDER_PRESETS = [
   { label: 'OpenAI', type: 'openai-compatible', endpoint: 'https://api.openai.com/v1', needsKey: true, icon: '🧠' },
   { label: 'Groq', type: 'openai-compatible', endpoint: 'https://api.groq.com/openai/v1', needsKey: true, icon: '⚡' },
   { label: 'LM Studio', type: 'openai-compatible', endpoint: 'http://localhost:1234/v1', needsKey: false, icon: '🖥️' },
+  { label: 'Copilot', type: 'copilot', endpoint: '', needsKey: false, icon: '🐙' },
   { label: 'Jira', type: 'jira', endpoint: '', needsKey: true, icon: '📋' },
 ];
 
@@ -84,9 +86,14 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
       endpoint: msg.endpoint, model: msg.model,
     };
 
-    const provider = msg.type === 'anthropic'
-      ? new ClaudeProvider({ ...config, apiKeyId }, this.secrets)
-      : new OpenAICompatibleProvider({ ...config, apiKeyId: msg.apiKey ? apiKeyId : undefined }, this.secrets);
+    let provider: import('../../providers/types.js').LLMProvider;
+    if (msg.type === 'copilot') {
+      provider = new CopilotProvider(id, msg.name, msg.model);
+    } else if (msg.type === 'anthropic') {
+      provider = new ClaudeProvider({ ...config, apiKeyId }, this.secrets);
+    } else {
+      provider = new OpenAICompatibleProvider({ ...config, apiKeyId: msg.apiKey ? apiKeyId : undefined }, this.secrets);
+    }
 
     if (msg.apiKey) await provider.authenticate().catch(() => {});
     this.registry.register(provider);
@@ -115,7 +122,13 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async handleFetchModels(msg: { type: string; endpoint: string; apiKey?: string }): Promise<void> {
-    const models = await this.fetchModelsFromAPI(msg.type, msg.endpoint, msg.apiKey);
+    let models: ModelInfo[];
+    if (msg.type === 'copilot') {
+      const copilotModels = await getCopilotModels();
+      models = copilotModels.map((m) => ({ id: m.family, name: m.name }));
+    } else {
+      models = await this.fetchModelsFromAPI(msg.type, msg.endpoint, msg.apiKey);
+    }
     this.view?.webview.postMessage({ command: 'modelsLoaded', models });
   }
 
@@ -125,8 +138,14 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     const config = configs.find((c) => c.id === id);
     if (!config) return;
 
-    const apiKey = await this.secrets.get(`caramelo.provider.${id}.apiKey`);
-    const models = await this.fetchModelsFromAPI(config.type, config.endpoint, apiKey ?? undefined);
+    let models: ModelInfo[];
+    if (config.type === 'copilot') {
+      const copilotModels = await getCopilotModels();
+      models = copilotModels.map((m) => ({ id: m.family, name: m.name }));
+    } else {
+      const apiKey = await this.secrets.get(`caramelo.provider.${id}.apiKey`);
+      models = await this.fetchModelsFromAPI(config.type, config.endpoint, apiKey ?? undefined);
+    }
 
     const items = models.map((m) => ({
       label: m.id === config.model ? `$(check) ${m.name}` : m.name,
@@ -147,10 +166,15 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
 
     // Re-register provider with new model
     this.registry.unregister(id);
-    const apiKeyId = `caramelo.provider.${id}.apiKey`;
-    const provider = config.type === 'anthropic'
-      ? new ClaudeProvider({ ...config, apiKeyId }, this.secrets)
-      : new OpenAICompatibleProvider({ ...config, apiKeyId }, this.secrets);
+    let provider: import('../../providers/types.js').LLMProvider;
+    if (config.type === 'copilot') {
+      provider = new CopilotProvider(id, config.name, config.model);
+    } else {
+      const apiKeyId = `caramelo.provider.${id}.apiKey`;
+      provider = config.type === 'anthropic'
+        ? new ClaudeProvider({ ...config, apiKeyId }, this.secrets)
+        : new OpenAICompatibleProvider({ ...config, apiKeyId }, this.secrets);
+    }
     await provider.authenticate().catch(() => {});
     this.registry.register(provider);
     await this.registry.setActive(id);
@@ -226,6 +250,16 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
         addSection = `<div class="add-form">
           <div class="add-header">${preset.icon} ${preset.label}<button class="btn-cancel" onclick="msg('cancelAdd')">×</button></div>
           <button class="btn-primary" onclick="msg('addJira')">Configure Jira</button>
+        </div>`;
+      } else if (preset.type === 'copilot') {
+        addSection = `<div class="add-form">
+          <div class="add-header">${preset.icon} ${preset.label}<button class="btn-cancel" onclick="msg('cancelAdd')">×</button></div>
+          <p class="form-hint">Uses your GitHub Copilot subscription. No API key needed.</p>
+          <div id="modelSection" style="display:none">
+            <select id="addModel" class="input"><option>Loading models...</option></select>
+          </div>
+          <input id="addModelManual" class="input" placeholder="Model family" style="display:none" />
+          <button class="btn-primary" id="btnAdd" onclick="submitAdd('Copilot','copilot')" disabled>Loading models...</button>
         </div>`;
       } else {
         addSection = `<div class="add-form">
@@ -401,4 +435,5 @@ select.input { appearance: auto; }
 }
 .btn-primary:hover { background: var(--vscode-button-hoverBackground); }
 .btn-primary:disabled { opacity: 0.5; cursor: default; }
+.form-hint { font-size: 0.8em; color: var(--vscode-descriptionForeground); margin-bottom: 6px; }
 </style>`;

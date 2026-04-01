@@ -3,6 +3,7 @@ import * as path from 'path';
 import { ProviderRegistry } from './providers/registry.js';
 import { OpenAICompatibleProvider } from './providers/openai-compatible.js';
 import { ClaudeProvider } from './providers/claude.js';
+import { CopilotProvider } from './providers/copilot.js';
 import { ProvidersViewProvider } from './views/sidebar/providers-view.js';
 import { TaskCodeLensProvider } from './views/codelens/tasks-codelens.js';
 import { PhaseActionsCodeLensProvider } from './views/codelens/phase-actions-codelens.js';
@@ -36,11 +37,18 @@ export function activate(context: vscode.ExtensionContext): void {
   // Register providers from settings
   const providerConfigs = vscode.workspace.getConfiguration().get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
   for (const config of providerConfigs) {
-    const apiKeyId = `caramelo.provider.${config.id}.apiKey`;
-    const provider = config.type === 'anthropic'
-      ? new ClaudeProvider({ ...config, apiKeyId }, secrets)
-      : new OpenAICompatibleProvider({ ...config, apiKeyId }, secrets);
-    provider.authenticate().catch(() => {}); // Load keys silently
+    if (config.type === 'jira') continue; // Jira is not an LLM provider
+    let provider;
+    if (config.type === 'copilot') {
+      provider = new CopilotProvider(config.id, config.name, config.model);
+    } else if (config.type === 'anthropic') {
+      const apiKeyId = `caramelo.provider.${config.id}.apiKey`;
+      provider = new ClaudeProvider({ ...config, apiKeyId }, secrets);
+    } else {
+      const apiKeyId = `caramelo.provider.${config.id}.apiKey`;
+      provider = new OpenAICompatibleProvider({ ...config, apiKeyId }, secrets);
+    }
+    provider.authenticate().catch(() => {});
     registry.register(provider);
   }
   registry.restoreActiveFromSettings();
