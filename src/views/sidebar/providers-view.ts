@@ -67,6 +67,9 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
             this.view?.webview.postMessage({ command: 'jiraTestResult', success: false, error: String(err) });
           });
           break;
+        case 'searchJiraBoards':
+          this.handleSearchBoards(msg).catch(() => {});
+          break;
         case 'addJiraProvider':
           await this.handleAddJira(msg);
           break;
@@ -215,46 +218,29 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    // Step 2: Fetch ALL boards with pagination
+    sendResult(true, {});
+  }
+
+  private async handleSearchBoards(msg: { url: string; email: string; token: string; query: string }): Promise<void> {
+    const url = msg.url.replace(/\/+$/, '');
+    const auth = `Basic ${Buffer.from(`${msg.email}:${msg.token}`).toString('base64')}`;
+    const headers = { 'Authorization': auth, 'Accept': 'application/json' };
+
     try {
-      console.log('[Caramelo] Jira: fetching boards...');
-      const allBoards: Array<{ id: string; name: string; type: string }> = [];
-      let startAt = 0;
-      const maxResults = 50;
-      let hasMore = true;
-
-      while (hasMore) {
-        // Send progress to webview
-        this.view?.webview.postMessage({ command: 'jiraProgress', message: `Loading boards... (${allBoards.length} found)` });
-
-        const res = await fetch(
-          `${url}/rest/agile/1.0/board?maxResults=${maxResults}&startAt=${startAt}`,
-          { headers, signal: AbortSignal.timeout(30000) }
-        );
-        if (!res.ok) {
-          sendResult(false, { error: `Failed to fetch boards (HTTP ${res.status}). Check permissions.` });
-          return;
-        }
-        const data = await res.json() as { values: Array<{ id: number; name: string; type: string }>; isLast?: boolean; total?: number };
-        const batch = (data.values || []).map((b) => ({ id: String(b.id), name: b.name, type: b.type }));
-        allBoards.push(...batch);
-        startAt += maxResults;
-        hasMore = !data.isLast && batch.length === maxResults;
-      }
-
-      console.log('[Caramelo] Jira: found', allBoards.length, 'boards total');
-
-      if (allBoards.length === 0) {
-        sendResult(false, { error: 'Connected but no boards found. Check Jira permissions.' });
+      const nameParam = msg.query ? `&name=${encodeURIComponent(msg.query)}` : '';
+      const res = await fetch(
+        `${url}/rest/agile/1.0/board?maxResults=20${nameParam}`,
+        { headers, signal: AbortSignal.timeout(15000) }
+      );
+      if (!res.ok) {
+        this.view?.webview.postMessage({ command: 'jiraBoardResults', boards: [], error: `HTTP ${res.status}` });
         return;
       }
-
-      allBoards.sort((a, b) => a.name.localeCompare(b.name));
-      sendResult(true, { boards: allBoards });
+      const data = await res.json() as { values: Array<{ id: number; name: string; type: string }> };
+      const boards = (data.values || []).map((b) => ({ id: String(b.id), name: b.name, type: b.type }));
+      this.view?.webview.postMessage({ command: 'jiraBoardResults', boards });
     } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
-      console.error('[Caramelo] Jira boards error:', error);
-      sendResult(false, { error: `Board fetch error: ${error}` });
+      this.view?.webview.postMessage({ command: 'jiraBoardResults', boards: [], error: String(err) });
     }
   }
 
@@ -351,8 +337,9 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
           <input id="jiraEmail" class="input" placeholder="you@company.com" type="email" />
           <input id="jiraToken" class="input" placeholder="API token (from id.atlassian.com)" type="password" />
           <div id="jiraBoardSection" style="display:none">
-            <input id="jiraBoardFilter" class="input" placeholder="Filter boards..." oninput="filterBoards()" />
-            <select id="jiraBoard" class="input" size="6"></select>
+            <input id="jiraBoardSearch" class="input" placeholder="Search board name..." oninput="searchBoards()" />
+            <select id="jiraBoard" class="input" size="5" style="display:none"></select>
+            <div id="jiraBoardHint" class="form-hint"></div>
           </div>
           <button class="btn-primary" id="btnJira" onclick="testJira()" disabled>Enter credentials first</button>
           <div id="jiraStatus" class="form-status"></div>
@@ -487,6 +474,32 @@ window.addEventListener('message', (event) => {
     if (statusEl) { statusEl.textContent = msg.message || ''; statusEl.style.color = ''; }
   }
 
+  // Handle Jira board search results
+  if (msg.command === 'jiraBoardResults') {
+    const select = document.getElementById('jiraBoard');
+    const hint = document.getElementById('jiraBoardHint');
+    const btnJira = document.getElementById('btnJira');
+    const boards = msg.boards || [];
+
+    if (boards.length > 0) {
+      select.style.display = 'block';
+      select.innerHTML = boards.map(b =>
+        '<option value="' + b.id + '" data-name="' + b.name.replace(/"/g, '&quot;') + '">' + b.name + ' (' + b.type + ')</option>'
+      ).join('');
+      if (hint) hint.textContent = boards.length + ' board(s) found';
+      // Enable add button when a board is selected
+      select.onchange = function() {
+        if (btnJira) { btnJira.textContent = 'Add Jira Provider'; btnJira.disabled = false; btnJira.onclick = function() { submitJira(); }; }
+      };
+      // Auto-enable if only one result
+      if (boards.length === 1 && btnJira) { btnJira.textContent = 'Add Jira Provider'; btnJira.disabled = false; btnJira.onclick = function() { submitJira(); }; }
+    } else {
+      select.style.display = 'none';
+      if (hint) hint.textContent = msg.error ? 'Error: ' + msg.error : 'No boards found. Try a different name.';
+      if (btnJira) { btnJira.textContent = 'Select a board first'; btnJira.disabled = true; }
+    }
+  }
+
   // Handle Jira test result
   if (msg.command === 'jiraTestResult') {
     const statusEl = document.getElementById('jiraStatus');
@@ -495,17 +508,14 @@ window.addEventListener('message', (event) => {
     const boardSelect = document.getElementById('jiraBoard');
 
     if (statusEl && btnJira) {
-      if (msg.success && msg.boards) {
-        statusEl.textContent = '✓ Connected (' + msg.boards.length + ' boards)';
+      if (msg.success) {
+        statusEl.textContent = '✓ Connected — search for your board below';
         statusEl.style.color = '#4CAF50';
         if (boardSection) boardSection.style.display = 'block';
-        allJiraBoards = msg.boards;
-        filterBoards();
-        const filterInput = document.getElementById('jiraBoardFilter');
-        if (filterInput) filterInput.focus();
-        btnJira.textContent = 'Add Jira Provider';
-        btnJira.disabled = false;
-        btnJira.onclick = function() { submitJira(); };
+        const searchInput = document.getElementById('jiraBoardSearch');
+        if (searchInput) searchInput.focus();
+        btnJira.textContent = 'Select a board first';
+        btnJira.disabled = true;
       } else {
         statusEl.textContent = '✗ ' + (msg.error || 'Connection failed');
         statusEl.style.color = '#f44';
@@ -518,16 +528,24 @@ window.addEventListener('message', (event) => {
 });
 ` : ''}
 
-let allJiraBoards = [];
+let boardDebounce;
 
-function filterBoards() {
-  const filter = (document.getElementById('jiraBoardFilter')?.value || '').toLowerCase();
-  const select = document.getElementById('jiraBoard');
-  if (!select) return;
-  const filtered = filter ? allJiraBoards.filter(b => b.name.toLowerCase().includes(filter)) : allJiraBoards;
-  select.innerHTML = filtered.map(b =>
-    '<option value="' + b.id + '" data-name="' + b.name.replace(/"/g, '&quot;') + '">' + b.name + ' (' + b.type + ')</option>'
-  ).join('');
+function searchBoards() {
+  clearTimeout(boardDebounce);
+  const query = (document.getElementById('jiraBoardSearch')?.value || '').trim();
+  const hint = document.getElementById('jiraBoardHint');
+  if (query.length < 2) {
+    document.getElementById('jiraBoard').style.display = 'none';
+    if (hint) hint.textContent = 'Type at least 2 characters to search';
+    return;
+  }
+  if (hint) hint.textContent = 'Searching...';
+  boardDebounce = setTimeout(() => {
+    const url = document.getElementById('jiraUrl')?.value || '';
+    const email = document.getElementById('jiraEmail')?.value || '';
+    const token = document.getElementById('jiraToken')?.value || '';
+    msg('searchJiraBoards', { url, email, token, query });
+  }, 400);
 }
 
 function testJira() {
