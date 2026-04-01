@@ -35,7 +35,7 @@ export async function clarifySpec(
 
   let response = '';
   await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: 'Analyzing spec for ambiguities...' },
+    { location: vscode.ProgressLocation.Window, title: 'Analyzing spec for ambiguities...' },
     async () => {
       for await (const chunk of provider.chat(
         [

@@ -26,6 +26,7 @@ import { createSpecFromJira } from './commands/create-spec-from-jira.js';
 import { generateChecklist } from './commands/generate-checklist.js';
 import { TemplateSync } from './speckit/sync.js';
 import { COMMAND_IDS, VIEW_IDS, SETTINGS_KEYS } from './constants.js';
+import { initProgressBar } from './progress.js';
 import type { ProviderConfig } from './constants.js';
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -43,6 +44,9 @@ export function activate(context: vscode.ExtensionContext): void {
     registry.register(provider);
   }
   registry.restoreActiveFromSettings();
+
+  // Progress bar in status bar
+  initProgressBar(context);
 
   // Providers TreeView (compact, collapsed by default)
   const providersTree = new ProvidersTreeDataProvider(registry, context.extensionPath);

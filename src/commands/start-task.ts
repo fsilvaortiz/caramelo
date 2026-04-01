@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { ProviderRegistry } from '../providers/registry.js';
 import { SPECS_DIR_NAME } from '../constants.js';
+import { showProgress, updateProgress, hideProgress } from '../progress.js';
 
 let outputChannel: vscode.OutputChannel | undefined;
 
@@ -42,18 +43,12 @@ Only output file blocks. No explanations outside file blocks.`;
 
   const userPrompt = `Task: ${taskText}\n\n${context ? `Context:\n${context}` : ''}`;
 
-  await vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: `Running task: ${taskText.slice(0, 50)}...`,
-      cancellable: true,
-    },
-    async (_progress, token) => {
-      const abortController = new AbortController();
-      token.onCancellationRequested(() => abortController.abort());
+  const abortController = new AbortController();
+  showProgress(`Task: ${taskText.slice(0, 40)}...`, () => abortController.abort());
 
+  try {
       const channel = getOutputChannel();
-      channel.show(true); // Show output panel, preserve focus on editor
+      channel.show(true);
       channel.appendLine(`\n${'─'.repeat(60)}`);
       channel.appendLine(`▶ Task: ${taskText}`);
       channel.appendLine(`  ${new Date().toLocaleTimeString()}`);
@@ -101,8 +96,9 @@ Only output file blocks. No explanations outside file blocks.`;
         channel.appendLine(`✓ Task complete. ${applied} file(s) created/updated.`);
         vscode.window.showInformationMessage(`Task complete. ${applied} file(s) created/updated.`);
       }
-    }
-  );
+  } finally {
+    hideProgress();
+  }
 }
 
 interface FileBlock {

@@ -45,7 +45,7 @@ IMPORTANT: Do NOT include generic items. Every item must reference specific cont
 
   let response = '';
   await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: `Generating checklist for ${phaseType}...` },
+    { location: vscode.ProgressLocation.Window, title: `Generating checklist for ${phaseType}...` },
     async () => {
       for await (const chunk of provider.chat(
         [

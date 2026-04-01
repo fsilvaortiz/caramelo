@@ -11,8 +11,8 @@ Thumbs.db
 .vscode-test/
 
 # Spec artifacts (project-specific, not extension source)
-specs/
-.specify/memory/
+/specs/
+/.specify/memory/
 
 # Claude Code files
 CLAUDE.md

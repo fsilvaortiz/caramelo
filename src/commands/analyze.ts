@@ -56,7 +56,7 @@ Output ONLY the JSON between \`\`\`json and \`\`\` delimiters. If no issues foun
 
   let response = '';
   await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: 'Analyzing consistency...' },
+    { location: vscode.ProgressLocation.Window, title: 'Analyzing consistency...' },
     async () => {
       for await (const chunk of provider.chat(
         [{ role: 'system', content: systemPrompt }, { role: 'user', content: combinedContent }]
@@ -124,7 +124,7 @@ Only fix the specific issue. Do not change anything else.`;
 
   let output = '';
   await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: `Fixing: ${finding.finding.slice(0, 50)}...` },
+    { location: vscode.ProgressLocation.Window, title: `Fixing: ${finding.finding.slice(0, 50)}...` },
     async () => {
       for await (const chunk of provider.chat(
         [{ role: 'system', content: systemPrompt }, { role: 'user', content: docsContent.join('\n\n---\n\n') }]
@@ -192,7 +192,7 @@ Fix all issues. Ensure cross-document consistency. Do not change anything unrela
 
   let output = '';
   await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: `Fixing ${findings.length} issues...`, cancellable: true },
+    { location: vscode.ProgressLocation.Window, title: `Fixing ${findings.length} issues...`, cancellable: true },
     async (_progress, token) => {
       const abortController = new AbortController();
       token.onCancellationRequested(() => abortController.abort());

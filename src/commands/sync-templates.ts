@@ -4,7 +4,7 @@ import type { TemplateSync } from '../speckit/sync.js';
 export async function syncTemplates(templateSync: TemplateSync): Promise<void> {
   await vscode.window.withProgress(
     {
-      location: vscode.ProgressLocation.Notification,
+      location: vscode.ProgressLocation.Window,
       title: 'Syncing Spec Kit templates...',
       cancellable: false,
     },
