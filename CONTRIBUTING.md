@@ -55,8 +55,9 @@ src/
 
 1. Create `src/providers/my-provider.ts` implementing the `LLMProvider` interface from `src/providers/types.ts`
 2. The `chat()` method must return `AsyncIterable<string>` for streaming
-3. Register it in `src/commands/select-provider.ts` preset list
-4. No SDK dependencies — use `fetch` + the shared SSE parser in `src/providers/sse.ts`
+3. Add a preset in `src/views/sidebar/providers-view.ts` PROVIDER_PRESETS array
+4. Handle the new type in `handleAdd()`, `handleChangeModel()`, and `src/extension.ts` activation
+5. No SDK dependencies — use `fetch` + SSE parser, or VS Code APIs (like `vscode.lm` for Copilot)
 
 ## Adding a New Integration (like Jira)
 

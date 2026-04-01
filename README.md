@@ -39,7 +39,7 @@
 
 ### LLM Agnostic
 
-- **Any provider**: Claude, OpenAI, Ollama, Groq, LM Studio, or any OpenAI-compatible endpoint
+- **Any provider**: GitHub Copilot, Claude, OpenAI, Ollama, Groq, LM Studio, or any OpenAI-compatible endpoint
 - **Multiple providers** configured simultaneously — switch with one click
 - **Auto-detect models** — available models fetched from provider API after entering credentials
 - **Change model anytime** — click the model name in the providers panel to switch
@@ -88,7 +88,7 @@ Search for **"Caramelo"** in the Extensions panel, or install from the [Marketpl
 ### From VSIX
 
 ```bash
-code --install-extension caramelo-0.0.2.vsix
+code --install-extension caramelo-0.0.3.vsix
 ```
 
 ### From Source
@@ -122,6 +122,7 @@ Press **F5** in VS Code to launch the Extension Development Host.
 
 | Provider | Endpoint | Auth |
 |----------|----------|------|
+| **GitHub Copilot** | Via VS Code API | Copilot subscription |
 | **Ollama** | `http://localhost:11434/v1` | None |
 | **Claude** | `https://api.anthropic.com` | API key |
 | **OpenAI** | `https://api.openai.com/v1` | API key |

@@ -3,6 +3,7 @@ src/**
 test/**
 node_modules/**
 specs/**
+marketing/**
 .specify/**
 .claude/**
 .github/**
@@ -12,6 +13,6 @@ esbuild.js
 eslint.config.js
 CLAUDE.md
 CONTRIBUTING.md
-*.map
 **/*.ts
-!dist/**
+**/*.map
+!dist/extension.js

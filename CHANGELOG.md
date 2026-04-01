@@ -36,3 +36,4 @@
 - **SSE Parser Improvements**: 5-min per-chunk timeout, flexible newline handling for Ollama compatibility
 - **Implement Button**: Tasks phase shows "Implement" button to run all tasks directly from sidebar
 - **Auxiliary Files Display**: research.md, data-model.md, analysis.md, checklists shown under each phase in sidebar
+- **GitHub Copilot Provider**: Use Copilot's LLM models (GPT-4o, Claude Sonnet, Gemini, etc.) via vscode.lm API — no API key needed, uses existing Copilot subscription
