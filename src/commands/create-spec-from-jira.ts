@@ -54,35 +54,65 @@ export async function createSpecFromJira(workspaceUri: vscode.Uri | undefined): 
   );
 
   // Fetch issues
-  const quickPick = vscode.window.createQuickPick();
-  quickPick.placeholder = 'Search issues...';
+  type IssueItem = vscode.QuickPickItem & { issue?: { key: string; summary: string; description: string; acceptanceCriteria: string; comments: string[]; url: string } };
+
+  const quickPick = vscode.window.createQuickPick<IssueItem>();
+  quickPick.placeholder = 'Type issue key (e.g. PROJ-123) or search board issues...';
   quickPick.title = `Issues from ${jiraConfig.boardName}`;
+  quickPick.matchOnDescription = true;
+  quickPick.matchOnDetail = true;
   quickPick.busy = true;
   quickPick.show();
 
-  // Load all issues from board (Agile API) and filter client-side
-  type IssueItem = vscode.QuickPickItem & { issue?: { key: string; summary: string; description: string; acceptanceCriteria: string; comments: string[]; url: string } };
-  let allItems: IssueItem[] = [];
-
-  quickPick.busy = true;
+  // Load board issues
+  let boardItems: IssueItem[] = [];
   try {
     const result = await client.searchIssues(undefined, 100);
-    allItems = result.issues.map((issue) => ({
+    boardItems = result.issues.map((issue) => ({
       label: `${issue.key}  ${issue.summary}`,
       description: `${issue.status} — ${issue.assignee}`,
       detail: issue.description.slice(0, 200),
       issue,
     }));
-    quickPick.items = allItems;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    vscode.window.showErrorMessage(`Failed to load issues: ${msg}`);
+  } catch {
+    // Board issues may fail — that's OK, user can search by key
   }
+
+  // Add a hint item for direct key lookup
+  const hintItem: IssueItem = { label: '$(search) Enter an issue key directly (e.g. PROJ-123)', kind: vscode.QuickPickItemKind.Separator };
+  quickPick.items = [...boardItems];
   quickPick.busy = false;
 
-  // Client-side filtering (QuickPick already does this natively via matchOnDescription + matchOnDetail)
-  quickPick.matchOnDescription = true;
-  quickPick.matchOnDetail = true;
+  // When user types something that looks like an issue key, fetch it directly
+  let searchDebounce: ReturnType<typeof setTimeout>;
+  quickPick.onDidChangeValue((value) => {
+    clearTimeout(searchDebounce);
+    const trimmed = value.trim().toUpperCase();
+
+    // Check if it looks like an issue key (e.g. PROJ-123)
+    if (/^[A-Z]+-\d+$/.test(trimmed)) {
+      searchDebounce = setTimeout(async () => {
+        quickPick.busy = true;
+        try {
+          const issue = await client.getIssue(trimmed);
+          // Check if already in list
+          const exists = boardItems.some((i) => i.issue?.key === issue.key);
+          if (!exists) {
+            const item: IssueItem = {
+              label: `${issue.key}  ${issue.summary}`,
+              description: `${issue.status} — ${issue.assignee}`,
+              detail: issue.description.slice(0, 200),
+              issue,
+            };
+            quickPick.items = [item, ...boardItems];
+          }
+        } catch {
+          // Issue not found — ignore
+        }
+        quickPick.busy = false;
+      }, 300);
+    }
+  });
 
   // Handle selection
   const selected = await new Promise<(vscode.QuickPickItem & { issue?: { key: string; summary: string; description: string; acceptanceCriteria: string; comments: string[]; url: string } }) | undefined>((resolve) => {
