@@ -50,6 +50,7 @@
       "caramelo": [
         {
           "id": "caramelo.providers",
+          "type": "webview",
           "name": "Providers",
           "visibility": "collapsed"
         },
@@ -190,43 +191,12 @@
     "menus": {
       "view/title": [
         {
-          "command": "caramelo.addProvider",
-          "when": "view == caramelo.providers",
-          "group": "navigation"
-        },
-        {
           "command": "caramelo.openDag",
           "when": "view == caramelo.workflow",
           "group": "navigation"
         }
       ],
-      "view/item/context": [
-        {
-          "command": "caramelo.editProvider",
-          "when": "viewItem == provider",
-          "group": "inline@1"
-        },
-        {
-          "command": "caramelo.deleteProvider",
-          "when": "viewItem == provider",
-          "group": "inline@2"
-        },
-        {
-          "command": "caramelo.editProvider",
-          "when": "viewItem == provider",
-          "group": "1_modify@1"
-        },
-        {
-          "command": "caramelo.testProvider",
-          "when": "viewItem == provider",
-          "group": "1_modify@2"
-        },
-        {
-          "command": "caramelo.deleteProvider",
-          "when": "viewItem == provider",
-          "group": "2_danger@1"
-        }
-      ],
+      "view/item/context": [],
       "editor/title": [
         {
           "submenu": "caramelo.editorMenu",

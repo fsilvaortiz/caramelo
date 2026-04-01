@@ -3,7 +3,7 @@ import * as path from 'path';
 import { ProviderRegistry } from './providers/registry.js';
 import { OpenAICompatibleProvider } from './providers/openai-compatible.js';
 import { ClaudeProvider } from './providers/claude.js';
-import { ProvidersTreeDataProvider } from './views/sidebar/providers-tree.js';
+import { ProvidersViewProvider } from './views/sidebar/providers-view.js';
 import { TaskCodeLensProvider } from './views/codelens/tasks-codelens.js';
 import { PhaseActionsCodeLensProvider } from './views/codelens/phase-actions-codelens.js';
 import { EditorContextTracker } from './views/editor-context.js';
@@ -12,7 +12,7 @@ import { WorkflowViewProvider } from './views/sidebar/workflow-view.js';
 import { SpecWorkspace } from './specs/workspace.js';
 import { TemplateManager } from './speckit/templates.js';
 import { WorkflowEngine } from './specs/workflow.js';
-import { selectProvider, addProviderWizard, editProvider, deleteProvider, testProvider } from './commands/select-provider.js';
+import { selectProvider, addProviderWizard } from './commands/select-provider.js';
 import { newSpec } from './commands/new-spec.js';
 import { runPhase } from './commands/run-phase.js';
 import { approvePhase } from './commands/approve-phase.js';
@@ -48,10 +48,11 @@ export function activate(context: vscode.ExtensionContext): void {
   // Progress bar in status bar
   initProgressBar(context);
 
-  // Providers TreeView (compact, collapsed by default)
-  const providersTree = new ProvidersTreeDataProvider(registry, context.extensionPath);
-  vscode.window.createTreeView(VIEW_IDS.providers, { treeDataProvider: providersTree });
-  providersTree.checkAllConnections().catch(() => {});
+  // Providers WebviewView
+  const providersView = new ProvidersViewProvider(registry, secrets);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(ProvidersViewProvider.viewType, providersView)
+  );
 
   // Spec Workspace
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
@@ -115,17 +116,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('caramelo.addProvider', () =>
       addProviderWizard(registry, secrets)
     ),
-    vscode.commands.registerCommand('caramelo.editProvider', (item: { providerId: string }) =>
-      editProvider(item.providerId, registry, secrets)
-    ),
-    vscode.commands.registerCommand('caramelo.deleteProvider', (item: { providerId: string }) =>
-      deleteProvider(item.providerId, registry)
-    ),
-    vscode.commands.registerCommand('caramelo.testProvider', (item: { providerId: string }) =>
-      testProvider(item.providerId, registry)
-    ),
     vscode.commands.registerCommand(COMMAND_IDS.editConstitution, () => {
-      editConstitution(context, { refresh: () => workflowView.refresh() } as import('./views/sidebar/constitution-tree.js').ConstitutionTreeDataProvider);
+      editConstitution(context, { refresh: () => workflowView.refresh() } as import('./views/sidebar/constitution-tree.js').ConstitutionTreeDataProvider, registry);
     }),
     vscode.commands.registerCommand(COMMAND_IDS.newSpec, () => {
       if (!specWorkspace) { vscode.window.showWarningMessage('No workspace folder open'); return; }
