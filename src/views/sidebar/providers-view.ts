@@ -3,6 +3,7 @@ import type { ProviderRegistry } from '../../providers/registry.js';
 import { OpenAICompatibleProvider } from '../../providers/openai-compatible.js';
 import { ClaudeProvider } from '../../providers/claude.js';
 import { CopilotProvider, getCopilotModels } from '../../providers/copilot.js';
+import { JiraClient } from '../../jira/jira-client.js';
 import { SETTINGS_KEYS } from '../../constants.js';
 import type { ProviderConfig } from '../../constants.js';
 
@@ -190,7 +191,6 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     };
 
     try {
-      const { JiraClient } = await import('../../jira/jira-client.js');
       const url = msg.url.replace(/\/+$/, '');
       const client = new JiraClient(url, msg.email, msg.token);
 
