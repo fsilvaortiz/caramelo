@@ -1,0 +1,352 @@
+{
+  "name": "caramelo",
+  "displayName": "Caramelo",
+  "description": "Visual spec-driven development extension, LLM-agnostic, compatible with GitHub Spec Kit",
+  "version": "0.0.1",
+  "publisher": "fsilvaortiz",
+  "license": "MIT",
+  "icon": "resources/icons/caramelo-logo.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fsilvaortiz/caramelo"
+  },
+  "homepage": "https://github.com/fsilvaortiz/caramelo#readme",
+  "bugs": {
+    "url": "https://github.com/fsilvaortiz/caramelo/issues"
+  },
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "keywords": [
+    "spec-driven-development",
+    "spec-kit",
+    "llm",
+    "ai",
+    "specification",
+    "planning",
+    "ollama",
+    "claude",
+    "openai"
+  ],
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:caramelo.workflow",
+    "workspaceContains:.specify"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "caramelo",
+          "title": "Caramelo",
+          "icon": "resources/icons/caramelo_activity_bar.svg"
+        }
+      ]
+    },
+    "views": {
+      "caramelo": [
+        {
+          "id": "caramelo.providers",
+          "name": "Providers",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "caramelo.workflow",
+          "type": "webview",
+          "name": "Workflow",
+          "visibility": "visible"
+        }
+      ]
+    },
+    "submenus": [
+      {
+        "id": "caramelo.editorMenu",
+        "label": "Caramelo",
+        "icon": "resources/icons/caramelo_activity_bar.svg"
+      }
+    ],
+    "commands": [
+      {
+        "command": "caramelo.newSpec",
+        "title": "Caramelo: New Spec",
+        "icon": "$(add)"
+      },
+      {
+        "command": "caramelo.selectProvider",
+        "title": "Caramelo: Select Provider"
+      },
+      {
+        "command": "caramelo.addProvider",
+        "title": "Caramelo: Add Provider",
+        "icon": "$(add)"
+      },
+      {
+        "command": "caramelo.editConstitution",
+        "title": "Caramelo: Edit Constitution",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "caramelo.startTask",
+        "title": "Caramelo: Start Task"
+      },
+      {
+        "command": "caramelo.runPhase",
+        "title": "Caramelo: Generate Phase",
+        "icon": "$(play)"
+      },
+      {
+        "command": "caramelo.approvePhase",
+        "title": "Caramelo: Approve Phase",
+        "icon": "$(check)"
+      },
+      {
+        "command": "caramelo.regeneratePhase",
+        "title": "Caramelo: Regenerate Phase"
+      },
+      {
+        "command": "caramelo.syncTemplates",
+        "title": "Caramelo: Sync Spec Kit Templates"
+      },
+      {
+        "command": "caramelo.viewChanges",
+        "title": "Caramelo: View Changes"
+      },
+      {
+        "command": "caramelo.previewSpec",
+        "title": "Caramelo: Preview Spec"
+      },
+      {
+        "command": "caramelo.approvePhaseFromEditor",
+        "title": "Approve",
+        "icon": "$(check)"
+      },
+      {
+        "command": "caramelo.regeneratePhaseFromEditor",
+        "title": "Regenerate",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "caramelo.nextPhaseFromEditor",
+        "title": "Next Phase",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "caramelo.runNextTaskFromEditor",
+        "title": "Run Next Task",
+        "icon": "$(play)"
+      },
+      {
+        "command": "caramelo.runAllTasks",
+        "title": "Run All Tasks",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "caramelo.openDag",
+        "title": "Caramelo: Workflow Map",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "caramelo.createSpecFromJira",
+        "title": "Caramelo: Create Spec from Jira",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "caramelo.clarify",
+        "title": "Clarify Spec",
+        "icon": "$(question)"
+      },
+      {
+        "command": "caramelo.analyze",
+        "title": "Analyze Consistency",
+        "icon": "$(search)"
+      },
+      {
+        "command": "caramelo.generateChecklist",
+        "title": "Generate Checklist",
+        "icon": "$(checklist)"
+      },
+      {
+        "command": "caramelo.editProvider",
+        "title": "Edit Provider",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "caramelo.deleteProvider",
+        "title": "Delete Provider",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "caramelo.testProvider",
+        "title": "Test Connection",
+        "icon": "$(debug-start)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "caramelo.addProvider",
+          "when": "view == caramelo.providers",
+          "group": "navigation"
+        },
+        {
+          "command": "caramelo.openDag",
+          "when": "view == caramelo.workflow",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "caramelo.editProvider",
+          "when": "viewItem == provider",
+          "group": "inline@1"
+        },
+        {
+          "command": "caramelo.deleteProvider",
+          "when": "viewItem == provider",
+          "group": "inline@2"
+        },
+        {
+          "command": "caramelo.editProvider",
+          "when": "viewItem == provider",
+          "group": "1_modify@1"
+        },
+        {
+          "command": "caramelo.testProvider",
+          "when": "viewItem == provider",
+          "group": "1_modify@2"
+        },
+        {
+          "command": "caramelo.deleteProvider",
+          "when": "viewItem == provider",
+          "group": "2_danger@1"
+        }
+      ],
+      "editor/title": [
+        {
+          "submenu": "caramelo.editorMenu",
+          "when": "caramelo.editorPhaseStatus || caramelo.editorHasPendingTasks",
+          "group": "navigation"
+        }
+      ],
+      "caramelo.editorMenu": [
+        {
+          "command": "caramelo.approvePhaseFromEditor",
+          "when": "caramelo.editorPhaseStatus == pending-approval",
+          "group": "1_phase@1"
+        },
+        {
+          "command": "caramelo.regeneratePhaseFromEditor",
+          "when": "caramelo.editorPhaseStatus == pending-approval || caramelo.editorPhaseStatus == approved || caramelo.editorPhaseStatus == stale",
+          "group": "1_phase@2"
+        },
+        {
+          "command": "caramelo.nextPhaseFromEditor",
+          "when": "caramelo.editorHasNextPhase",
+          "group": "1_phase@3"
+        },
+        {
+          "command": "caramelo.runNextTaskFromEditor",
+          "when": "caramelo.editorHasPendingTasks",
+          "group": "2_tasks@1"
+        },
+        {
+          "command": "caramelo.runAllTasks",
+          "when": "caramelo.editorHasPendingTasks",
+          "group": "2_tasks@2"
+        },
+        {
+          "command": "caramelo.clarify",
+          "when": "caramelo.editorIsRequirements",
+          "group": "3_quality@1"
+        },
+        {
+          "command": "caramelo.analyze",
+          "when": "caramelo.editorHasMultiplePhases",
+          "group": "3_quality@2"
+        },
+        {
+          "command": "caramelo.generateChecklist",
+          "when": "caramelo.editorPhaseStatus == pending-approval || caramelo.editorPhaseStatus == approved",
+          "group": "3_quality@3"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Caramelo",
+      "properties": {
+        "caramelo.providers": {
+          "type": "array",
+          "default": [],
+          "description": "Configured LLM providers",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Unique provider identifier"
+              },
+              "name": {
+                "type": "string",
+                "description": "Display name"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "openai-compatible",
+                  "anthropic"
+                ],
+                "description": "Provider API type"
+              },
+              "endpoint": {
+                "type": "string",
+                "description": "Base URL for the provider API"
+              },
+              "model": {
+                "type": "string",
+                "description": "Model identifier"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "type",
+              "endpoint",
+              "model"
+            ]
+          }
+        },
+        "caramelo.activeProvider": {
+          "type": "string",
+          "default": "",
+          "description": "ID of the currently active LLM provider"
+        }
+      }
+    }
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Specs can be browsed but LLM execution is blocked in untrusted workspaces"
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "lint": "eslint src/",
+    "test": "vitest run",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.95.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "esbuild": "^0.24.0",
+    "eslint": "^9.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.0.0"
+  }
+}

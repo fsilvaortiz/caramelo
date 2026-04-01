@@ -1,0 +1,19 @@
+node_modules/
+dist/
+out/
+*.log
+.env*
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+*.vsix
+.vscode-test/
+
+# Spec artifacts (project-specific, not extension source)
+specs/
+.specify/memory/
+
+# Claude Code files
+CLAUDE.md
+.claude/
