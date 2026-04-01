@@ -61,7 +61,11 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
           this.refresh();
           break;
         case 'testJiraConnection':
-          await this.handleTestJira(msg);
+          console.log('[Caramelo] Testing Jira connection:', msg.url);
+          this.handleTestJira(msg).catch((err) => {
+            console.error('[Caramelo] Jira test error:', err);
+            this.view?.webview.postMessage({ command: 'jiraTestResult', success: false, error: String(err) });
+          });
           break;
         case 'addJiraProvider':
           await this.handleAddJira(msg);
@@ -187,20 +191,42 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
 
   private async handleTestJira(msg: { url: string; email: string; token: string }): Promise<void> {
     const sendResult = (success: boolean, data?: { boards?: unknown[]; error?: string }) => {
+      console.log('[Caramelo] Jira test result:', success, data?.error ?? 'OK');
       this.view?.webview.postMessage({ command: 'jiraTestResult', success, ...data });
     };
 
-    try {
-      const url = msg.url.replace(/\/+$/, '');
-      const client = new JiraClient(url, msg.email, msg.token);
+    const url = msg.url.replace(/\/+$/, '');
+    const auth = `Basic ${Buffer.from(`${msg.email}:${msg.token}`).toString('base64')}`;
+    const headers = { 'Authorization': auth, 'Accept': 'application/json' };
 
-      const connected = await client.testConnection();
-      if (!connected) {
-        sendResult(false, { error: 'Connection failed. Check URL, email, and API token.' });
+    // Step 1: Test connection
+    try {
+      console.log('[Caramelo] Jira: testing connection to', url);
+      const res = await fetch(`${url}/rest/api/3/myself`, { headers, signal: AbortSignal.timeout(15000) });
+      console.log('[Caramelo] Jira: response status', res.status);
+      if (!res.ok) {
+        sendResult(false, { error: `Auth failed (HTTP ${res.status}). Check email and API token.` });
         return;
       }
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      console.error('[Caramelo] Jira connection error:', error);
+      sendResult(false, { error: `Connection error: ${error}` });
+      return;
+    }
 
-      const boards = await client.getBoards();
+    // Step 2: Fetch boards
+    try {
+      console.log('[Caramelo] Jira: fetching boards...');
+      const res = await fetch(`${url}/rest/agile/1.0/board?maxResults=100`, { headers, signal: AbortSignal.timeout(15000) });
+      if (!res.ok) {
+        sendResult(false, { error: `Failed to fetch boards (HTTP ${res.status}). Check permissions.` });
+        return;
+      }
+      const data = await res.json() as { values: Array<{ id: number; name: string; type: string }> };
+      const boards = (data.values || []).map((b) => ({ id: String(b.id), name: b.name, type: b.type }));
+      console.log('[Caramelo] Jira: found', boards.length, 'boards');
+
       if (boards.length === 0) {
         sendResult(false, { error: 'Connected but no boards found. Check Jira permissions.' });
         return;
@@ -209,7 +235,8 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
       sendResult(true, { boards });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      sendResult(false, { error: `Error: ${error}` });
+      console.error('[Caramelo] Jira boards error:', error);
+      sendResult(false, { error: `Board fetch error: ${error}` });
     }
   }
 
@@ -432,34 +459,37 @@ window.addEventListener('message', (event) => {
       btnAdd.disabled = false;
     }
   }
-});
 
+  // Handle Jira test result
+  if (msg.command === 'jiraTestResult') {
+    const statusEl = document.getElementById('jiraStatus');
+    const btnJira = document.getElementById('btnJira');
+    const boardSection = document.getElementById('jiraBoardSection');
+    const boardSelect = document.getElementById('jiraBoard');
 
-// Handle Jira test result
-if (msg.command === 'jiraTestResult') {
-  const statusEl = document.getElementById('jiraStatus');
-  const btnJira = document.getElementById('btnJira');
-  const boardSection = document.getElementById('jiraBoardSection');
-  const boardSelect = document.getElementById('jiraBoard');
-
-  if (msg.success && msg.boards) {
-    statusEl.textContent = '✓ Connected';
-    statusEl.style.color = '#4CAF50';
-    boardSection.style.display = 'block';
-    boardSelect.innerHTML = msg.boards.map(b =>
-      '<option value="' + b.id + '" data-name="' + b.name.replace(/"/g, '&quot;') + '">' + b.name + ' (' + b.type + ')</option>'
-    ).join('');
-    btnJira.textContent = 'Add Jira Provider';
-    btnJira.disabled = false;
-    btnJira.onclick = function() { submitJira(); };
-  } else {
-    statusEl.textContent = '✗ ' + (msg.error || 'Connection failed');
-    statusEl.style.color = '#f44';
-    btnJira.textContent = 'Retry';
-    btnJira.disabled = false;
-    btnJira.onclick = function() { testJira(); };
+    if (statusEl && btnJira) {
+      if (msg.success && msg.boards) {
+        statusEl.textContent = '✓ Connected';
+        statusEl.style.color = '#4CAF50';
+        if (boardSection) boardSection.style.display = 'block';
+        if (boardSelect) {
+          boardSelect.innerHTML = msg.boards.map(b =>
+            '<option value="' + b.id + '" data-name="' + b.name.replace(/"/g, '&quot;') + '">' + b.name + ' (' + b.type + ')</option>'
+          ).join('');
+        }
+        btnJira.textContent = 'Add Jira Provider';
+        btnJira.disabled = false;
+        btnJira.onclick = function() { submitJira(); };
+      } else {
+        statusEl.textContent = '✗ ' + (msg.error || 'Connection failed');
+        statusEl.style.color = '#f44';
+        btnJira.textContent = 'Retry';
+        btnJira.disabled = false;
+        btnJira.onclick = function() { testJira(); };
+      }
+    }
   }
-}
+});
 ` : ''}
 
 function testJira() {
