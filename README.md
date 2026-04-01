@@ -31,15 +31,18 @@
 
 - **Unified sidebar** — providers, constitution, specs, progress, and task checklist in one panel
 - **Sequential phase flow** with approval gates: Requirements → Design → Tasks
-- **Constitution editor** — visual form to define project principles that guide all generation
+- **Constitution editor** — visual form with AI generation (describe your project, LLM suggests principles)
 - **Workflow DAG** — interactive graph showing all specs and their phase statuses
-- **Progress ring** — overall completion percentage (phases 50% + tasks 50%)
+- **Progress ring** — overall completion percentage (phases 50% + tasks 50%), 100% only when all tasks done
 - **Stale alerts** — downstream phases flagged when upstream is regenerated
+- **Inline task checklist** — toggle tasks directly in the sidebar with immediate file sync
 
 ### LLM Agnostic
 
 - **Any provider**: Claude, OpenAI, Ollama, Groq, LM Studio, or any OpenAI-compatible endpoint
 - **Multiple providers** configured simultaneously — switch with one click
+- **Auto-detect models** — available models fetched from provider API after entering credentials
+- **Change model anytime** — click the model name in the providers panel to switch
 - **Secure credential storage** via VS Code's native SecretStorage
 - **Streaming output** — see documents being written in real time in the editor
 - **Output Channel** — watch LLM reasoning during task execution
@@ -56,17 +59,18 @@
 
 - **CodeLens buttons** — Approve, Regenerate, Next Phase persistent in documents
 - **Phase progress bar** — visual step indicator at the top of every spec document
-- **Caramelo editor menu** — grouped contextual actions under a single icon
+- **Caramelo editor menu** — grouped contextual actions under a single cat icon (adapts to dark/light themes)
 - **Task CodeLens** — Run Task / Run All Tasks inline in tasks.md
 - **Parallel task execution** — tasks marked `[P]` run concurrently
 - **Non-intrusive progress** — status bar spinner instead of notification popups
+- **Auxiliary files** — research.md, data-model.md, analysis.md, checklists shown under each phase
 
 ### Quality Tools
 
 - **Clarify** — LLM identifies ambiguities, presents questions as QuickPick dialogs
-- **Analyze** — cross-artifact consistency check with severity-coded findings and auto-fix
-- **Checklists** — content-specific quality verification items
-- **Fix issues** — CodeLens buttons on analysis.md to fix individual or all findings
+- **Analyze** — cross-artifact consistency check with severity-coded findings
+- **Auto-fix** — CodeLens buttons on analysis.md to fix individual or all findings with LLM
+- **Checklists** — content-specific quality verification items per phase
 
 ### Jira Integration
 
@@ -84,7 +88,7 @@ Search for **"Caramelo"** in the Extensions panel, or install from the [Marketpl
 ### From VSIX
 
 ```bash
-code --install-extension caramelo-0.0.1.vsix
+code --install-extension caramelo-0.0.2.vsix
 ```
 
 ### From Source
@@ -100,17 +104,17 @@ Press **F5** in VS Code to launch the Extension Development Host.
 
 ## Quick Start
 
-1. **Add a provider** — Click `+` in the Providers section. Select Ollama, Claude, OpenAI, or any compatible endpoint.
+1. **Add a provider** — Expand the Providers section. Click a preset (Ollama, Claude, OpenAI, Groq, LM Studio). Enter credentials if needed — available models are fetched automatically from the API.
 
-2. **Set up your constitution** — Click the Constitution bar in the Workflow panel. Define your project's core principles via the visual form.
+2. **Set up your constitution** — Click the Constitution bar in the Workflow panel. Describe your project and click "Generate with AI" to let the LLM suggest principles, or fill in manually.
 
 3. **Create a spec** — Expand "New Spec" in the Workflow panel, enter a name and description, click "Create". Or click "From Jira" to import an issue.
 
-4. **Generate phases** — Click "Generate" on each phase (Requirements → Design → Tasks). Review and approve each before the next unlocks.
+4. **Generate phases** — Click "Generate" on each phase (Requirements → Design → Tasks). Watch the document stream in real time. Review and approve each before the next unlocks.
 
-5. **Execute tasks** — Click "Implement" on the Tasks phase, or open `tasks.md` and use "Run Task" / "Run All Tasks" buttons.
+5. **Execute tasks** — Click "Implement" on the Tasks phase, or open `tasks.md` and use "Run Task" / "Run All Tasks" buttons. Watch LLM reasoning in the Output Channel.
 
-6. **Quality checks** — Use the Caramelo menu (editor toolbar) to Clarify ambiguities, Analyze consistency, or Generate checklists.
+6. **Quality checks** — Use the Caramelo menu (cat icon in editor toolbar) to Clarify ambiguities, Analyze consistency, Fix issues, or Generate checklists.
 
 ## Providers
 
@@ -131,7 +135,7 @@ Press **F5** in VS Code to launch the Extension Development Host.
 |----------|---------|------|
 | **Jira Cloud** | Any Atlassian Cloud instance | Email + API token |
 
-Click `+` in Providers, select the type, and follow the setup wizard.
+Expand the Providers section, click a preset button, enter credentials. Models are fetched automatically from the provider's API. Click a model name anytime to change it.
 
 ## Workflow
 

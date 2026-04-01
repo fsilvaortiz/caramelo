@@ -45,9 +45,11 @@ src/
 
 - TypeScript strict mode
 - No SDK dependencies for LLM/Jira — use native `fetch`
-- Prefer VS Code native APIs (TreeView, CodeLens, QuickPick) over custom webviews
+- Prefer VS Code native APIs (CodeLens, QuickPick, WebviewView) over custom frameworks
 - Use status bar progress (`src/progress.ts`) instead of notification popups
-- Keep the bundle small — currently ~165KB
+- Stream LLM output to Output Channel for visibility during long operations
+- Parse LLM JSON responses with `tryParseJSON()` — handle comments, trailing commas, single quotes
+- Keep the bundle small — currently ~170KB
 
 ## Adding a New LLM Provider Type
 

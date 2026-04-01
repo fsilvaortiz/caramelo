@@ -28,3 +28,11 @@
 - **Non-intrusive Progress**: Status bar spinner instead of notification popups for long operations
 - **Truncation-tolerant Parser**: File block parser handles incomplete LLM output gracefully
 - **Dark/Light Theme Support**: Editor menu icon adapts to VS Code theme
+- **AI Constitution Generation**: Describe your project, LLM suggests principles, constraints, and workflow with streaming visible
+- **Auto-detect Models**: Provider API queried for available models after entering credentials
+- **Change Model on Click**: Click model name in providers panel to switch models anytime
+- **Providers WebviewView**: Inline preset buttons, credential entry, and model selection in the sidebar
+- **Robust JSON Parser**: Handles LLM output with comments, trailing commas, single quotes, and prose fallback
+- **SSE Parser Improvements**: 5-min per-chunk timeout, flexible newline handling for Ollama compatibility
+- **Implement Button**: Tasks phase shows "Implement" button to run all tasks directly from sidebar
+- **Auxiliary Files Display**: research.md, data-model.md, analysis.md, checklists shown under each phase in sidebar
