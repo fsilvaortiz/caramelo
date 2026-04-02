@@ -49,6 +49,9 @@ export interface ProviderConfig {
   type: ProviderType;
   endpoint: string;
   model: string;
+  // Optional custom auth header (e.g. "Authorization" with "Bearer" prefix instead of "x-api-key")
+  authHeader?: string;   // Header name, e.g. "Authorization", "x-api-key", "Ocp-Apim-Subscription-Key"
+  authPrefix?: string;   // Value prefix, e.g. "Bearer", "Basic", "" (empty for raw token)
   // Jira-specific fields
   instanceUrl?: string;
   boardId?: string;

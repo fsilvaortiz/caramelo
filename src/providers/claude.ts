@@ -9,11 +9,13 @@ export class ClaudeProvider implements LLMProvider {
   private readonly model: string;
   private readonly apiKeyId: string;
   private readonly secrets: vscode.SecretStorage;
+  private readonly authHeader: string;
+  private readonly authPrefix: string;
   private apiKey: string | null = null;
   private abortController: AbortController | null = null;
 
   constructor(
-    config: { id: string; name: string; endpoint: string; model: string; apiKeyId: string },
+    config: { id: string; name: string; endpoint: string; model: string; apiKeyId: string; authHeader?: string; authPrefix?: string },
     secrets: vscode.SecretStorage
   ) {
     this.id = config.id;
@@ -21,6 +23,8 @@ export class ClaudeProvider implements LLMProvider {
     this.endpoint = config.endpoint.replace(/\/+$/, '');
     this.model = config.model;
     this.apiKeyId = config.apiKeyId;
+    this.authHeader = config.authHeader ?? 'x-api-key';
+    this.authPrefix = config.authPrefix ?? '';
     this.secrets = secrets;
   }
 
@@ -47,7 +51,7 @@ export class ClaudeProvider implements LLMProvider {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': this.apiKey,
+          [this.authHeader]: this.authPrefix ? `${this.authPrefix} ${this.apiKey}` : this.apiKey!,
           'anthropic-version': '2023-06-01',
         },
         body: JSON.stringify({
@@ -87,7 +91,7 @@ export class ClaudeProvider implements LLMProvider {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': this.apiKey,
+        [this.authHeader]: this.authPrefix ? `${this.authPrefix} ${this.apiKey}` : this.apiKey!,
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify(body),

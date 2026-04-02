@@ -84,7 +84,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     this.view.webview.html = this.getHtml(addingPresetIndex);
   }
 
-  private async handleAdd(msg: { name: string; type: string; endpoint: string; model: string; apiKey?: string }): Promise<void> {
+  private async handleAdd(msg: { name: string; type: string; endpoint: string; model: string; apiKey?: string; authHeader?: string; authPrefix?: string }): Promise<void> {
     const id = msg.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const apiKeyId = `caramelo.provider.${id}.apiKey`;
 
@@ -95,6 +95,8 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     const config: ProviderConfig = {
       id, name: msg.name, type: msg.type as ProviderConfig['type'],
       endpoint: msg.endpoint, model: msg.model,
+      ...(msg.authHeader ? { authHeader: msg.authHeader } : {}),
+      ...(msg.authPrefix !== undefined && msg.authPrefix !== '' ? { authPrefix: msg.authPrefix } : {}),
     };
 
     let provider: import('../../providers/types.js').LLMProvider;
@@ -358,7 +360,11 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
         addSection = `<div class="add-form">
           <div class="add-header">${preset.icon} ${preset.label}<button class="btn-cancel" onclick="msg('cancelAdd')">×</button></div>
           <input id="addEndpoint" class="input" value="${preset.endpoint}" placeholder="Endpoint URL" />
-          ${preset.needsKey ? '<input id="addApiKey" class="input" type="password" placeholder="API Key" />' : ''}
+          ${preset.needsKey ? `<input id="addApiKey" class="input" type="password" placeholder="API Key" />
+          <details class="auth-details"><summary>Custom auth header (optional)</summary>
+            <input id="addAuthHeader" class="input" placeholder="Header name (default: ${preset.type === 'anthropic' ? 'x-api-key' : 'Authorization'})" />
+            <input id="addAuthPrefix" class="input" placeholder="Value prefix (default: ${preset.type === 'anthropic' ? 'none' : 'Bearer'})" />
+          </details>` : ''}
           <div id="modelSection" style="display:none">
             <select id="addModel" class="input"><option>Loading models...</option></select>
           </div>
@@ -593,7 +599,9 @@ function submitAdd(name, type) {
     : (manual?.value || 'default');
 
   if (!model) return;
-  msg('addProvider', { name, type, endpoint, model, apiKey: apiKey || undefined });
+  const authHeader = document.getElementById('addAuthHeader')?.value || undefined;
+  const authPrefix = document.getElementById('addAuthPrefix')?.value ?? undefined;
+  msg('addProvider', { name, type, endpoint, model, apiKey: apiKey || undefined, authHeader, authPrefix });
 }
 </script>`;
 
@@ -661,4 +669,8 @@ select.input { appearance: auto; }
 .btn-primary:disabled { opacity: 0.5; cursor: default; }
 .form-hint { font-size: 0.8em; color: var(--vscode-descriptionForeground); margin-bottom: 6px; }
 .form-status { font-size: 0.8em; margin-top: 4px; font-weight: 500; }
+.auth-details { margin: 4px 0; font-size: 0.85em; }
+.auth-details summary { cursor: pointer; color: var(--vscode-descriptionForeground); font-size: 0.85em; }
+.auth-details summary:hover { color: var(--vscode-foreground); }
+.auth-details .input { margin-top: 4px; }
 </style>`;
