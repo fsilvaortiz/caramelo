@@ -134,13 +134,13 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     this.refresh();
   }
 
-  private async handleFetchModels(msg: { type: string; endpoint: string; apiKey?: string }): Promise<void> {
+  private async handleFetchModels(msg: { type: string; endpoint: string; apiKey?: string; authHeader?: string; authPrefix?: string }): Promise<void> {
     let models: ModelInfo[];
     if (msg.type === 'copilot') {
       const copilotModels = await getCopilotModels();
       models = copilotModels.map((m) => ({ id: m.family, name: m.name }));
     } else {
-      models = await this.fetchModelsFromAPI(msg.type, msg.endpoint, msg.apiKey);
+      models = await this.fetchModelsFromAPI(msg.type, msg.endpoint, msg.apiKey, msg.authHeader, msg.authPrefix);
     }
     this.view?.webview.postMessage({ command: 'modelsLoaded', models });
   }
@@ -266,18 +266,20 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     vscode.window.showInformationMessage(`Jira provider "${name}" added.`);
   }
 
-  private async fetchModelsFromAPI(type: string, endpoint: string, apiKey?: string): Promise<ModelInfo[]> {
+  private async fetchModelsFromAPI(type: string, endpoint: string, apiKey?: string, customAuthHeader?: string, customAuthPrefix?: string): Promise<ModelInfo[]> {
     try {
       const url = type === 'anthropic'
-        ? 'https://api.anthropic.com/v1/models'
+        ? `${endpoint.replace(/\/+$/, '')}/v1/models`
         : `${endpoint.replace(/\/+$/, '')}/models`;
 
       const headers: Record<string, string> = { 'Accept': 'application/json' };
-      if (type === 'anthropic' && apiKey) {
-        headers['x-api-key'] = apiKey;
+      if (apiKey) {
+        const headerName = customAuthHeader || (type === 'anthropic' ? 'x-api-key' : 'Authorization');
+        const prefix = customAuthPrefix ?? (type === 'anthropic' ? '' : 'Bearer');
+        headers[headerName] = prefix ? `${prefix} ${apiKey}` : apiKey;
+      }
+      if (type === 'anthropic') {
         headers['anthropic-version'] = '2023-06-01';
-      } else if (apiKey) {
-        headers['Authorization'] = `Bearer ${apiKey}`;
       }
 
       const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
@@ -420,30 +422,36 @@ const endpointInput = document.getElementById('addEndpoint');
 const btnAdd = document.getElementById('btnAdd');
 let debounce;
 
-if (keyInput) {
-  keyInput.addEventListener('input', () => {
-    clearTimeout(debounce);
-    if (keyInput.value.length > 10) {
-      debounce = setTimeout(() => {
-        btnAdd.textContent = 'Loading models...';
-        btnAdd.disabled = true;
-        msg('fetchModels', {
-          type: '${PROVIDER_PRESETS[addingPresetIndex]?.type}',
-          endpoint: endpointInput.value,
-          apiKey: keyInput.value
-        });
-      }, 500);
-    }
-  });
-} else {
-  // No key needed — fetch models immediately
-  setTimeout(() => {
+function triggerFetchModels() {
+  clearTimeout(debounce);
+  const apiKey = keyInput?.value || '';
+  const authHeader = document.getElementById('addAuthHeader')?.value || '';
+  const authPrefix = document.getElementById('addAuthPrefix')?.value || '';
+  if (keyInput && apiKey.length < 10) return;
+  debounce = setTimeout(() => {
+    if (btnAdd) { btnAdd.textContent = 'Loading models...'; btnAdd.disabled = true; }
     msg('fetchModels', {
       type: '${PROVIDER_PRESETS[addingPresetIndex]?.type}',
-      endpoint: endpointInput?.value || ''
+      endpoint: endpointInput?.value || '',
+      apiKey: apiKey || undefined,
+      authHeader: authHeader || undefined,
+      authPrefix: authPrefix || undefined
     });
-  }, 300);
+  }, 500);
 }
+
+if (keyInput) {
+  keyInput.addEventListener('input', triggerFetchModels);
+} else {
+  // No key needed — fetch models immediately
+  setTimeout(triggerFetchModels, 300);
+}
+
+// Re-fetch models when auth header fields change
+['addAuthHeader', 'addAuthPrefix'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('change', triggerFetchModels);
+});
 
 // Handle models response
 window.addEventListener('message', (event) => {
