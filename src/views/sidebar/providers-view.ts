@@ -38,8 +38,10 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage(async (msg) => {
       switch (msg.command) {
         case 'selectActive':
-          await this.registry.setActive(msg.id);
-          this.refresh();
+          if (this.registry.activeProvider?.id !== msg.id) {
+            await this.registry.setActive(msg.id);
+            this.refresh();
+          }
           break;
         case 'deleteProvider':
           await this.handleDelete(msg.id);
@@ -65,6 +67,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
           await this.handleRename(msg.id);
           break;
         case 'editAuth':
+          console.log('[Caramelo] editAuth:', msg.id);
           this.handleEditAuth(msg.id);
           break;
         case 'saveAuth':
@@ -439,9 +442,9 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     const providersHtml = providers.map((p) => {
       const config = configs.find((c) => c.id === p.id);
       const isActive = p.id === activeId;
-      return `<div class="provider-item ${isActive ? 'active' : ''}" onclick="msg('selectActive',{id:'${p.id}'})">
+      return `<div class="provider-item ${isActive ? 'active' : ''}">
         <div class="provider-main">
-          <span class="provider-dot ${isActive ? 'on' : ''}"></span>
+          <span class="provider-dot ${isActive ? 'on' : ''}" onclick="msg('selectActive',{id:'${p.id}'})" title="Click to set as active" style="cursor:pointer"></span>
           <div class="provider-info">
             <span class="provider-name" onclick="event.stopPropagation(); msg('renameProvider',{id:'${p.id}'})" title="Click to rename">${esc(p.displayName)}</span>
             <span class="provider-model" id="model-${p.id}" onclick="event.stopPropagation(); msg('changeModel',{id:'${p.id}'})" title="Click to change model">${esc(config?.model ?? '')}</span>
