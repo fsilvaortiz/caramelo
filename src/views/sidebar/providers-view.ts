@@ -106,6 +106,8 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     this.refresh();
   }
 
+  private providerErrors = new Map<string, string>();
+
   private editingState: {
     type: 'model' | 'auth' | 'jira';
     providerId: string;
@@ -334,14 +336,17 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
       }
     }
 
+    this.registry.register(provider);
+
     if (valid) {
+      await this.registry.setActive(id);
+      this.providerErrors.delete(id);
       vscode.window.showInformationMessage(`✓ Model "${model}" is working.`);
     } else {
-      vscode.window.showWarningMessage(`✗ Model "${model}": ${errorMsg || 'validation failed'}. Saved anyway — you can change it later.`);
+      this.providerErrors.set(id, errorMsg || 'Model validation failed');
+      vscode.window.showWarningMessage(`✗ Model "${model}": ${errorMsg || 'validation failed'}. Change model or check auth settings.`);
     }
 
-    this.registry.register(provider);
-    await this.registry.setActive(id);
     this.editingState = null;
     this.refresh();
   }
@@ -490,9 +495,10 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     const providersHtml = providers.map((p) => {
       const config = configs.find((c) => c.id === p.id);
       const isActive = p.id === activeId;
-      return `<div class="provider-item ${isActive ? 'active' : ''}">
+      const error = this.providerErrors.get(p.id);
+      return `<div class="provider-item ${isActive ? 'active' : ''} ${error ? 'has-error' : ''}">
         <div class="provider-main">
-          <span class="provider-dot ${isActive ? 'on' : ''}" onclick="msg('selectActive',{id:'${p.id}'})" title="Click to set as active" style="cursor:pointer"></span>
+          <span class="provider-dot ${isActive ? 'on' : ''} ${error ? 'error' : ''}" onclick="msg('selectActive',{id:'${p.id}'})" title="Click to set as active" style="cursor:pointer"></span>
           <div class="provider-info">
             <span class="provider-name" onclick="event.stopPropagation(); msg('renameProvider',{id:'${p.id}'})" title="Click to rename">${esc(p.displayName)}</span>
             ${this.editingState?.type === 'model' && this.editingState.providerId === p.id
@@ -506,6 +512,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
           </div>
           <button class="provider-delete" onclick="event.stopPropagation(); msg('deleteProvider',{id:'${p.id}'})" title="Delete">×</button>
         </div>
+        ${error ? `<div class="provider-error">✗ ${esc(error)}</div>` : ''}
       </div>`;
     }).join('');
 
@@ -839,6 +846,9 @@ body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); 
 .provider-main { display: flex; align-items: center; gap: 6px; }
 .provider-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--vscode-descriptionForeground); opacity: 0.3; flex-shrink: 0; }
 .provider-dot.on { background: #4CAF50; opacity: 1; box-shadow: 0 0 4px rgba(76,175,80,0.5); }
+.provider-dot.error { background: #f44336; opacity: 1; box-shadow: 0 0 4px rgba(244,67,54,0.5); }
+.provider-item.has-error { border-left-color: #f44336; }
+.provider-error { font-size: 0.75em; color: #f44336; padding: 2px 8px 0 20px; }
 .provider-icon { font-size: 1em; flex-shrink: 0; }
 .provider-info { flex: 1; min-width: 0; }
 .provider-name { display: block; font-weight: 600; font-size: 0.9em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
