@@ -40,16 +40,19 @@
 ### LLM Agnostic
 
 - **Any provider**: GitHub Copilot, Claude, OpenAI, Ollama, Groq, LM Studio, or any OpenAI-compatible endpoint
-- **Multiple providers** configured simultaneously — switch with one click
-- **Auto-detect models** — available models fetched from provider API after entering credentials
-- **Change model anytime** — click the model name in the providers panel to switch
+- **Multiple providers** configured simultaneously — switch by clicking the dot indicator
+- **Auto-detect models** — available models fetched from provider API, or enter manually
+- **Inline editing** — click provider name, model, or auth settings to edit directly in the sidebar
+- **Custom auth headers** — configurable header name and prefix for corporate proxies (e.g. Azure API Manager)
+- **Model validation** — test request on model change, red indicator on failure
+- **Multiple instances** — add several providers of the same type with custom aliases
 - **Secure credential storage** via VS Code's native SecretStorage
 - **Streaming output** — see documents being written in real time in the editor
 - **Output Channel** — watch LLM reasoning during task execution
 
 ### Spec Kit Compatible
 
-- **Uses `.specify/specs/`** directory — fully interoperable with Spec Kit CLI
+- **Uses `specs/`** directory — fully interoperable with Spec Kit CLI
 - **Auto-syncs templates** from GitHub Spec Kit releases
 - **Generates intermediate artifacts**: research.md, data-model.md, contracts/
 - **Constitution as LLM context** — project principles included in every generation
@@ -104,7 +107,7 @@ Press **F5** in VS Code to launch the Extension Development Host.
 
 ## Quick Start
 
-1. **Add a provider** — Expand the Providers section. Click a preset (Ollama, Claude, OpenAI, Groq, LM Studio). Enter credentials if needed — available models are fetched automatically from the API.
+1. **Add a provider** — Expand the Providers section. Click a preset (Ollama, Claude, OpenAI, Groq, LM Studio, Copilot, Jira). Enter credentials if needed — models are fetched from the API or entered manually. For corporate proxies, expand "Custom auth header" to set the header name and prefix.
 
 2. **Set up your constitution** — Click the Constitution bar in the Workflow panel. Describe your project and click "Generate with AI" to let the LLM suggest principles, or fill in manually.
 
@@ -136,7 +139,7 @@ Press **F5** in VS Code to launch the Extension Development Host.
 |----------|---------|------|
 | **Jira Cloud** | Any Atlassian Cloud instance | Email + API token |
 
-Expand the Providers section, click a preset button, enter credentials. Models are fetched automatically from the provider's API. Click a model name anytime to change it.
+Expand the Providers section, click a preset button, enter credentials. Models are fetched automatically from the provider's API when available, or enter the model name manually. All editing (name, model, auth headers) is done inline in the sidebar — click any field to edit it.
 
 ## Workflow
 

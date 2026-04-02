@@ -47,3 +47,10 @@
 - Robust JSON parser handles LLM output with comments, trailing commas, single quotes
 - Dynamic import replaced with static import (fixes esbuild bundle compatibility)
 - ESLint migrated to flat config (v9 compatible)
+- Custom auth headers: configurable header name and prefix for corporate API proxies
+- Inline provider editing: state-driven re-render for model, auth, and Jira settings
+- Model validation with red error indicator on failure, provider not activated until valid
+- Model dropdown fetched from API in background, manual input as fallback
+- Jira provider editing: click name/board to edit inline with Save/Cancel
+- Multiple providers of same type with unique IDs (claude, claude-2, etc.)
+- Direct Jira issue key lookup in issue picker (type PROJ-123 to find any issue)

@@ -45,6 +45,7 @@ src/
 
 - TypeScript strict mode
 - No SDK dependencies for LLM/Jira — use native `fetch`
+- **Never use QuickPick/InputBox for provider management** — all provider editing must be inline in the sidebar webview using state-driven re-renders (`editingState` pattern)
 - Prefer VS Code native APIs (CodeLens, QuickPick, WebviewView) over custom frameworks
 - Use status bar progress (`src/progress.ts`) instead of notification popups
 - Stream LLM output to Output Channel for visibility during long operations
