@@ -338,7 +338,8 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
           <span class="provider-dot ${isActive ? 'on' : ''}"></span>
           <div class="provider-info">
             <span class="provider-name" onclick="event.stopPropagation(); msg('renameProvider',{id:'${p.id}'})" title="Click to rename">${esc(p.displayName)}</span>
-            <span class="provider-model" onclick="event.stopPropagation(); msg('changeModel',{id:'${p.id}'})" title="Click to change model">${esc(config?.model ?? '')}</span>
+            <span class="provider-model" id="model-${p.id}" onclick="event.stopPropagation(); msg('changeModel',{id:'${p.id}'})" title="Click to change model">${esc(config?.model ?? '')}</span>
+            <div id="model-picker-${p.id}" class="model-picker-slot"></div>
           </div>
           <button class="provider-delete" onclick="event.stopPropagation(); msg('deleteProvider',{id:'${p.id}'})" title="Delete">×</button>
         </div>
@@ -512,56 +513,50 @@ window.addEventListener('message', (event) => {
 
   // Handle inline model picker
   if (evt.command === 'showModelPicker') {
-    const modelSpan = document.querySelector('.provider-item .provider-model[onclick*="' + evt.id + '"]');
-    if (modelSpan) {
-      const models = evt.models || [];
-      if (models.length > 0) {
-        const select = document.createElement('select');
-        select.className = 'input';
-        select.style.fontSize = '0.8em';
-        select.style.marginTop = '2px';
-        models.forEach(m => {
-          const opt = document.createElement('option');
-          opt.value = m.id;
-          opt.textContent = m.name;
-          if (m.id === evt.currentModel) opt.selected = true;
-          select.appendChild(opt);
-        });
-        select.onchange = function() {
-          msg('setModel', { id: evt.id, model: select.value });
-        };
-        select.onblur = function() {
-          select.replaceWith(modelSpan);
-          modelSpan.style.display = '';
-        };
-        modelSpan.style.display = 'none';
-        modelSpan.parentElement.appendChild(select);
-        select.focus();
-      } else {
-        const input = document.createElement('input');
-        input.className = 'input';
-        input.style.fontSize = '0.8em';
-        input.style.marginTop = '2px';
-        input.value = evt.currentModel || '';
-        input.placeholder = 'Model name';
-        input.onkeydown = function(e) {
-          if (e.key === 'Enter' && input.value.trim()) {
-            msg('setModel', { id: evt.id, model: input.value.trim() });
-          }
-          if (e.key === 'Escape') { input.replaceWith(modelSpan); modelSpan.style.display = ''; }
-        };
-        input.onblur = function() {
-          if (input.value.trim() && input.value.trim() !== evt.currentModel) {
-            msg('setModel', { id: evt.id, model: input.value.trim() });
-          } else {
-            input.replaceWith(modelSpan); modelSpan.style.display = '';
-          }
-        };
-        modelSpan.style.display = 'none';
-        modelSpan.parentElement.appendChild(input);
-        input.focus();
-        input.select();
-      }
+    const modelSpan = document.getElementById('model-' + evt.id);
+    const slot = document.getElementById('model-picker-' + evt.id);
+    if (!modelSpan || !slot) return;
+
+    modelSpan.style.display = 'none';
+    slot.innerHTML = '';
+
+    const models = evt.models || [];
+    if (models.length > 0) {
+      const select = document.createElement('select');
+      select.className = 'input';
+      select.style.fontSize = '0.8em';
+      models.forEach(function(m) {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = m.name;
+        if (m.id === evt.currentModel) opt.selected = true;
+        select.appendChild(opt);
+      });
+      var evtId = evt.id;
+      select.onchange = function() { msg('setModel', { id: evtId, model: select.value }); };
+      select.onblur = function() { slot.innerHTML = ''; modelSpan.style.display = ''; };
+      slot.appendChild(select);
+      select.focus();
+    } else {
+      const input = document.createElement('input');
+      input.className = 'input';
+      input.style.fontSize = '0.8em';
+      input.value = evt.currentModel || '';
+      input.placeholder = 'Model name';
+      var evtId2 = evt.id;
+      var curModel = evt.currentModel;
+      input.onkeydown = function(e) {
+        if (e.key === 'Enter' && input.value.trim()) { msg('setModel', { id: evtId2, model: input.value.trim() }); }
+        if (e.key === 'Escape') { slot.innerHTML = ''; modelSpan.style.display = ''; }
+      };
+      input.onblur = function() {
+        if (input.value.trim() && input.value.trim() !== curModel) {
+          msg('setModel', { id: evtId2, model: input.value.trim() });
+        } else { slot.innerHTML = ''; modelSpan.style.display = ''; }
+      };
+      slot.appendChild(input);
+      input.focus();
+      input.select();
     }
   }
 
@@ -715,6 +710,8 @@ body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); 
 .provider-info { flex: 1; min-width: 0; }
 .provider-name { display: block; font-weight: 600; font-size: 0.9em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .provider-name:hover { color: var(--vscode-textLink-foreground); }
+.model-picker-slot { width: 100%; }
+.model-picker-slot select, .model-picker-slot input { width: 100%; }
 .provider-model {
   display: block; font-size: 0.78em; color: var(--vscode-descriptionForeground);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;
