@@ -2,7 +2,7 @@
   "name": "caramelo",
   "displayName": "Caramelo",
   "description": "Visual spec-driven development extension, LLM-agnostic, compatible with GitHub Spec Kit",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "publisher": "fsilvaortiz",
   "license": "MIT",
   "icon": "resources/icons/caramelo-logo.png",
