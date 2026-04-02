@@ -65,7 +65,10 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
           await this.handleRename(msg.id);
           break;
         case 'editAuth':
-          await this.handleEditAuth(msg.id);
+          this.handleEditAuth(msg.id);
+          break;
+        case 'saveAuth':
+          await this.handleSaveAuth(msg);
           break;
         case 'cancelAdd':
           this.refresh();
@@ -351,7 +354,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     this.refresh();
   }
 
-  private async handleEditAuth(id: string): Promise<void> {
+  private handleEditAuth(id: string): void {
     const vsConfig = vscode.workspace.getConfiguration();
     const configs = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
     const config = configs.find((c) => c.id === id);
@@ -360,33 +363,33 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     const defaultHeader = config.type === 'anthropic' ? 'x-api-key' : 'Authorization';
     const defaultPrefix = config.type === 'anthropic' ? '' : 'Bearer';
 
-    const headerName = await vscode.window.showInputBox({
-      prompt: 'Auth header name',
-      value: config.authHeader ?? defaultHeader,
-      placeHolder: `Default: ${defaultHeader}`,
+    this.view?.webview.postMessage({
+      command: 'showAuthEditor',
+      id,
+      authHeader: config.authHeader ?? defaultHeader,
+      authPrefix: config.authPrefix ?? defaultPrefix,
     });
-    if (headerName === undefined) return;
+  }
 
-    const headerPrefix = await vscode.window.showInputBox({
-      prompt: 'Auth value prefix (leave empty for raw token)',
-      value: config.authPrefix ?? defaultPrefix,
-      placeHolder: `Default: ${defaultPrefix || '(none)'}`,
-    });
-    if (headerPrefix === undefined) return;
+  private async handleSaveAuth(msg: { id: string; authHeader: string; authPrefix: string }): Promise<void> {
+    const vsConfig = vscode.workspace.getConfiguration();
+    const configs = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
+    const config = configs.find((c) => c.id === msg.id);
+    if (!config) return;
 
-    config.authHeader = headerName || undefined;
-    config.authPrefix = headerPrefix || undefined;
+    config.authHeader = msg.authHeader || undefined;
+    config.authPrefix = msg.authPrefix || undefined;
     await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Workspace);
 
     // Re-register provider with new auth
-    this.registry.unregister(id);
+    this.registry.unregister(msg.id);
     let provider: import('../../providers/types.js').LLMProvider;
     if (config.type === 'copilot') {
-      provider = new CopilotProvider(id, config.name, config.model);
+      provider = new CopilotProvider(msg.id, config.name, config.model);
     } else if (config.type === 'anthropic') {
-      provider = new ClaudeProvider({ ...config, apiKeyId: `caramelo.provider.${id}.apiKey` }, this.secrets);
+      provider = new ClaudeProvider({ ...config, apiKeyId: `caramelo.provider.${msg.id}.apiKey` }, this.secrets);
     } else {
-      provider = new OpenAICompatibleProvider({ ...config, apiKeyId: `caramelo.provider.${id}.apiKey` }, this.secrets);
+      provider = new OpenAICompatibleProvider({ ...config, apiKeyId: `caramelo.provider.${msg.id}.apiKey` }, this.secrets);
     }
     await provider.authenticate().catch(() => {});
     this.registry.register(provider);
@@ -728,6 +731,26 @@ window.addEventListener('message', (event) => {
     }
   }
 
+  // Handle inline auth editor
+  if (evt.command === 'showAuthEditor') {
+    const authSpan = document.querySelector('.provider-item .provider-auth[onclick*="' + evt.id + '"]');
+    if (!authSpan) return;
+    const container = authSpan.parentElement;
+    authSpan.style.display = 'none';
+
+    const form = document.createElement('div');
+    form.className = 'auth-edit-form';
+    form.innerHTML =
+      '<input class="input" id="editAuthHeader-' + evt.id + '" value="' + (evt.authHeader || '').replace(/"/g, '&quot;') + '" placeholder="Header name (e.g. Authorization)" style="font-size:0.8em;margin:2px 0" />' +
+      '<input class="input" id="editAuthPrefix-' + evt.id + '" value="' + (evt.authPrefix || '').replace(/"/g, '&quot;') + '" placeholder="Prefix (e.g. Bearer)" style="font-size:0.8em;margin:2px 0" />' +
+      '<div style="display:flex;gap:4px;margin-top:2px">' +
+        '<button class="phase-btn approve" style="font-size:0.75em;padding:2px 8px" onclick="saveAuth(\'' + evt.id + '\')">Save</button>' +
+        '<button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px" onclick="cancelAuthEdit(\'' + evt.id + '\')">Cancel</button>' +
+      '</div>';
+    container.insertBefore(form, authSpan.nextSibling);
+    document.getElementById('editAuthHeader-' + evt.id)?.focus();
+  }
+
   // Handle model validation result
   if (evt.command === 'modelValidation') {
     const modelSpan = document.getElementById('model-' + evt.id);
@@ -750,6 +773,19 @@ window.addEventListener('message', (event) => {
     }
   }
 });
+
+function saveAuth(id) {
+  const header = document.getElementById('editAuthHeader-' + id)?.value || '';
+  const prefix = document.getElementById('editAuthPrefix-' + id)?.value || '';
+  msg('saveAuth', { id, authHeader: header, authPrefix: prefix });
+}
+
+function cancelAuthEdit(id) {
+  const authSpan = document.querySelector('.provider-auth[onclick*="' + id + '"]');
+  const form = authSpan?.nextElementSibling;
+  if (form && form.className === 'auth-edit-form') form.remove();
+  if (authSpan) authSpan.style.display = '';
+}
 
 let boardDebounce;
 
