@@ -485,9 +485,9 @@ if (keyInput) {
 
 // Handle models response
 window.addEventListener('message', (event) => {
-  const msg = event.data;
-  if (msg.command === 'modelsLoaded') {
-    const models = msg.models || [];
+  const evt = event.data;
+  if (evt.command === 'modelsLoaded') {
+    const models = evt.models || [];
     const select = document.getElementById('addModel');
     const manual = document.getElementById('addModelManual');
     const section = document.getElementById('modelSection');
@@ -511,10 +511,10 @@ window.addEventListener('message', (event) => {
   }
 
   // Handle inline model picker
-  if (msg.command === 'showModelPicker') {
-    const modelSpan = document.querySelector('.provider-item .provider-model[onclick*="' + msg.id + '"]');
+  if (evt.command === 'showModelPicker') {
+    const modelSpan = document.querySelector('.provider-item .provider-model[onclick*="' + evt.id + '"]');
     if (modelSpan) {
-      const models = msg.models || [];
+      const models = evt.models || [];
       if (models.length > 0) {
         const select = document.createElement('select');
         select.className = 'input';
@@ -524,11 +524,11 @@ window.addEventListener('message', (event) => {
           const opt = document.createElement('option');
           opt.value = m.id;
           opt.textContent = m.name;
-          if (m.id === msg.currentModel) opt.selected = true;
+          if (m.id === evt.currentModel) opt.selected = true;
           select.appendChild(opt);
         });
         select.onchange = function() {
-          msg('setModel', { id: msg.id, model: select.value });
+          msg('setModel', { id: evt.id, model: select.value });
         };
         select.onblur = function() {
           select.replaceWith(modelSpan);
@@ -538,22 +538,21 @@ window.addEventListener('message', (event) => {
         modelSpan.parentElement.appendChild(select);
         select.focus();
       } else {
-        // No models from API — show input for manual entry
         const input = document.createElement('input');
         input.className = 'input';
         input.style.fontSize = '0.8em';
         input.style.marginTop = '2px';
-        input.value = msg.currentModel || '';
+        input.value = evt.currentModel || '';
         input.placeholder = 'Model name';
         input.onkeydown = function(e) {
           if (e.key === 'Enter' && input.value.trim()) {
-            msg('setModel', { id: msg.id, model: input.value.trim() });
+            msg('setModel', { id: evt.id, model: input.value.trim() });
           }
           if (e.key === 'Escape') { input.replaceWith(modelSpan); modelSpan.style.display = ''; }
         };
         input.onblur = function() {
-          if (input.value.trim() && input.value.trim() !== msg.currentModel) {
-            msg('setModel', { id: msg.id, model: input.value.trim() });
+          if (input.value.trim() && input.value.trim() !== evt.currentModel) {
+            msg('setModel', { id: evt.id, model: input.value.trim() });
           } else {
             input.replaceWith(modelSpan); modelSpan.style.display = '';
           }
@@ -567,19 +566,19 @@ window.addEventListener('message', (event) => {
   }
 
   // Handle Jira progress
-  if (msg.command === 'jiraProgress') {
+  if (evt.command === 'jiraProgress') {
     const btn = document.getElementById('btnJira');
     const statusEl = document.getElementById('jiraStatus');
-    if (btn) btn.textContent = msg.message || 'Loading...';
-    if (statusEl) { statusEl.textContent = msg.message || ''; statusEl.style.color = ''; }
+    if (btn) btn.textContent = evt.message || 'Loading...';
+    if (statusEl) { statusEl.textContent = evt.message || ''; statusEl.style.color = ''; }
   }
 
   // Handle Jira board search results
-  if (msg.command === 'jiraBoardResults') {
+  if (evt.command === 'jiraBoardResults') {
     const select = document.getElementById('jiraBoard');
     const hint = document.getElementById('jiraBoardHint');
     const btnJira = document.getElementById('btnJira');
-    const boards = msg.boards || [];
+    const boards = evt.boards || [];
 
     if (boards.length > 0) {
       select.style.display = 'block';
@@ -587,28 +586,26 @@ window.addEventListener('message', (event) => {
         '<option value="' + b.id + '" data-name="' + b.name.replace(/"/g, '&quot;') + '">' + b.name + ' (' + b.type + ')</option>'
       ).join('');
       if (hint) hint.textContent = boards.length + ' board(s) found';
-      // Enable add button when a board is selected
       select.onchange = function() {
         if (btnJira) { btnJira.textContent = 'Add Jira Provider'; btnJira.disabled = false; btnJira.onclick = function() { submitJira(); }; }
       };
-      // Auto-enable if only one result
       if (boards.length === 1 && btnJira) { btnJira.textContent = 'Add Jira Provider'; btnJira.disabled = false; btnJira.onclick = function() { submitJira(); }; }
     } else {
       select.style.display = 'none';
-      if (hint) hint.textContent = msg.error ? 'Error: ' + msg.error : 'No boards found. Try a different name.';
+      if (hint) hint.textContent = evt.error ? 'Error: ' + evt.error : 'No boards found. Try a different name.';
       if (btnJira) { btnJira.textContent = 'Select a board first'; btnJira.disabled = true; }
     }
   }
 
   // Handle Jira test result
-  if (msg.command === 'jiraTestResult') {
+  if (evt.command === 'jiraTestResult') {
     const statusEl = document.getElementById('jiraStatus');
     const btnJira = document.getElementById('btnJira');
     const boardSection = document.getElementById('jiraBoardSection');
     const boardSelect = document.getElementById('jiraBoard');
 
     if (statusEl && btnJira) {
-      if (msg.success) {
+      if (evt.success) {
         statusEl.textContent = '✓ Connected — search for your board below';
         statusEl.style.color = '#4CAF50';
         if (boardSection) boardSection.style.display = 'block';
@@ -617,7 +614,7 @@ window.addEventListener('message', (event) => {
         btnJira.textContent = 'Select a board first';
         btnJira.disabled = true;
       } else {
-        statusEl.textContent = '✗ ' + (msg.error || 'Connection failed');
+        statusEl.textContent = '✗ ' + (evt.error || 'Connection failed');
         statusEl.style.color = '#f44';
         btnJira.textContent = 'Retry';
         btnJira.disabled = false;
