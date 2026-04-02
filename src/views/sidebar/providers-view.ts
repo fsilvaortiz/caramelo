@@ -64,6 +64,9 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
         case 'renameProvider':
           await this.handleRename(msg.id);
           break;
+        case 'editAuth':
+          await this.handleEditAuth(msg.id);
+          break;
         case 'cancelAdd':
           this.refresh();
           break;
@@ -290,6 +293,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
 
     // Validate by sending a small test request
     let valid = false;
+    let errorMsg = '';
     try {
       let testOutput = '';
       for await (const chunk of provider.chat(
@@ -299,11 +303,19 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
         testOutput += chunk;
         if (testOutput.length > 0) { valid = true; break; }
       }
-    } catch {
+    } catch (err) {
       valid = false;
+      errorMsg = err instanceof Error ? err.message : String(err);
+      // Extract HTTP status from error message
+      const statusMatch = errorMsg.match(/(\d{3})/);
+      if (statusMatch) {
+        const code = parseInt(statusMatch[1]);
+        if (code === 401 || code === 403) errorMsg = 'Auth failed — check API key and auth header settings';
+        else if (code === 404) errorMsg = 'Model not found';
+      }
     }
 
-    this.view?.webview.postMessage({ command: 'modelValidation', id, status: valid ? 'valid' : 'invalid', model });
+    this.view?.webview.postMessage({ command: 'modelValidation', id, status: valid ? 'valid' : 'invalid', model, error: errorMsg });
     this.registry.register(provider);
     await this.registry.setActive(id);
     this.refresh();
@@ -329,6 +341,48 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     let provider: import('../../providers/types.js').LLMProvider;
     if (config.type === 'copilot') {
       provider = new CopilotProvider(id, newName, config.model);
+    } else if (config.type === 'anthropic') {
+      provider = new ClaudeProvider({ ...config, apiKeyId: `caramelo.provider.${id}.apiKey` }, this.secrets);
+    } else {
+      provider = new OpenAICompatibleProvider({ ...config, apiKeyId: `caramelo.provider.${id}.apiKey` }, this.secrets);
+    }
+    await provider.authenticate().catch(() => {});
+    this.registry.register(provider);
+    this.refresh();
+  }
+
+  private async handleEditAuth(id: string): Promise<void> {
+    const vsConfig = vscode.workspace.getConfiguration();
+    const configs = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
+    const config = configs.find((c) => c.id === id);
+    if (!config) return;
+
+    const defaultHeader = config.type === 'anthropic' ? 'x-api-key' : 'Authorization';
+    const defaultPrefix = config.type === 'anthropic' ? '' : 'Bearer';
+
+    const headerName = await vscode.window.showInputBox({
+      prompt: 'Auth header name',
+      value: config.authHeader ?? defaultHeader,
+      placeHolder: `Default: ${defaultHeader}`,
+    });
+    if (headerName === undefined) return;
+
+    const headerPrefix = await vscode.window.showInputBox({
+      prompt: 'Auth value prefix (leave empty for raw token)',
+      value: config.authPrefix ?? defaultPrefix,
+      placeHolder: `Default: ${defaultPrefix || '(none)'}`,
+    });
+    if (headerPrefix === undefined) return;
+
+    config.authHeader = headerName || undefined;
+    config.authPrefix = headerPrefix || undefined;
+    await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Workspace);
+
+    // Re-register provider with new auth
+    this.registry.unregister(id);
+    let provider: import('../../providers/types.js').LLMProvider;
+    if (config.type === 'copilot') {
+      provider = new CopilotProvider(id, config.name, config.model);
     } else if (config.type === 'anthropic') {
       provider = new ClaudeProvider({ ...config, apiKeyId: `caramelo.provider.${id}.apiKey` }, this.secrets);
     } else {
@@ -389,6 +443,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
             <span class="provider-name" onclick="event.stopPropagation(); msg('renameProvider',{id:'${p.id}'})" title="Click to rename">${esc(p.displayName)}</span>
             <span class="provider-model" id="model-${p.id}" onclick="event.stopPropagation(); msg('changeModel',{id:'${p.id}'})" title="Click to change model">${esc(config?.model ?? '')}</span>
             <div id="model-picker-${p.id}" class="model-picker-slot"></div>
+            <span class="provider-auth" onclick="event.stopPropagation(); msg('editAuth',{id:'${p.id}'})" title="Click to edit auth settings">auth: ${esc(config?.authHeader ? `${config.authHeader} ${config.authPrefix || ''}`.trim() : 'default')}</span>
           </div>
           <button class="provider-delete" onclick="event.stopPropagation(); msg('deleteProvider',{id:'${p.id}'})" title="Delete">×</button>
         </div>
@@ -688,9 +743,9 @@ window.addEventListener('message', (event) => {
         modelSpan.style.color = '#4CAF50';
         setTimeout(function() { modelSpan.textContent = evt.model; modelSpan.style.color = ''; }, 2000);
       } else {
-        modelSpan.textContent = '✗ ' + evt.model + ' (invalid)';
+        modelSpan.textContent = '✗ ' + (evt.error || evt.model + ' (invalid)');
         modelSpan.style.color = '#f44';
-        setTimeout(function() { modelSpan.textContent = evt.model; modelSpan.style.color = ''; }, 3000);
+        setTimeout(function() { modelSpan.textContent = evt.model; modelSpan.style.color = ''; }, 4000);
       }
     }
   }
@@ -786,6 +841,11 @@ body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); 
 .provider-info { flex: 1; min-width: 0; }
 .provider-name { display: block; font-weight: 600; font-size: 0.9em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .provider-name:hover { color: var(--vscode-textLink-foreground); }
+.provider-auth {
+  display: block; font-size: 0.7em; color: var(--vscode-descriptionForeground); opacity: 0.6;
+  cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.provider-auth:hover { opacity: 1; color: var(--vscode-textLink-foreground); }
 .model-picker-slot { width: 100%; }
 .model-picker-slot select, .model-picker-slot input { width: 100%; }
 .provider-model {
