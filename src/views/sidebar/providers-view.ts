@@ -446,7 +446,8 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
             <span class="provider-name" onclick="event.stopPropagation(); msg('renameProvider',{id:'${p.id}'})" title="Click to rename">${esc(p.displayName)}</span>
             <span class="provider-model" id="model-${p.id}" onclick="event.stopPropagation(); msg('changeModel',{id:'${p.id}'})" title="Click to change model">${esc(config?.model ?? '')}</span>
             <div id="model-picker-${p.id}" class="model-picker-slot"></div>
-            <span class="provider-auth" onclick="event.stopPropagation(); msg('editAuth',{id:'${p.id}'})" title="Click to edit auth settings">auth: ${esc(config?.authHeader ? `${config.authHeader} ${config.authPrefix || ''}`.trim() : 'default')}</span>
+            <span class="provider-auth" id="auth-${p.id}" onclick="event.stopPropagation(); msg('editAuth',{id:'${p.id}'})" title="Click to edit auth settings">auth: ${esc(config?.authHeader ? `${config.authHeader} ${config.authPrefix || ''}`.trim() : 'default')}</span>
+            <div id="auth-editor-${p.id}"></div>
           </div>
           <button class="provider-delete" onclick="event.stopPropagation(); msg('deleteProvider',{id:'${p.id}'})" title="Delete">×</button>
         </div>
@@ -733,21 +734,18 @@ window.addEventListener('message', (event) => {
 
   // Handle inline auth editor
   if (evt.command === 'showAuthEditor') {
-    const authSpan = document.querySelector('.provider-item .provider-auth[onclick*="' + evt.id + '"]');
-    if (!authSpan) return;
-    const container = authSpan.parentElement;
-    authSpan.style.display = 'none';
+    const authSpan = document.getElementById('auth-' + evt.id);
+    const slot = document.getElementById('auth-editor-' + evt.id);
+    if (!authSpan || !slot) return;
 
-    const form = document.createElement('div');
-    form.className = 'auth-edit-form';
-    form.innerHTML =
+    authSpan.style.display = 'none';
+    slot.innerHTML =
       '<input class="input" id="editAuthHeader-' + evt.id + '" value="' + (evt.authHeader || '').replace(/"/g, '&quot;') + '" placeholder="Header name (e.g. Authorization)" style="font-size:0.8em;margin:2px 0" />' +
       '<input class="input" id="editAuthPrefix-' + evt.id + '" value="' + (evt.authPrefix || '').replace(/"/g, '&quot;') + '" placeholder="Prefix (e.g. Bearer)" style="font-size:0.8em;margin:2px 0" />' +
       '<div style="display:flex;gap:4px;margin-top:2px">' +
         '<button class="phase-btn approve" style="font-size:0.75em;padding:2px 8px" onclick="saveAuth(\'' + evt.id + '\')">Save</button>' +
         '<button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px" onclick="cancelAuthEdit(\'' + evt.id + '\')">Cancel</button>' +
       '</div>';
-    container.insertBefore(form, authSpan.nextSibling);
     document.getElementById('editAuthHeader-' + evt.id)?.focus();
   }
 
@@ -781,9 +779,9 @@ function saveAuth(id) {
 }
 
 function cancelAuthEdit(id) {
-  const authSpan = document.querySelector('.provider-auth[onclick*="' + id + '"]');
-  const form = authSpan?.nextElementSibling;
-  if (form && form.className === 'auth-edit-form') form.remove();
+  const authSpan = document.getElementById('auth-' + id);
+  const slot = document.getElementById('auth-editor-' + id);
+  if (slot) slot.innerHTML = '';
   if (authSpan) authSpan.style.display = '';
 }
 
