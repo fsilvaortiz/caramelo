@@ -270,10 +270,13 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     const config = configs.find((c) => c.id === id);
     if (!config) return;
 
+    // Notify webview: validating
+    this.view?.webview.postMessage({ command: 'modelValidation', id, status: 'validating' });
+
     config.model = model;
     await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Workspace);
 
-    // Re-register
+    // Re-register with new model
     this.registry.unregister(id);
     let provider: import('../../providers/types.js').LLMProvider;
     if (config.type === 'copilot') {
@@ -284,6 +287,23 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
       provider = new OpenAICompatibleProvider({ ...config, apiKeyId: `caramelo.provider.${id}.apiKey` }, this.secrets);
     }
     await provider.authenticate().catch(() => {});
+
+    // Validate by sending a small test request
+    let valid = false;
+    try {
+      let testOutput = '';
+      for await (const chunk of provider.chat(
+        [{ role: 'user', content: 'Reply with OK' }],
+        { maxTokens: 5 }
+      )) {
+        testOutput += chunk;
+        if (testOutput.length > 0) { valid = true; break; }
+      }
+    } catch {
+      valid = false;
+    }
+
+    this.view?.webview.postMessage({ command: 'modelValidation', id, status: valid ? 'valid' : 'invalid', model });
     this.registry.register(provider);
     await this.registry.setActive(id);
     this.refresh();
@@ -650,6 +670,28 @@ window.addEventListener('message', (event) => {
       slot.appendChild(input);
       input.focus();
       input.select();
+    }
+  }
+
+  // Handle model validation result
+  if (evt.command === 'modelValidation') {
+    const modelSpan = document.getElementById('model-' + evt.id);
+    const slot = document.getElementById('model-picker-' + evt.id);
+    if (slot) slot.innerHTML = '';
+    if (modelSpan) {
+      modelSpan.style.display = '';
+      if (evt.status === 'validating') {
+        modelSpan.textContent = '⏳ Validating...';
+        modelSpan.style.color = '';
+      } else if (evt.status === 'valid') {
+        modelSpan.textContent = '✓ ' + evt.model;
+        modelSpan.style.color = '#4CAF50';
+        setTimeout(function() { modelSpan.textContent = evt.model; modelSpan.style.color = ''; }, 2000);
+      } else {
+        modelSpan.textContent = '✗ ' + evt.model + ' (invalid)';
+        modelSpan.style.color = '#f44';
+        setTimeout(function() { modelSpan.textContent = evt.model; modelSpan.style.color = ''; }, 3000);
+      }
     }
   }
 });
