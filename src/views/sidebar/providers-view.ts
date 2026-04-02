@@ -55,7 +55,8 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
           await this.handleFetchModels(msg);
           break;
         case 'changeModel':
-          this.handleChangeModelInline(msg.id);
+          console.log('[Caramelo] changeModel:', msg.id);
+          this.handleChangeModelInline(msg.id).catch((e) => console.error('[Caramelo] changeModel error:', e));
           break;
         case 'setModel':
           await this.handleSetModel(msg.id, msg.model);
@@ -91,7 +92,13 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async handleAdd(msg: { name: string; type: string; endpoint: string; model: string; apiKey?: string; authHeader?: string; authPrefix?: string }): Promise<void> {
-    const id = msg.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const baseId = msg.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const existingIds = new Set((vscode.workspace.getConfiguration().get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? []).map((c) => c.id));
+    let id = baseId;
+    let counter = 2;
+    while (existingIds.has(id)) {
+      id = `${baseId}-${counter++}`;
+    }
     const apiKeyId = `caramelo.provider.${id}.apiKey`;
 
     if (msg.apiKey) {
