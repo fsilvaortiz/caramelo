@@ -9,23 +9,6 @@ import type { ProviderConfig } from '../../constants.js';
 
 interface ModelInfo { id: string; name: string }
 
-const KNOWN_MODELS: Record<string, ModelInfo[]> = {
-  'anthropic': [
-    { id: 'claude-opus-4-20250514', name: 'Claude Opus 4' },
-    { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4' },
-    { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku' },
-    { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet' },
-    { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku' },
-  ],
-  'openai-compatible': [
-    { id: 'gpt-4o', name: 'GPT-4o' },
-    { id: 'gpt-4o-mini', name: 'GPT-4o Mini' },
-    { id: 'gpt-4.1', name: 'GPT-4.1' },
-    { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini' },
-    { id: 'o3-mini', name: 'o3-mini' },
-  ],
-};
-
 const PROVIDER_PRESETS = [
   { label: 'Ollama', type: 'openai-compatible', endpoint: 'http://localhost:11434/v1', needsKey: false, icon: '🖥️' },
   { label: 'Claude', type: 'anthropic', endpoint: 'https://api.anthropic.com', needsKey: true, icon: '🤖' },
@@ -365,8 +348,8 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
       // API fetch failed — fall through to known models
     }
 
-    // Fallback: return well-known models for the provider type
-    return KNOWN_MODELS[type] ?? [];
+    // No models from API — return empty, user will get manual input
+    return [];
   }
 
   private getHtml(addingPresetIndex?: number): string {
