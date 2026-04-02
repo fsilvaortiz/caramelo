@@ -534,55 +534,6 @@ window.addEventListener('message', (event) => {
     }
   }
 
-  // Handle inline model picker
-  if (evt.command === 'showModelPicker') {
-    const modelSpan = document.getElementById('model-' + evt.id);
-    const slot = document.getElementById('model-picker-' + evt.id);
-    if (!modelSpan || !slot) return;
-
-    modelSpan.style.display = 'none';
-    slot.innerHTML = '';
-
-    const models = evt.models || [];
-    if (models.length > 0) {
-      const select = document.createElement('select');
-      select.className = 'input';
-      select.style.fontSize = '0.8em';
-      models.forEach(function(m) {
-        const opt = document.createElement('option');
-        opt.value = m.id;
-        opt.textContent = m.name;
-        if (m.id === evt.currentModel) opt.selected = true;
-        select.appendChild(opt);
-      });
-      var evtId = evt.id;
-      select.onchange = function() { msg('setModel', { id: evtId, model: select.value }); };
-      select.onblur = function() { slot.innerHTML = ''; modelSpan.style.display = ''; };
-      slot.appendChild(select);
-      select.focus();
-    } else {
-      const input = document.createElement('input');
-      input.className = 'input';
-      input.style.fontSize = '0.8em';
-      input.value = evt.currentModel || '';
-      input.placeholder = 'Model name';
-      var evtId2 = evt.id;
-      var curModel = evt.currentModel;
-      input.onkeydown = function(e) {
-        if (e.key === 'Enter' && input.value.trim()) { msg('setModel', { id: evtId2, model: input.value.trim() }); }
-        if (e.key === 'Escape') { slot.innerHTML = ''; modelSpan.style.display = ''; }
-      };
-      input.onblur = function() {
-        if (input.value.trim() && input.value.trim() !== curModel) {
-          msg('setModel', { id: evtId2, model: input.value.trim() });
-        } else { slot.innerHTML = ''; modelSpan.style.display = ''; }
-      };
-      slot.appendChild(input);
-      input.focus();
-      input.select();
-    }
-  }
-
   // Handle Jira progress
   if (evt.command === 'jiraProgress') {
     const btn = document.getElementById('btnJira');
@@ -642,6 +593,60 @@ window.addEventListener('message', (event) => {
   }
 });
 ` : ''}
+
+// Global message handler (always active, not just when adding)
+window.addEventListener('message', (event) => {
+  const evt = event.data;
+
+  // Handle inline model picker
+  if (evt.command === 'showModelPicker') {
+    const modelSpan = document.getElementById('model-' + evt.id);
+    const slot = document.getElementById('model-picker-' + evt.id);
+    if (!modelSpan || !slot) return;
+
+    modelSpan.style.display = 'none';
+    slot.innerHTML = '';
+
+    const models = evt.models || [];
+    if (models.length > 0) {
+      const select = document.createElement('select');
+      select.className = 'input';
+      select.style.fontSize = '0.8em';
+      models.forEach(function(m) {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = m.name;
+        if (m.id === evt.currentModel) opt.selected = true;
+        select.appendChild(opt);
+      });
+      var pickerId = evt.id;
+      select.onchange = function() { msg('setModel', { id: pickerId, model: select.value }); };
+      select.onblur = function() { slot.innerHTML = ''; modelSpan.style.display = ''; };
+      slot.appendChild(select);
+      select.focus();
+    } else {
+      const input = document.createElement('input');
+      input.className = 'input';
+      input.style.fontSize = '0.8em';
+      input.value = evt.currentModel || '';
+      input.placeholder = 'Model name';
+      var inputId = evt.id;
+      var curModel = evt.currentModel;
+      input.onkeydown = function(e) {
+        if (e.key === 'Enter' && input.value.trim()) { msg('setModel', { id: inputId, model: input.value.trim() }); }
+        if (e.key === 'Escape') { slot.innerHTML = ''; modelSpan.style.display = ''; }
+      };
+      input.onblur = function() {
+        if (input.value.trim() && input.value.trim() !== curModel) {
+          msg('setModel', { id: inputId, model: input.value.trim() });
+        } else { slot.innerHTML = ''; modelSpan.style.display = ''; }
+      };
+      slot.appendChild(input);
+      input.focus();
+      input.select();
+    }
+  }
+});
 
 let boardDebounce;
 
