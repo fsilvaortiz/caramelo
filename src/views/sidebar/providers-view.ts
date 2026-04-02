@@ -55,7 +55,13 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
           await this.handleFetchModels(msg);
           break;
         case 'changeModel':
-          await this.handleChangeModel(msg.id);
+          this.handleChangeModelInline(msg.id);
+          break;
+        case 'setModel':
+          await this.handleSetModel(msg.id, msg.model);
+          break;
+        case 'renameProvider':
+          await this.handleRename(msg.id);
           break;
         case 'cancelAdd':
           this.refresh();
@@ -145,55 +151,6 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     this.view?.webview.postMessage({ command: 'modelsLoaded', models });
   }
 
-  private async handleChangeModel(id: string): Promise<void> {
-    const vsConfig = vscode.workspace.getConfiguration();
-    const configs = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
-    const config = configs.find((c) => c.id === id);
-    if (!config) return;
-
-    let models: ModelInfo[];
-    if (config.type === 'copilot') {
-      const copilotModels = await getCopilotModels();
-      models = copilotModels.map((m) => ({ id: m.family, name: m.name }));
-    } else {
-      const apiKey = await this.secrets.get(`caramelo.provider.${id}.apiKey`);
-      models = await this.fetchModelsFromAPI(config.type, config.endpoint, apiKey ?? undefined);
-    }
-
-    const items = models.map((m) => ({
-      label: m.id === config.model ? `$(check) ${m.name}` : m.name,
-      description: m.id,
-    }));
-
-    if (items.length === 0) {
-      const manual = await vscode.window.showInputBox({ prompt: 'Model name', value: config.model });
-      if (!manual) return;
-      config.model = manual;
-    } else {
-      const pick = await vscode.window.showQuickPick(items, { placeHolder: 'Select model' });
-      if (!pick) return;
-      config.model = pick.description!;
-    }
-
-    await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Workspace);
-
-    // Re-register provider with new model
-    this.registry.unregister(id);
-    let provider: import('../../providers/types.js').LLMProvider;
-    if (config.type === 'copilot') {
-      provider = new CopilotProvider(id, config.name, config.model);
-    } else {
-      const apiKeyId = `caramelo.provider.${id}.apiKey`;
-      provider = config.type === 'anthropic'
-        ? new ClaudeProvider({ ...config, apiKeyId }, this.secrets)
-        : new OpenAICompatibleProvider({ ...config, apiKeyId }, this.secrets);
-    }
-    await provider.authenticate().catch(() => {});
-    this.registry.register(provider);
-    await this.registry.setActive(id);
-    this.refresh();
-  }
-
   private async handleTestJira(msg: { url: string; email: string; token: string }): Promise<void> {
     const sendResult = (success: boolean, data?: { boards?: unknown[]; error?: string }) => {
       console.log('[Caramelo] Jira test result:', success, data?.error ?? 'OK');
@@ -266,6 +223,79 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     vscode.window.showInformationMessage(`Jira provider "${name}" added.`);
   }
 
+  private async handleChangeModelInline(id: string): Promise<void> {
+    const vsConfig = vscode.workspace.getConfiguration();
+    const configs = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
+    const config = configs.find((c) => c.id === id);
+    if (!config) return;
+
+    let models: ModelInfo[];
+    if (config.type === 'copilot') {
+      const copilotModels = await getCopilotModels();
+      models = copilotModels.map((m) => ({ id: m.family, name: m.name }));
+    } else {
+      const apiKey = await this.secrets.get(`caramelo.provider.${id}.apiKey`);
+      models = await this.fetchModelsFromAPI(config.type, config.endpoint, apiKey ?? undefined, config.authHeader, config.authPrefix);
+    }
+
+    this.view?.webview.postMessage({ command: 'showModelPicker', id, models, currentModel: config.model });
+  }
+
+  private async handleSetModel(id: string, model: string): Promise<void> {
+    const vsConfig = vscode.workspace.getConfiguration();
+    const configs = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
+    const config = configs.find((c) => c.id === id);
+    if (!config) return;
+
+    config.model = model;
+    await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Workspace);
+
+    // Re-register
+    this.registry.unregister(id);
+    let provider: import('../../providers/types.js').LLMProvider;
+    if (config.type === 'copilot') {
+      provider = new CopilotProvider(id, config.name, model);
+    } else if (config.type === 'anthropic') {
+      provider = new ClaudeProvider({ ...config, apiKeyId: `caramelo.provider.${id}.apiKey` }, this.secrets);
+    } else {
+      provider = new OpenAICompatibleProvider({ ...config, apiKeyId: `caramelo.provider.${id}.apiKey` }, this.secrets);
+    }
+    await provider.authenticate().catch(() => {});
+    this.registry.register(provider);
+    await this.registry.setActive(id);
+    this.refresh();
+  }
+
+  private async handleRename(id: string): Promise<void> {
+    const vsConfig = vscode.workspace.getConfiguration();
+    const configs = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
+    const config = configs.find((c) => c.id === id);
+    if (!config) return;
+
+    const newName = await vscode.window.showInputBox({
+      prompt: 'Provider name',
+      value: config.name,
+    });
+    if (!newName || newName === config.name) return;
+
+    config.name = newName;
+    await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Workspace);
+
+    // Re-register with new name
+    this.registry.unregister(id);
+    let provider: import('../../providers/types.js').LLMProvider;
+    if (config.type === 'copilot') {
+      provider = new CopilotProvider(id, newName, config.model);
+    } else if (config.type === 'anthropic') {
+      provider = new ClaudeProvider({ ...config, apiKeyId: `caramelo.provider.${id}.apiKey` }, this.secrets);
+    } else {
+      provider = new OpenAICompatibleProvider({ ...config, apiKeyId: `caramelo.provider.${id}.apiKey` }, this.secrets);
+    }
+    await provider.authenticate().catch(() => {});
+    this.registry.register(provider);
+    this.refresh();
+  }
+
   private async fetchModelsFromAPI(type: string, endpoint: string, apiKey?: string, customAuthHeader?: string, customAuthPrefix?: string): Promise<ModelInfo[]> {
     try {
       const url = type === 'anthropic'
@@ -307,7 +337,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
         <div class="provider-main">
           <span class="provider-dot ${isActive ? 'on' : ''}"></span>
           <div class="provider-info">
-            <span class="provider-name">${esc(p.displayName)}</span>
+            <span class="provider-name" onclick="event.stopPropagation(); msg('renameProvider',{id:'${p.id}'})" title="Click to rename">${esc(p.displayName)}</span>
             <span class="provider-model" onclick="event.stopPropagation(); msg('changeModel',{id:'${p.id}'})" title="Click to change model">${esc(config?.model ?? '')}</span>
           </div>
           <button class="provider-delete" onclick="event.stopPropagation(); msg('deleteProvider',{id:'${p.id}'})" title="Delete">×</button>
@@ -480,6 +510,62 @@ window.addEventListener('message', (event) => {
     }
   }
 
+  // Handle inline model picker
+  if (msg.command === 'showModelPicker') {
+    const modelSpan = document.querySelector('.provider-item .provider-model[onclick*="' + msg.id + '"]');
+    if (modelSpan) {
+      const models = msg.models || [];
+      if (models.length > 0) {
+        const select = document.createElement('select');
+        select.className = 'input';
+        select.style.fontSize = '0.8em';
+        select.style.marginTop = '2px';
+        models.forEach(m => {
+          const opt = document.createElement('option');
+          opt.value = m.id;
+          opt.textContent = m.name;
+          if (m.id === msg.currentModel) opt.selected = true;
+          select.appendChild(opt);
+        });
+        select.onchange = function() {
+          msg('setModel', { id: msg.id, model: select.value });
+        };
+        select.onblur = function() {
+          select.replaceWith(modelSpan);
+          modelSpan.style.display = '';
+        };
+        modelSpan.style.display = 'none';
+        modelSpan.parentElement.appendChild(select);
+        select.focus();
+      } else {
+        // No models from API — show input for manual entry
+        const input = document.createElement('input');
+        input.className = 'input';
+        input.style.fontSize = '0.8em';
+        input.style.marginTop = '2px';
+        input.value = msg.currentModel || '';
+        input.placeholder = 'Model name';
+        input.onkeydown = function(e) {
+          if (e.key === 'Enter' && input.value.trim()) {
+            msg('setModel', { id: msg.id, model: input.value.trim() });
+          }
+          if (e.key === 'Escape') { input.replaceWith(modelSpan); modelSpan.style.display = ''; }
+        };
+        input.onblur = function() {
+          if (input.value.trim() && input.value.trim() !== msg.currentModel) {
+            msg('setModel', { id: msg.id, model: input.value.trim() });
+          } else {
+            input.replaceWith(modelSpan); modelSpan.style.display = '';
+          }
+        };
+        modelSpan.style.display = 'none';
+        modelSpan.parentElement.appendChild(input);
+        input.focus();
+        input.select();
+      }
+    }
+  }
+
   // Handle Jira progress
   if (msg.command === 'jiraProgress') {
     const btn = document.getElementById('btnJira');
@@ -630,7 +716,8 @@ body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); 
 .provider-dot.on { background: #4CAF50; opacity: 1; box-shadow: 0 0 4px rgba(76,175,80,0.5); }
 .provider-icon { font-size: 1em; flex-shrink: 0; }
 .provider-info { flex: 1; min-width: 0; }
-.provider-name { display: block; font-weight: 600; font-size: 0.9em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.provider-name { display: block; font-weight: 600; font-size: 0.9em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.provider-name:hover { color: var(--vscode-textLink-foreground); }
 .provider-model {
   display: block; font-size: 0.78em; color: var(--vscode-descriptionForeground);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;
