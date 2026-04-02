@@ -234,18 +234,34 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     const vsConfig = vscode.workspace.getConfiguration();
     const configs = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
     const config = configs.find((c) => c.id === id);
-    if (!config) return;
-
-    let models: ModelInfo[];
-    if (config.type === 'copilot') {
-      const copilotModels = await getCopilotModels();
-      models = copilotModels.map((m) => ({ id: m.family, name: m.name }));
-    } else {
-      const apiKey = await this.secrets.get(`caramelo.provider.${id}.apiKey`);
-      models = await this.fetchModelsFromAPI(config.type, config.endpoint, apiKey ?? undefined, config.authHeader, config.authPrefix);
+    if (!config) {
+      console.log('[Caramelo] changeModel: config not found for', id);
+      return;
     }
 
-    this.view?.webview.postMessage({ command: 'showModelPicker', id, models, currentModel: config.model });
+    // Send picker immediately with empty models (shows manual input)
+    // Then fetch models in background and update
+    console.log('[Caramelo] changeModel: sending picker for', id, 'current model:', config.model);
+    this.view?.webview.postMessage({ command: 'showModelPicker', id, models: [], currentModel: config.model });
+
+    // Fetch available models asynchronously
+    try {
+      let models: ModelInfo[];
+      if (config.type === 'copilot') {
+        const copilotModels = await getCopilotModels();
+        models = copilotModels.map((m) => ({ id: m.family, name: m.name }));
+      } else {
+        const apiKey = await this.secrets.get(`caramelo.provider.${id}.apiKey`);
+        models = await this.fetchModelsFromAPI(config.type, config.endpoint, apiKey ?? undefined, config.authHeader, config.authPrefix);
+      }
+      console.log('[Caramelo] changeModel: fetched', models.length, 'models');
+      if (models.length > 0) {
+        // Update picker with actual models
+        this.view?.webview.postMessage({ command: 'showModelPicker', id, models, currentModel: config.model });
+      }
+    } catch (err) {
+      console.log('[Caramelo] changeModel: fetch error', err);
+    }
   }
 
   private async handleSetModel(id: string, model: string): Promise<void> {
