@@ -57,8 +57,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
           await this.handleFetchModels(msg);
           break;
         case 'changeModel':
-          console.log('[Caramelo] changeModel:', msg.id);
-          this.handleChangeModelInline(msg.id).catch((e) => console.error('[Caramelo] changeModel error:', e));
+          this.handleChangeModelInline(msg.id);
           break;
         case 'setModel':
           await this.handleSetModel(msg.id, msg.model);
@@ -73,7 +72,12 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
         case 'saveAuth':
           await this.handleSaveAuth(msg);
           break;
+        case 'cancelEdit':
+          this.editingState = null;
+          this.refresh();
+          break;
         case 'cancelAdd':
+          this.editingState = null;
           this.refresh();
           break;
         case 'testJiraConnection':
@@ -94,6 +98,8 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
 
     this.refresh();
   }
+
+  private editingState: { type: 'model' | 'auth'; providerId: string } | null = null;
 
   refresh(addingPresetIndex?: number): void {
     if (!this.view) return;
@@ -239,38 +245,9 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     vscode.window.showInformationMessage(`Jira provider "${name}" added.`);
   }
 
-  private async handleChangeModelInline(id: string): Promise<void> {
-    const vsConfig = vscode.workspace.getConfiguration();
-    const configs = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
-    const config = configs.find((c) => c.id === id);
-    if (!config) {
-      console.log('[Caramelo] changeModel: config not found for', id);
-      return;
-    }
-
-    // Send picker immediately with empty models (shows manual input)
-    // Then fetch models in background and update
-    console.log('[Caramelo] changeModel: sending picker for', id, 'current model:', config.model);
-    this.view?.webview.postMessage({ command: 'showModelPicker', id, models: [], currentModel: config.model });
-
-    // Fetch available models asynchronously
-    try {
-      let models: ModelInfo[];
-      if (config.type === 'copilot') {
-        const copilotModels = await getCopilotModels();
-        models = copilotModels.map((m) => ({ id: m.family, name: m.name }));
-      } else {
-        const apiKey = await this.secrets.get(`caramelo.provider.${id}.apiKey`);
-        models = await this.fetchModelsFromAPI(config.type, config.endpoint, apiKey ?? undefined, config.authHeader, config.authPrefix);
-      }
-      console.log('[Caramelo] changeModel: fetched', models.length, 'models');
-      if (models.length > 0) {
-        // Update picker with actual models
-        this.view?.webview.postMessage({ command: 'showModelPicker', id, models, currentModel: config.model });
-      }
-    } catch (err) {
-      console.log('[Caramelo] changeModel: fetch error', err);
-    }
+  private handleChangeModelInline(id: string): void {
+    this.editingState = { type: 'model', providerId: id };
+    this.refresh();
   }
 
   private async handleSetModel(id: string, model: string): Promise<void> {
@@ -321,9 +298,15 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
       }
     }
 
-    this.view?.webview.postMessage({ command: 'modelValidation', id, status: valid ? 'valid' : 'invalid', model, error: errorMsg });
+    if (valid) {
+      vscode.window.showInformationMessage(`✓ Model "${model}" is working.`);
+    } else {
+      vscode.window.showWarningMessage(`✗ Model "${model}": ${errorMsg || 'validation failed'}. Saved anyway — you can change it later.`);
+    }
+
     this.registry.register(provider);
     await this.registry.setActive(id);
+    this.editingState = null;
     this.refresh();
   }
 
@@ -358,20 +341,8 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
   }
 
   private handleEditAuth(id: string): void {
-    const vsConfig = vscode.workspace.getConfiguration();
-    const configs = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
-    const config = configs.find((c) => c.id === id);
-    if (!config) return;
-
-    const defaultHeader = config.type === 'anthropic' ? 'x-api-key' : 'Authorization';
-    const defaultPrefix = config.type === 'anthropic' ? '' : 'Bearer';
-
-    this.view?.webview.postMessage({
-      command: 'showAuthEditor',
-      id,
-      authHeader: config.authHeader ?? defaultHeader,
-      authPrefix: config.authPrefix ?? defaultPrefix,
-    });
+    this.editingState = { type: 'auth', providerId: id };
+    this.refresh();
   }
 
   private async handleSaveAuth(msg: { id: string; authHeader: string; authPrefix: string }): Promise<void> {
@@ -396,7 +367,9 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     }
     await provider.authenticate().catch(() => {});
     this.registry.register(provider);
+    this.editingState = null;
     this.refresh();
+    vscode.window.showInformationMessage(`Auth settings updated for "${config.name}".`);
   }
 
   private async fetchModelsFromAPI(type: string, endpoint: string, apiKey?: string, customAuthHeader?: string, customAuthPrefix?: string): Promise<ModelInfo[]> {
@@ -447,10 +420,15 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
           <span class="provider-dot ${isActive ? 'on' : ''}" onclick="msg('selectActive',{id:'${p.id}'})" title="Click to set as active" style="cursor:pointer"></span>
           <div class="provider-info">
             <span class="provider-name" onclick="event.stopPropagation(); msg('renameProvider',{id:'${p.id}'})" title="Click to rename">${esc(p.displayName)}</span>
-            <span class="provider-model" id="model-${p.id}" onclick="event.stopPropagation(); msg('changeModel',{id:'${p.id}'})" title="Click to change model">${esc(config?.model ?? '')}</span>
-            <div id="model-picker-${p.id}" class="model-picker-slot"></div>
-            <span class="provider-auth" id="auth-${p.id}" onclick="event.stopPropagation(); msg('editAuth',{id:'${p.id}'})" title="Click to edit auth settings">auth: ${esc(config?.authHeader ? `${config.authHeader} ${config.authPrefix || ''}`.trim() : 'default')}</span>
-            <div id="auth-editor-${p.id}"></div>
+            ${this.editingState?.type === 'model' && this.editingState.providerId === p.id
+              ? `<input class="input" style="font-size:0.8em;margin:2px 0" id="editModel-${p.id}" value="${esc(config?.model ?? '')}" placeholder="Model name" onkeydown="if(event.key==='Enter')msg('setModel',{id:'${p.id}',model:this.value}); if(event.key==='Escape')msg('cancelEdit')" />
+                 <div style="display:flex;gap:4px;margin:2px 0"><button class="phase-btn approve" style="font-size:0.75em;padding:2px 8px" onclick="msg('setModel',{id:'${p.id}',model:document.getElementById('editModel-${p.id}').value})">Save</button><button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px" onclick="msg('cancelEdit')">Cancel</button></div>`
+              : `<span class="provider-model" id="model-${p.id}" onclick="msg('changeModel',{id:'${p.id}'})" title="Click to change model">${esc(config?.model ?? '')}</span>`}
+            ${this.editingState?.type === 'auth' && this.editingState.providerId === p.id
+              ? `<input class="input" style="font-size:0.8em;margin:2px 0" id="editAuthHeader-${p.id}" value="${esc(config?.authHeader ?? (config?.type === 'anthropic' ? 'x-api-key' : 'Authorization'))}" placeholder="Header name (e.g. Authorization)" />
+                 <input class="input" style="font-size:0.8em;margin:2px 0" id="editAuthPrefix-${p.id}" value="${esc(config?.authPrefix ?? (config?.type === 'anthropic' ? '' : 'Bearer'))}" placeholder="Prefix (e.g. Bearer)" />
+                 <div style="display:flex;gap:4px;margin:2px 0"><button class="phase-btn approve" style="font-size:0.75em;padding:2px 8px" onclick="msg('saveAuth',{id:'${p.id}',authHeader:document.getElementById('editAuthHeader-${p.id}').value,authPrefix:document.getElementById('editAuthPrefix-${p.id}').value})">Save</button><button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px" onclick="msg('cancelEdit')">Cancel</button></div>`
+              : `<span class="provider-auth" onclick="msg('editAuth',{id:'${p.id}'})" title="Click to edit auth settings">auth: ${esc(config?.authHeader ? `${config.authHeader} ${config.authPrefix || ''}`.trim() : 'default')}</span>`}
           </div>
           <button class="provider-delete" onclick="event.stopPropagation(); msg('deleteProvider',{id:'${p.id}'})" title="Delete">×</button>
         </div>
@@ -682,111 +660,6 @@ window.addEventListener('message', (event) => {
 });
 ` : ''}
 
-// Global message handler (always active, not just when adding)
-window.addEventListener('message', (event) => {
-  const evt = event.data;
-
-  // Handle inline model picker
-  if (evt.command === 'showModelPicker') {
-    const modelSpan = document.getElementById('model-' + evt.id);
-    const slot = document.getElementById('model-picker-' + evt.id);
-    if (!modelSpan || !slot) return;
-
-    modelSpan.style.display = 'none';
-    slot.innerHTML = '';
-
-    const models = evt.models || [];
-    if (models.length > 0) {
-      const select = document.createElement('select');
-      select.className = 'input';
-      select.style.fontSize = '0.8em';
-      models.forEach(function(m) {
-        const opt = document.createElement('option');
-        opt.value = m.id;
-        opt.textContent = m.name;
-        if (m.id === evt.currentModel) opt.selected = true;
-        select.appendChild(opt);
-      });
-      var pickerId = evt.id;
-      select.onchange = function() { msg('setModel', { id: pickerId, model: select.value }); };
-      select.onblur = function() { slot.innerHTML = ''; modelSpan.style.display = ''; };
-      slot.appendChild(select);
-      select.focus();
-    } else {
-      const input = document.createElement('input');
-      input.className = 'input';
-      input.style.fontSize = '0.8em';
-      input.value = evt.currentModel || '';
-      input.placeholder = 'Model name';
-      var inputId = evt.id;
-      var curModel = evt.currentModel;
-      input.onkeydown = function(e) {
-        if (e.key === 'Enter' && input.value.trim()) { msg('setModel', { id: inputId, model: input.value.trim() }); }
-        if (e.key === 'Escape') { slot.innerHTML = ''; modelSpan.style.display = ''; }
-      };
-      input.onblur = function() {
-        if (input.value.trim() && input.value.trim() !== curModel) {
-          msg('setModel', { id: inputId, model: input.value.trim() });
-        } else { slot.innerHTML = ''; modelSpan.style.display = ''; }
-      };
-      slot.appendChild(input);
-      input.focus();
-      input.select();
-    }
-  }
-
-  // Handle inline auth editor
-  if (evt.command === 'showAuthEditor') {
-    const authSpan = document.getElementById('auth-' + evt.id);
-    const slot = document.getElementById('auth-editor-' + evt.id);
-    if (!authSpan || !slot) return;
-
-    authSpan.style.display = 'none';
-    slot.innerHTML =
-      '<input class="input" id="editAuthHeader-' + evt.id + '" value="' + (evt.authHeader || '').replace(/"/g, '&quot;') + '" placeholder="Header name (e.g. Authorization)" style="font-size:0.8em;margin:2px 0" />' +
-      '<input class="input" id="editAuthPrefix-' + evt.id + '" value="' + (evt.authPrefix || '').replace(/"/g, '&quot;') + '" placeholder="Prefix (e.g. Bearer)" style="font-size:0.8em;margin:2px 0" />' +
-      '<div style="display:flex;gap:4px;margin-top:2px">' +
-        '<button class="phase-btn approve" style="font-size:0.75em;padding:2px 8px" onclick="saveAuth(\'' + evt.id + '\')">Save</button>' +
-        '<button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px" onclick="cancelAuthEdit(\'' + evt.id + '\')">Cancel</button>' +
-      '</div>';
-    document.getElementById('editAuthHeader-' + evt.id)?.focus();
-  }
-
-  // Handle model validation result
-  if (evt.command === 'modelValidation') {
-    const modelSpan = document.getElementById('model-' + evt.id);
-    const slot = document.getElementById('model-picker-' + evt.id);
-    if (slot) slot.innerHTML = '';
-    if (modelSpan) {
-      modelSpan.style.display = '';
-      if (evt.status === 'validating') {
-        modelSpan.textContent = '⏳ Validating...';
-        modelSpan.style.color = '';
-      } else if (evt.status === 'valid') {
-        modelSpan.textContent = '✓ ' + evt.model;
-        modelSpan.style.color = '#4CAF50';
-        setTimeout(function() { modelSpan.textContent = evt.model; modelSpan.style.color = ''; }, 2000);
-      } else {
-        modelSpan.textContent = '✗ ' + (evt.error || evt.model + ' (invalid)');
-        modelSpan.style.color = '#f44';
-        setTimeout(function() { modelSpan.textContent = evt.model; modelSpan.style.color = ''; }, 4000);
-      }
-    }
-  }
-});
-
-function saveAuth(id) {
-  const header = document.getElementById('editAuthHeader-' + id)?.value || '';
-  const prefix = document.getElementById('editAuthPrefix-' + id)?.value || '';
-  msg('saveAuth', { id, authHeader: header, authPrefix: prefix });
-}
-
-function cancelAuthEdit(id) {
-  const authSpan = document.getElementById('auth-' + id);
-  const slot = document.getElementById('auth-editor-' + id);
-  if (slot) slot.innerHTML = '';
-  if (authSpan) authSpan.style.display = '';
-}
 
 let boardDebounce;
 
