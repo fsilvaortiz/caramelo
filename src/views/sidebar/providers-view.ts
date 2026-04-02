@@ -72,6 +72,13 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
         case 'saveAuth':
           await this.handleSaveAuth(msg);
           break;
+        case 'editJira':
+          this.editingState = { type: 'jira', providerId: msg.id };
+          this.refresh();
+          break;
+        case 'saveJira':
+          await this.handleSaveJira(msg);
+          break;
         case 'cancelEdit':
           this.editingState = null;
           this.refresh();
@@ -99,7 +106,11 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     this.refresh();
   }
 
-  private editingState: { type: 'model' | 'auth'; providerId: string } | null = null;
+  private editingState: {
+    type: 'model' | 'auth' | 'jira';
+    providerId: string;
+    models?: ModelInfo[] | null; // null = loading, [] = none found
+  } | null = null;
 
   refresh(addingPresetIndex?: number): void {
     if (!this.view) return;
@@ -246,8 +257,33 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
   }
 
   private handleChangeModelInline(id: string): void {
-    this.editingState = { type: 'model', providerId: id };
+    this.editingState = { type: 'model', providerId: id, models: null };
     this.refresh();
+
+    // Fetch models in background
+    const vsConfig = vscode.workspace.getConfiguration();
+    const configs = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
+    const config = configs.find((c) => c.id === id);
+    if (!config) return;
+
+    (async () => {
+      let models: ModelInfo[] = [];
+      try {
+        if (config.type === 'copilot') {
+          const copilotModels = await getCopilotModels();
+          models = copilotModels.map((m) => ({ id: m.family, name: m.name }));
+        } else {
+          const apiKey = await this.secrets.get(`caramelo.provider.${id}.apiKey`);
+          models = await this.fetchModelsFromAPI(config.type, config.endpoint, apiKey ?? undefined, config.authHeader, config.authPrefix);
+        }
+      } catch { /* ignore */ }
+
+      // Only update if still editing the same provider
+      if (this.editingState?.type === 'model' && this.editingState.providerId === id) {
+        this.editingState.models = models;
+        this.refresh();
+      }
+    })();
   }
 
   private async handleSetModel(id: string, model: string): Promise<void> {
@@ -372,6 +408,45 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     vscode.window.showInformationMessage(`Auth settings updated for "${config.name}".`);
   }
 
+  private async handleSaveJira(msg: { id: string; name: string; instanceUrl: string; email: string; boardName: string }): Promise<void> {
+    const vsConfig = vscode.workspace.getConfiguration();
+    const configs = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
+    const config = configs.find((c) => c.id === msg.id);
+    if (!config) return;
+
+    config.name = msg.name;
+    config.instanceUrl = msg.instanceUrl;
+    config.endpoint = msg.instanceUrl;
+    config.email = msg.email;
+    config.boardName = msg.boardName;
+    await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Workspace);
+
+    this.editingState = null;
+    this.refresh();
+  }
+
+  private renderModelEditor(providerId: string, currentModel: string, models: ModelInfo[] | null | undefined): string {
+    if (models === null) {
+      // Loading
+      return `<div style="font-size:0.8em;color:var(--vscode-descriptionForeground);margin:2px 0">Loading models...</div>
+        <input class="input" style="font-size:0.8em;margin:2px 0" id="editModel-${providerId}" value="${esc(currentModel)}" placeholder="Model name" onkeydown="if(event.key==='Enter')msg('setModel',{id:'${providerId}',model:this.value}); if(event.key==='Escape')msg('cancelEdit')" />
+        <div style="display:flex;gap:4px;margin:2px 0"><button class="phase-btn approve" style="font-size:0.75em;padding:2px 8px" onclick="msg('setModel',{id:'${providerId}',model:document.getElementById('editModel-${providerId}').value})">Save</button><button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px" onclick="msg('cancelEdit')">Cancel</button></div>`;
+    }
+
+    if (models && models.length > 0) {
+      // Dropdown with available models
+      const options = models.map((m) =>
+        `<option value="${esc(m.id)}" ${m.id === currentModel ? 'selected' : ''}>${esc(m.name)}</option>`
+      ).join('');
+      return `<select class="input" style="font-size:0.8em;margin:2px 0" id="editModel-${providerId}">${options}</select>
+        <div style="display:flex;gap:4px;margin:2px 0"><button class="phase-btn approve" style="font-size:0.75em;padding:2px 8px" onclick="msg('setModel',{id:'${providerId}',model:document.getElementById('editModel-${providerId}').value})">Save</button><button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px" onclick="msg('cancelEdit')">Cancel</button></div>`;
+    }
+
+    // Manual input
+    return `<input class="input" style="font-size:0.8em;margin:2px 0" id="editModel-${providerId}" value="${esc(currentModel)}" placeholder="Model name" onkeydown="if(event.key==='Enter')msg('setModel',{id:'${providerId}',model:this.value}); if(event.key==='Escape')msg('cancelEdit')" />
+      <div style="display:flex;gap:4px;margin:2px 0"><button class="phase-btn approve" style="font-size:0.75em;padding:2px 8px" onclick="msg('setModel',{id:'${providerId}',model:document.getElementById('editModel-${providerId}').value})">Save</button><button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px" onclick="msg('cancelEdit')">Cancel</button></div>`;
+  }
+
   private async fetchModelsFromAPI(type: string, endpoint: string, apiKey?: string, customAuthHeader?: string, customAuthPrefix?: string): Promise<ModelInfo[]> {
     // Try fetching from API first
     try {
@@ -421,8 +496,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
           <div class="provider-info">
             <span class="provider-name" onclick="event.stopPropagation(); msg('renameProvider',{id:'${p.id}'})" title="Click to rename">${esc(p.displayName)}</span>
             ${this.editingState?.type === 'model' && this.editingState.providerId === p.id
-              ? `<input class="input" style="font-size:0.8em;margin:2px 0" id="editModel-${p.id}" value="${esc(config?.model ?? '')}" placeholder="Model name" onkeydown="if(event.key==='Enter')msg('setModel',{id:'${p.id}',model:this.value}); if(event.key==='Escape')msg('cancelEdit')" />
-                 <div style="display:flex;gap:4px;margin:2px 0"><button class="phase-btn approve" style="font-size:0.75em;padding:2px 8px" onclick="msg('setModel',{id:'${p.id}',model:document.getElementById('editModel-${p.id}').value})">Save</button><button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px" onclick="msg('cancelEdit')">Cancel</button></div>`
+              ? this.renderModelEditor(p.id, config?.model ?? '', this.editingState.models)
               : `<span class="provider-model" id="model-${p.id}" onclick="msg('changeModel',{id:'${p.id}'})" title="Click to change model">${esc(config?.model ?? '')}</span>`}
             ${this.editingState?.type === 'auth' && this.editingState.providerId === p.id
               ? `<input class="input" style="font-size:0.8em;margin:2px 0" id="editAuthHeader-${p.id}" value="${esc(config?.authHeader ?? (config?.type === 'anthropic' ? 'x-api-key' : 'Authorization'))}" placeholder="Header name (e.g. Authorization)" />
@@ -436,18 +510,36 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     }).join('');
 
     // Jira providers
-    const jiraHtml = jiraConfigs.map((c) => `
-      <div class="provider-item jira">
+    const jiraHtml = jiraConfigs.map((c) => {
+      const isEditingJira = this.editingState?.type === 'jira' && this.editingState.providerId === c.id;
+      if (isEditingJira) {
+        return `<div class="provider-item jira">
+          <div class="provider-main">
+            <span class="provider-icon">📋</span>
+            <div class="provider-info" style="width:100%">
+              <input class="input" style="font-size:0.8em;margin:2px 0" id="editJiraName-${c.id}" value="${esc(c.name)}" placeholder="Provider name" />
+              <input class="input" style="font-size:0.8em;margin:2px 0" id="editJiraUrl-${c.id}" value="${esc(c.instanceUrl ?? '')}" placeholder="Jira URL" />
+              <input class="input" style="font-size:0.8em;margin:2px 0" id="editJiraEmail-${c.id}" value="${esc(c.email ?? '')}" placeholder="Email" />
+              <input class="input" style="font-size:0.8em;margin:2px 0" id="editJiraBoard-${c.id}" value="${esc(c.boardName ?? '')}" placeholder="Board name" />
+              <div style="display:flex;gap:4px;margin:2px 0">
+                <button class="phase-btn approve" style="font-size:0.75em;padding:2px 8px" onclick="msg('saveJira',{id:'${c.id}',name:document.getElementById('editJiraName-${c.id}').value,instanceUrl:document.getElementById('editJiraUrl-${c.id}').value,email:document.getElementById('editJiraEmail-${c.id}').value,boardName:document.getElementById('editJiraBoard-${c.id}').value})">Save</button>
+                <button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px" onclick="msg('cancelEdit')">Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>`;
+      }
+      return `<div class="provider-item jira">
         <div class="provider-main">
           <span class="provider-icon">📋</span>
           <div class="provider-info">
-            <span class="provider-name">${esc(c.name)}</span>
-            <span class="provider-model">${esc(c.boardName ?? '')}</span>
+            <span class="provider-name" onclick="msg('editJira',{id:'${c.id}'})" title="Click to edit" style="cursor:pointer">${esc(c.name)}</span>
+            <span class="provider-model" onclick="msg('editJira',{id:'${c.id}'})" title="Click to edit" style="cursor:pointer">${esc(c.boardName ?? '')}</span>
           </div>
           <button class="provider-delete" onclick="msg('deleteProvider',{id:'${c.id}'})" title="Delete">×</button>
         </div>
-      </div>
-    `).join('');
+      </div>`;
+    }).join('');
 
     // Add provider section
     let addSection: string;
