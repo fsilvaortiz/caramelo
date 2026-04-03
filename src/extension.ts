@@ -147,16 +147,19 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!specWorkspace || !sn || !pt) return;
       runPhase(sn, pt, specWorkspace, registry, templateManager, workflowEngine, { refresh: () => workflowView.refresh() } as never);
     }),
-    vscode.commands.registerCommand(COMMAND_IDS.startTask, (lineNumber: number, taskText: string, docUri: vscode.Uri) =>
-      startTask(lineNumber, taskText, docUri, registry)
-    ),
+    vscode.commands.registerCommand(COMMAND_IDS.startTask, async (lineNumber: number, taskText: string, docUri: vscode.Uri) => {
+      await startTask(lineNumber, taskText, docUri, registry);
+      workflowView.refresh();
+    }),
     vscode.commands.registerCommand('caramelo.runNextTask', async (docUri: vscode.Uri) => {
       const doc = await vscode.workspace.openTextDocument(docUri);
       for (let i = 0; i < doc.lineCount; i++) {
         const text = doc.lineAt(i).text.trimStart();
         if (/^- \[ \] /.test(text)) {
           const taskText = text.replace(/^- \[ \] /, '').trim();
-          return startTask(i, taskText, docUri, registry);
+          await startTask(i, taskText, docUri, registry);
+          workflowView.refresh();
+          return;
         }
       }
       vscode.window.showInformationMessage('All tasks are complete!');
@@ -223,7 +226,9 @@ export function activate(context: vscode.ExtensionContext): void {
         const text = doc.lineAt(i).text.trimStart();
         if (/^- \[ \] /.test(text)) {
           const taskText = text.replace(/^- \[ \] /, '').trim();
-          return startTask(i, taskText, doc.uri, registry);
+          await startTask(i, taskText, doc.uri, registry);
+          workflowView.refresh();
+          return;
         }
       }
       vscode.window.showInformationMessage('All tasks are complete!');
@@ -321,6 +326,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
       vscode.window.showInformationMessage(`All ${pendingTasks.length} tasks executed!`);
       editorContext.update();
+      workflowView.refresh();
     }),
     vscode.commands.registerCommand('caramelo.showLockedMessage', (reason: string) =>
       vscode.window.showInformationMessage(reason ?? 'Previous phase must be approved first')
