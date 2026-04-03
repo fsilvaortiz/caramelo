@@ -27,6 +27,7 @@
     "ollama",
     "claude",
     "openai",
+    "gemini",
     "copilot",
     "jira"
   ],

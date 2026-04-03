@@ -21,7 +21,7 @@ Caramelo solves all of that with a visual workflow panel.
 Unlike Kiro (locked to one LLM) or Copilot-only integrations, Caramelo works with **any LLM**:
 - **GitHub Copilot** — uses your existing subscription, no API key
 - **Ollama, LM Studio** — local, free
-- **Claude, OpenAI, Groq** — cloud
+- **Claude, OpenAI, Gemini, Groq** — cloud
 - **Corporate proxies** — custom auth headers for Azure API Manager, etc.
 
 Multiple providers simultaneously. Switch with one click. Custom aliases for each.

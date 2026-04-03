@@ -39,7 +39,7 @@
 
 ### LLM Agnostic
 
-- **Any provider**: GitHub Copilot, Claude, OpenAI, Ollama, Groq, LM Studio, or any OpenAI-compatible endpoint
+- **Any provider**: GitHub Copilot, Claude, OpenAI, Gemini, Ollama, Groq, LM Studio, or any OpenAI-compatible endpoint
 - **Multiple providers** configured simultaneously — switch by clicking the dot indicator
 - **Auto-detect models** — available models fetched from provider API, or enter manually
 - **Inline editing** — click provider name, model, or auth settings to edit directly in the sidebar
@@ -107,7 +107,7 @@ Press **F5** in VS Code to launch the Extension Development Host.
 
 ## Quick Start
 
-1. **Add a provider** — Expand the Providers section. Click a preset (Ollama, Claude, OpenAI, Groq, LM Studio, Copilot, Jira). Enter credentials if needed — models are fetched from the API or entered manually. For corporate proxies, expand "Custom auth header" to set the header name and prefix.
+1. **Add a provider** — Expand the Providers section. Click a preset (Ollama, Claude, OpenAI, Gemini, Groq, LM Studio, Copilot, Jira). Enter credentials if needed — models are fetched from the API or entered manually. For corporate proxies, expand "Custom auth header" to set the header name and prefix.
 
 2. **Set up your constitution** — Click the Constitution bar in the Workflow panel. Describe your project and click "Generate with AI" to let the LLM suggest principles, or fill in manually.
 
@@ -129,6 +129,7 @@ Press **F5** in VS Code to launch the Extension Development Host.
 | **Ollama** | `http://localhost:11434/v1` | None |
 | **Claude** | `https://api.anthropic.com` | API key |
 | **OpenAI** | `https://api.openai.com/v1` | API key |
+| **Gemini** | `https://generativelanguage.googleapis.com/v1beta/openai` | API key |
 | **Groq** | `https://api.groq.com/openai/v1` | API key |
 | **LM Studio** | `http://localhost:1234/v1` | None |
 | **Custom** | Any OpenAI-compatible endpoint | Optional |

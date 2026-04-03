@@ -35,7 +35,7 @@ Click a preset, enter credentials, done. No CLI tools required.
 Supported out of the box:
 - **GitHub Copilot** — uses your existing subscription, no API key needed
 - **Local**: Ollama, LM Studio (no API key needed)
-- **Cloud**: Claude, OpenAI, Groq (API key)
+- **Cloud**: Claude, OpenAI, Gemini, Groq (API key)
 - **Custom**: any OpenAI-compatible endpoint
 - **Corporate proxies**: custom auth headers for Azure API Manager, AWS API Gateway, etc.
 

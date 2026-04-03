@@ -5,7 +5,7 @@ El problema: GitHub Spec Kit es increíble para desarrollo basado en especificac
 Caramelo llena ese hueco:
 
 → UI visual con flujo secuencial: Requirements → Design → Tasks
-→ Cualquier LLM: GitHub Copilot, Ollama, Claude, OpenAI, Groq, o cualquier endpoint compatible
+→ Cualquier LLM: GitHub Copilot, Ollama, Claude, OpenAI, Gemini, Groq, o cualquier endpoint compatible
 → Proxies corporativos: headers de autenticación configurables (Azure API Manager, etc.)
 → Constitución del proyecto que guía toda la generación (con asistencia de AI)
 → Ejecución de tareas con streaming visible del LLM

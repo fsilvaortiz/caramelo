@@ -13,7 +13,7 @@ I built **Caramelo**, an open-source extension that brings GitHub Spec Kit's spe
 **What Caramelo does**:
 - Visual sidebar with specs, progress rings, task checklists
 - Sequential workflow: Requirements → Design → Tasks (with approval gates)
-- Works with ANY LLM — GitHub Copilot (no API key!), Ollama, Claude, OpenAI, Groq, LM Studio
+- Works with ANY LLM — GitHub Copilot (no API key!), Ollama, Claude, OpenAI, Gemini, Groq, LM Studio
 - Corporate proxy support — custom auth headers (Azure API Manager, etc.)
 - Constitution editor with AI generation
 - Jira Cloud integration — import issues as specs

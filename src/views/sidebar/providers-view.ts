@@ -13,6 +13,7 @@ const PROVIDER_PRESETS = [
   { label: 'Ollama', type: 'openai-compatible', endpoint: 'http://localhost:11434/v1', needsKey: false, icon: '🖥️' },
   { label: 'Claude', type: 'anthropic', endpoint: 'https://api.anthropic.com', needsKey: true, icon: '🤖' },
   { label: 'OpenAI', type: 'openai-compatible', endpoint: 'https://api.openai.com/v1', needsKey: true, icon: '🧠' },
+  { label: 'Gemini', type: 'openai-compatible', endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai', needsKey: true, icon: '💎' },
   { label: 'Groq', type: 'openai-compatible', endpoint: 'https://api.groq.com/openai/v1', needsKey: true, icon: '⚡' },
   { label: 'LM Studio', type: 'openai-compatible', endpoint: 'http://localhost:1234/v1', needsKey: false, icon: '🖥️' },
   { label: 'Copilot', type: 'copilot', endpoint: '', needsKey: false, icon: '🐙' },
