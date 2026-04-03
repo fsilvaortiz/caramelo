@@ -8,6 +8,7 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   private workspaceUri: vscode.Uri | undefined;
   private onSpecCreatedCallback?: (name: string) => void;
+  private collapsedSpecs = new Set<string>();
 
   constructor(private readonly extensionUri: vscode.Uri) {
     this.workspaceUri = vscode.workspace.workspaceFolders?.[0]?.uri;
@@ -55,6 +56,14 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider {
           break;
         case 'toggleTask':
           this.toggleTask(msg.filePath, msg.line, msg.done);
+          break;
+        case 'toggleSpec':
+          if (this.collapsedSpecs.has(msg.name)) {
+            this.collapsedSpecs.delete(msg.name);
+          } else {
+            this.collapsedSpecs.add(msg.name);
+          }
+          this.refresh();
           break;
         case 'runAllTasks':
           if (msg.path) {
@@ -282,13 +291,16 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider {
       ? `<span class="jira-badge" onclick="msg('openExternal',{url:'${esc(meta.jira.url)}'})">${escHtml(meta.jira.key)}</span>`
       : '';
 
-    return `<div class="spec-card">
-      <div class="spec-top">
+    const isCollapsed = this.collapsedSpecs.has(spec.name);
+    const toggleIcon = isCollapsed ? '▸' : '▾';
+
+    return `<div class="spec-card ${isCollapsed ? 'collapsed' : ''}">
+      <div class="spec-top" onclick="msg('toggleSpec',{name:'${esc(spec.name)}'})" style="cursor:pointer">
+        <span class="spec-toggle">${toggleIcon}</span>
         <div class="spec-name">${spec.name} ${jiraBadge}</div>
         ${ringHtml}
       </div>
-      <div class="phases">${phasesHtml}</div>
-      ${tasksHtml}
+      ${isCollapsed ? '' : `<div class="phases">${phasesHtml}</div>${tasksHtml}`}
     </div>`;
   }
 
@@ -452,8 +464,12 @@ body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); 
   border: 1px solid var(--vscode-widget-border, rgba(255,255,255,0.1));
   border-radius: 8px; padding: 10px; margin-bottom: 8px;
 }
-.spec-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.spec-name { font-weight: 700; font-size: 1em; }
+.spec-top { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
+.spec-top:hover { opacity: 0.8; }
+.spec-toggle { font-size: 0.85em; color: var(--vscode-descriptionForeground); flex-shrink: 0; width: 12px; }
+.spec-name { font-weight: 700; font-size: 1em; flex: 1; }
+.spec-card.collapsed { padding: 8px 10px; }
+.spec-card.collapsed .spec-top { margin-bottom: 0; }
 
 /* Progress Ring */
 .ring { width: 38px; height: 38px; flex-shrink: 0; }
