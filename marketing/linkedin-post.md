@@ -5,11 +5,13 @@ El problema: GitHub Spec Kit es increíble para desarrollo basado en especificac
 Caramelo llena ese hueco:
 
 → UI visual con flujo secuencial: Requirements → Design → Tasks
-→ Cualquier LLM: Ollama (local), Claude, OpenAI, Groq, o cualquier endpoint compatible
-→ Constitución del proyecto que guía toda la generación
+→ Cualquier LLM: GitHub Copilot, Ollama, Claude, OpenAI, Groq, o cualquier endpoint compatible
+→ Proxies corporativos: headers de autenticación configurables (Azure API Manager, etc.)
+→ Constitución del proyecto que guía toda la generación (con asistencia de AI)
 → Ejecución de tareas con streaming visible del LLM
 → Integración con Jira Cloud para importar issues como specs
-→ Análisis de consistencia y auto-corrección
+→ Análisis de consistencia con auto-corrección
+→ Validación de modelos con indicador visual
 → 100% compatible con Spec Kit
 
 Lo mejor: lo construí usando el mismo flujo de spec-driven development que la extensión ofrece.
@@ -19,4 +21,4 @@ GitHub: https://github.com/fsilvaortiz/caramelo
 
 MIT License. Contribuciones bienvenidas.
 
-#vscode #ai #specdriven #opensource #development #speckit
+#vscode #ai #specdriven #opensource #development #speckit #copilot #jira
