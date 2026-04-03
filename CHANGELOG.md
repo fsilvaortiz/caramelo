@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.0.7] - 2026-04-03
+## [0.0.8] - 2026-04-03
 
 ### Added
 
@@ -55,3 +55,5 @@
 - Multiple providers of same type with unique IDs (claude, claude-2, etc.)
 - Direct Jira issue key lookup in issue picker (type PROJ-123 to find any issue)
 - Google Gemini as preset provider via OpenAI-compatible endpoint
+- Workflow sidebar watches specs/ directory for real-time updates
+- Explicit refresh after task execution for immediate progress updates

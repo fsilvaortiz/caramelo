@@ -91,7 +91,7 @@ Search for **"Caramelo"** in the Extensions panel, or install from the [Marketpl
 ### From VSIX
 
 ```bash
-code --install-extension caramelo-0.0.7.vsix
+code --install-extension caramelo-0.0.8.vsix
 ```
 
 ### From Source
