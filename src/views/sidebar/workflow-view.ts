@@ -13,11 +13,15 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider {
     this.workspaceUri = vscode.workspace.workspaceFolders?.[0]?.uri;
 
     if (this.workspaceUri) {
-      const pattern = new vscode.RelativePattern(this.workspaceUri, `**/.specify/**`);
-      const watcher = vscode.workspace.createFileSystemWatcher(pattern);
-      watcher.onDidChange(() => this.refresh());
-      watcher.onDidCreate(() => this.refresh());
-      watcher.onDidDelete(() => this.refresh());
+      // Watch both .specify/ (constitution, templates) and specs/ (spec files, meta)
+      for (const glob of ['**/.specify/**', '**/specs/**']) {
+        const watcher = vscode.workspace.createFileSystemWatcher(
+          new vscode.RelativePattern(this.workspaceUri, glob)
+        );
+        watcher.onDidChange(() => this.refresh());
+        watcher.onDidCreate(() => this.refresh());
+        watcher.onDidDelete(() => this.refresh());
+      }
     }
 
     vscode.workspace.onDidSaveTextDocument(() => this.refresh());
