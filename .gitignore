@@ -10,6 +10,9 @@ Thumbs.db
 *.vsix
 .vscode-test/
 
+# Marketing content
+marketing/
+
 # Spec artifacts (project-specific, not extension source)
 /specs/
 /.specify/memory/
