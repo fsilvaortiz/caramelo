@@ -39,7 +39,7 @@ Supported out of the box:
 - **Custom**: any OpenAI-compatible endpoint
 - **Corporate proxies**: custom auth headers for Azure API Manager, AWS API Gateway, etc.
 
-You can have **multiple providers of the same type** — "Claude Production" and "Claude Dev" with different endpoints. Switch between them by clicking the dot indicator. Models are fetched from the API when available, or entered manually with automatic validation.
+You can have **multiple providers of the same type** — "Claude Personal" with your own API key and "Claude Empresa" through your company's proxy, each with different endpoints and auth settings. Switch between them by clicking the dot indicator. Models are fetched from the API when available, or entered manually with automatic validation.
 
 ### 2. Visual Workflow with Approval Gates
 

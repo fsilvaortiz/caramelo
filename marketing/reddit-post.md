@@ -61,7 +61,7 @@ I built **Caramelo** (open source, MIT):
 
 **Enterprise-friendly**:
 - Custom auth headers per provider (header name + value prefix)
-- Multiple providers of the same type with aliases ("Claude Prod", "Claude Dev")
+- Multiple providers of the same type with aliases ("Claude Personal", "Claude Empresa")
 - Model validation on change — red indicator if it doesn't connect
 - GitHub Copilot as a provider (uses existing subscription, no API key)
 - Jira Cloud integration with board search (scales to 2000+ boards)
