@@ -3,7 +3,7 @@ title: "I Built a Visual Spec-Driven Development Extension for VS Code That Work
 published: false
 description: "Caramelo brings GitHub's Spec Kit workflow to VS Code with a visual UI, approval gates, Jira integration, and support for any LLM — from local Ollama to GitHub Copilot to corporate proxies."
 tags: vscode, ai, opensource, productivity
-cover_image:
+cover_image: [IMAGEN: Usar el logo caramelo-logo.png o un screenshot panorámico del sidebar completo]
 ---
 
 # I Built a Visual Spec-Driven Development Extension for VS Code That Works With Any LLM
@@ -26,7 +26,11 @@ So I built **Caramelo**.
 
 Caramelo is a VS Code extension that gives you a complete visual UI for spec-driven development:
 
-<!-- [Screenshot: Caramelo sidebar showing workflow panel with constitution, specs, progress rings, and task checklist] -->
+> 📸 **SCREENSHOT 1 — Sidebar Overview**
+> Captura el sidebar completo de Caramelo mostrando:
+> - Sección Providers con al menos un provider conectado (dot verde)
+> - Sección Workflow con la constitution en verde, un spec card con progress ring, fases con estados (✓ aprobado, ● review, 🔒 locked), y la task checklist expandida
+> - Idealmente con un spec que tenga progreso parcial para que se vean los distintos estados
 
 ### 1. Connect Any LLM — Including Your Corporate Proxy
 
@@ -39,13 +43,26 @@ Supported out of the box:
 - **Custom**: any OpenAI-compatible endpoint
 - **Corporate proxies**: custom auth headers for Azure API Manager, AWS API Gateway, etc.
 
+> 📸 **SCREENSHOT 2 — Providers Panel**
+> Captura la sección Providers mostrando:
+> - Al menos 2 providers configurados (ej. Ollama con dot verde activo + Claude)
+> - El modelo visible debajo del nombre
+> - Los presets de "add provider" visibles (Ollama, Claude, OpenAI, Gemini, etc.)
+> - Si es posible, un provider con el inline model editor abierto (select dropdown)
+
 You can have **multiple providers of the same type** — "Claude Personal" with your own API key and "Claude Empresa" through your company's proxy, each with different endpoints and auth settings. Switch between them by clicking the dot indicator. Models are fetched from the API when available, or entered manually with automatic validation.
 
 ### 2. Visual Workflow with Approval Gates
 
 Instead of remembering which slash command to run next, Caramelo shows your workflow visually:
 
-<!-- [Screenshot: Spec card showing Requirements ✓ → Design ● → Tasks 🔒 with Generate/Approve buttons] -->
+> 📸 **SCREENSHOT 3 — Spec Card con Fases**
+> Captura un spec card en el Workflow panel mostrando:
+> - Requirements con ✓ aprobado (borde verde)
+> - Design con ● review y botones "Approve" + "Open"
+> - Tasks con 🔒 locked (grisado)
+> - Progress ring mostrando ~50%
+> - Archivos auxiliares visibles bajo Design (research.md, data-model.md)
 
 Each phase must be **approved** before the next unlocks:
 - **Requirements** → generates spec.md
@@ -58,7 +75,11 @@ You see the documents streaming in real time as the LLM writes them. Approve whe
 
 Before creating any specs, you define your project's **constitution** — the non-negotiable principles:
 
-<!-- [Screenshot: Constitution editor form with AI generation] -->
+> 📸 **SCREENSHOT 4 — Constitution Editor**
+> Captura el webview panel de la Constitution mostrando:
+> - El formulario con Project Name lleno
+> - Al menos 2-3 principios definidos con nombre y descripción
+> - La sección "🤖 Generate with AI" visible (colapsada o expandida)
 
 "All features must include error handling." "TDD mandatory." "No external dependencies without justification."
 
@@ -75,11 +96,23 @@ For teams that plan in Jira:
 
 The spec card shows a linked Jira badge — click to jump to the issue.
 
+> 📸 **SCREENSHOT 5 — Jira Integration** (opcional)
+> Captura UNA de estas opciones:
+> - El QuickPick de issues de Jira con resultados
+> - O un spec card que muestre el badge azul de Jira (ej. "PROJ-123")
+> - O la configuración de Jira en providers con board search
+
 ### 5. Task Execution from the Editor
 
 Generated tasks aren't just a document — they're actionable:
 
-<!-- [Screenshot: tasks.md with Run Task CodeLens, progress bar, and Output Channel showing LLM streaming] -->
+> 📸 **SCREENSHOT 6 — Task Execution**
+> Captura el editor con un archivo tasks.md abierto mostrando:
+> - CodeLens "▶ Run Task" sobre tareas pendientes
+> - CodeLens "✓ Done" sobre tareas completadas
+> - La barra de progreso decorativa en la primera línea
+> - El Output Channel "Caramelo" visible abajo con streaming del LLM
+> - Idealmente el Caramelo menu (icono del gato) visible en la toolbar
 
 - **Run Task** — click a button, the LLM generates the code
 - **Run All Tasks** — execute everything, respecting parallel markers `[P]`
@@ -97,6 +130,12 @@ Before moving forward, verify your work:
 - **Checklists** — generates content-specific verification items
 
 All accessible from the **Caramelo menu** (cat icon in the editor toolbar) — a single grouped dropdown that keeps your toolbar clean.
+
+> 📸 **SCREENSHOT 7 — Caramelo Menu** (opcional)
+> Captura el menú del gato desplegado en la toolbar del editor mostrando las opciones agrupadas:
+> - Approve / Regenerate / Next Phase
+> - Run Next Task / Run All Tasks
+> - Clarify / Analyze / Generate Checklist
 
 ## Architecture: How It Works
 
@@ -121,6 +160,8 @@ The extension is surprisingly simple (~170KB bundle):
 5. **Spec-driven development works.** Using Caramelo to build Caramelo proved the workflow. Each feature went through specify → clarify → plan → tasks → implement.
 
 ## Try It
+
+> 📸 **LOGO** — Insertar caramelo-logo.png como imagen centrada antes de los links
 
 - **Install**: Search "Caramelo" in VS Code Extensions, or visit the [Marketplace](https://marketplace.visualstudio.com/items?itemName=fsilvaortiz.caramelo)
 - **Source**: [github.com/fsilvaortiz/caramelo](https://github.com/fsilvaortiz/caramelo)

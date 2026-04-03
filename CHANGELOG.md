@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.0.6] - 2026-04-02
+## [0.0.7] - 2026-04-03
 
 ### Added
 
@@ -54,3 +54,4 @@
 - Jira provider editing: click name/board to edit inline with Save/Cancel
 - Multiple providers of same type with unique IDs (claude, claude-2, etc.)
 - Direct Jira issue key lookup in issue picker (type PROJ-123 to find any issue)
+- Google Gemini as preset provider via OpenAI-compatible endpoint
