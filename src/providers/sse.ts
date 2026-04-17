@@ -21,7 +21,8 @@ export async function* parseSSEStream(
         // On timeout, check if we got any data at all
         if (buffer.length > 0) {
           // Process remaining buffer before throwing
-          yield* processBuffer(buffer, extractContent);
+          const { contents } = processSSEPart(buffer, extractContent);
+          for (const content of contents) yield content;
         }
         throw err;
       }
@@ -36,7 +37,9 @@ export async function* parseSSEStream(
       buffer = parts.pop() ?? '';
 
       for (const part of parts) {
-        yield* processSSEPart(part, extractContent);
+        const { contents, done } = processSSEPart(part, extractContent);
+        for (const content of contents) yield content;
+        if (done) return;
       }
 
       // Check if buffer has accumulated single-line data events (Ollama sometimes sends data:\n instead of data:\n\n)
@@ -67,45 +70,37 @@ export async function* parseSSEStream(
 
     // Process any remaining buffer
     if (buffer.trim()) {
-      yield* processBuffer(buffer, extractContent);
+      const { contents } = processSSEPart(buffer, extractContent);
+      for (const content of contents) yield content;
     }
   } finally {
     reader.releaseLock();
   }
 }
 
-function* processSSEPart(
+interface ProcessedPart {
+  contents: string[];
+  done: boolean;
+}
+
+function processSSEPart(
   part: string,
   extractContent: (json: unknown) => string | null
-): Generator<string> {
+): ProcessedPart {
+  const contents: string[] = [];
   for (const line of part.split('\n')) {
     if (!line.startsWith('data: ')) continue;
     const data = line.slice(6).trim();
-    if (data === '[DONE]') return;
+    if (data === '[DONE]') return { contents, done: true };
     if (!data) continue;
 
     try {
       const json = JSON.parse(data);
       const content = extractContent(json);
-      if (content) yield content;
+      if (content) contents.push(content);
     } catch {
       // Skip malformed JSON lines
     }
   }
-}
-
-function* processBuffer(
-  buffer: string,
-  extractContent: (json: unknown) => string | null
-): Generator<string> {
-  for (const line of buffer.split('\n')) {
-    if (!line.startsWith('data: ')) continue;
-    const data = line.slice(6).trim();
-    if (data === '[DONE]' || !data) continue;
-    try {
-      const json = JSON.parse(data);
-      const content = extractContent(json);
-      if (content) yield content;
-    } catch { /* skip */ }
-  }
+  return { contents, done: false };
 }
