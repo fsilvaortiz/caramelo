@@ -188,33 +188,40 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     this.view?.webview.postMessage({ command: 'modelsLoaded', models });
   }
 
-  private async handleTestJira(msg: { url: string; email: string; token: string }): Promise<void> {
-    const sendResult = (success: boolean, data?: { boards?: unknown[]; error?: string }) => {
-      log.debug('Jira test result:', success, data?.error ?? 'OK');
-      this.view?.webview.postMessage({ command: 'jiraTestResult', success, ...data });
-    };
-
-    const url = msg.url.replace(/\/+$/, '');
-    const auth = `Basic ${Buffer.from(`${msg.email}:${msg.token}`).toString('base64')}`;
+  private async validateJiraCredentials(
+    url: string,
+    email: string,
+    token: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const cleanUrl = url.replace(/\/+$/, '');
+    const auth = `Basic ${Buffer.from(`${email}:${token}`).toString('base64')}`;
     const headers = { 'Authorization': auth, 'Accept': 'application/json' };
-
-    // Step 1: Test connection
     try {
-      log.debug('Jira: testing connection to', url);
-      const res = await fetch(`${url}/rest/api/3/myself`, { headers, signal: AbortSignal.timeout(15000) });
+      log.debug('Jira: validating credentials at', cleanUrl);
+      const res = await fetch(`${cleanUrl}/rest/api/3/myself`, {
+        headers,
+        signal: AbortSignal.timeout(15000),
+      });
       log.debug('Jira: response status', res.status);
       if (!res.ok) {
-        sendResult(false, { error: `Auth failed (HTTP ${res.status}). Check email and API token.` });
-        return;
+        return { ok: false, error: `Auth failed (HTTP ${res.status}). Check email and API token.` };
       }
+      return { ok: true };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       log.error('Jira connection error:', error);
-      sendResult(false, { error: `Connection error: ${error}` });
-      return;
+      return { ok: false, error: `Connection error: ${error}` };
     }
+  }
 
-    sendResult(true, {});
+  private async handleTestJira(msg: { url: string; email: string; token: string }): Promise<void> {
+    const result = await this.validateJiraCredentials(msg.url, msg.email, msg.token);
+    log.debug('Jira test result:', result.ok, result.ok ? 'OK' : result.error);
+    if (result.ok) {
+      this.view?.webview.postMessage({ command: 'jiraTestResult', success: true });
+    } else {
+      this.view?.webview.postMessage({ command: 'jiraTestResult', success: false, error: result.error });
+    }
   }
 
   private async handleSearchBoards(msg: { url: string; email: string; token: string; query: string }): Promise<void> {
@@ -241,6 +248,12 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async handleAddJira(msg: { url: string; email: string; token: string; boardId: string; boardName: string }): Promise<void> {
+    const validation = await this.validateJiraCredentials(msg.url, msg.email, msg.token);
+    if (!validation.ok) {
+      vscode.window.showErrorMessage(`Jira: ${validation.error}`);
+      return;
+    }
+
     const id = `jira-${msg.url.replace(/https?:\/\//, '').replace(/\.atlassian\.net.*/, '').replace(/[^a-z0-9]+/g, '-')}`;
     const name = `Jira (${msg.boardName})`;
 

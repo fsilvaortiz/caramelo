@@ -14,6 +14,11 @@ const buildOptions = {
   target: 'node20',
   sourcemap: !isProduction,
   minify: isProduction,
+  treeShaking: true,
+  legalComments: 'none',
+  define: {
+    'process.env.NODE_ENV': JSON.stringify(isProduction ? 'production' : 'development'),
+  },
   loader: {
     '.md': 'text',
   },

@@ -3,6 +3,7 @@ import type { LLMMessage, LLMOptions, LLMProvider } from './types.js';
 import { parseSSEStream } from './sse.js';
 import { AuthError, NetworkError, ProviderError, isAbortError } from '../errors.js';
 import { getSseTimeoutMs } from '../utils/settings.js';
+import { sanitizeHeaderName, sanitizeHeaderPrefix } from '../utils/auth.js';
 
 export class ClaudeProvider implements LLMProvider {
   readonly id: string;
@@ -25,8 +26,8 @@ export class ClaudeProvider implements LLMProvider {
     this.endpoint = config.endpoint.replace(/\/+$/, '');
     this.model = config.model;
     this.apiKeyId = config.apiKeyId;
-    this.authHeader = config.authHeader ?? 'x-api-key';
-    this.authPrefix = config.authPrefix ?? '';
+    this.authHeader = sanitizeHeaderName(config.authHeader, 'x-api-key');
+    this.authPrefix = sanitizeHeaderPrefix(config.authPrefix, '');
     this.secrets = secrets;
   }
 
