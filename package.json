@@ -298,6 +298,12 @@
           "type": "string",
           "default": "",
           "description": "ID of the currently active LLM provider"
+        },
+        "caramelo.sse.timeoutMs": {
+          "type": "number",
+          "default": 300000,
+          "minimum": 5000,
+          "description": "Maximum time (ms) to wait for a single chunk of streaming output from the LLM before aborting. Raise this if you run slow local models."
         }
       }
     }

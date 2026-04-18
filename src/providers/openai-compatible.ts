@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import type { LLMMessage, LLMOptions, LLMProvider } from './types.js';
 import { parseSSEStream } from './sse.js';
+import { AuthError, NetworkError, ProviderError, isAbortError } from '../errors.js';
+import { getSseTimeoutMs } from '../utils/settings.js';
 
 export class OpenAICompatibleProvider implements LLMProvider {
   readonly id: string;
@@ -60,10 +62,12 @@ export class OpenAICompatibleProvider implements LLMProvider {
   }
 
   async *chat(messages: LLMMessage[], options?: LLMOptions): AsyncIterable<string> {
-    this.abortController = new AbortController();
+    this.abortController?.abort();
+    const controller = new AbortController();
+    this.abortController = controller;
     const signal = options?.signal
-      ? anySignal(options.signal, this.abortController.signal)
-      : this.abortController.signal;
+      ? anySignal(options.signal, controller.signal)
+      : controller.signal;
 
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (this.apiKey) headers[this.authHeader] = this.authPrefix ? `${this.authPrefix} ${this.apiKey}` : this.apiKey;
@@ -76,30 +80,49 @@ export class OpenAICompatibleProvider implements LLMProvider {
       temperature: options?.temperature ?? 0.7,
     });
 
-    const res = await fetch(`${this.endpoint}/chat/completions`, {
-      method: 'POST',
-      headers,
-      body,
-      signal,
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${this.endpoint}/chat/completions`, {
+        method: 'POST',
+        headers,
+        body,
+        signal,
+      });
+    } catch (err) {
+      if (isAbortError(err)) throw err;
+      throw new NetworkError(`${this.displayName}: request failed`, err);
+    }
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new Error(`${this.displayName}: ${res.status} ${res.statusText} - ${text}`);
+      const message = `${this.displayName}: ${res.status} ${res.statusText} - ${text}`;
+      if (res.status === 401 || res.status === 403) throw new AuthError(message);
+      throw new ProviderError(message, res.status);
     }
 
-    if (!res.body) throw new Error(`${this.displayName}: No response body`);
+    if (!res.body) throw new ProviderError(`${this.displayName}: No response body`);
 
     const reader = res.body.getReader();
-    yield* parseSSEStream(reader, (json) => {
-      const obj = json as Record<string, unknown>;
-      const choices = obj?.choices as Array<{ delta?: { content?: string } }> | undefined;
-      return choices?.[0]?.delta?.content ?? null;
-    });
+    try {
+      yield* parseSSEStream(
+        reader,
+        (json) => {
+          const obj = json as Record<string, unknown>;
+          const choices = obj?.choices as Array<{ delta?: { content?: string } }> | undefined;
+          return choices?.[0]?.delta?.content ?? null;
+        },
+        { timeoutMs: getSseTimeoutMs() },
+      );
+    } finally {
+      if (this.abortController === controller) {
+        this.abortController = null;
+      }
+    }
   }
 
   dispose(): void {
     this.abortController?.abort();
+    this.abortController = null;
   }
 }
 

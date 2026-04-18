@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseSSEStream } from '../sse.js';
+import { TimeoutError } from '../../errors.js';
 
 function makeReader(chunks: string[]): ReadableStreamDefaultReader<Uint8Array> {
   const encoder = new TextEncoder();
@@ -81,5 +82,18 @@ describe('parseSSEStream', () => {
     const reader = makeReader(['data: {"content":"tail"}\n']);
     const result = await collect(parseSSEStream(reader, extract));
     expect(result).toEqual(['tail']);
+  });
+
+  it('throws a TimeoutError when no data arrives before the configured timeout', async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start() {
+        // Never enqueue or close — simulate a hung upstream.
+      },
+    });
+    const reader = stream.getReader();
+
+    await expect(collect(parseSSEStream(reader, extract, { timeoutMs: 20 }))).rejects.toBeInstanceOf(
+      TimeoutError,
+    );
   });
 });

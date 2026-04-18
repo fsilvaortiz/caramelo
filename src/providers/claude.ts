@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import type { LLMMessage, LLMOptions, LLMProvider } from './types.js';
 import { parseSSEStream } from './sse.js';
+import { AuthError, NetworkError, ProviderError, isAbortError } from '../errors.js';
+import { getSseTimeoutMs } from '../utils/settings.js';
 
 export class ClaudeProvider implements LLMProvider {
   readonly id: string;
@@ -68,12 +70,15 @@ export class ClaudeProvider implements LLMProvider {
   }
 
   async *chat(messages: LLMMessage[], options?: LLMOptions): AsyncIterable<string> {
-    if (!this.apiKey) throw new Error('Claude: Not authenticated');
+    if (!this.apiKey) throw new AuthError(`${this.displayName}: Not authenticated`);
 
-    this.abortController = new AbortController();
+    // Abort any previous in-flight request before starting a new one.
+    this.abortController?.abort();
+    const controller = new AbortController();
+    this.abortController = controller;
     const signal = options?.signal
-      ? anySignal(options.signal, this.abortController.signal)
-      : this.abortController.signal;
+      ? anySignal(options.signal, controller.signal)
+      : controller.signal;
 
     const systemMessage = messages.find((m) => m.role === 'system');
     const nonSystemMessages = messages.filter((m) => m.role !== 'system');
@@ -87,37 +92,56 @@ export class ClaudeProvider implements LLMProvider {
     if (systemMessage) body.system = systemMessage.content;
     if (options?.temperature !== undefined) body.temperature = options.temperature;
 
-    const res = await fetch(`${this.endpoint}/v1/messages`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        [this.authHeader]: this.authPrefix ? `${this.authPrefix} ${this.apiKey}` : this.apiKey!,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify(body),
-      signal,
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${this.endpoint}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          [this.authHeader]: this.authPrefix ? `${this.authPrefix} ${this.apiKey}` : this.apiKey!,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify(body),
+        signal,
+      });
+    } catch (err) {
+      if (isAbortError(err)) throw err;
+      throw new NetworkError(`${this.displayName}: request failed`, err);
+    }
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new Error(`${this.displayName}: ${res.status} ${res.statusText} - ${text}`);
+      const message = `${this.displayName}: ${res.status} ${res.statusText} - ${text}`;
+      if (res.status === 401 || res.status === 403) throw new AuthError(message);
+      throw new ProviderError(message, res.status);
     }
 
-    if (!res.body) throw new Error(`${this.displayName}: No response body`);
+    if (!res.body) throw new ProviderError(`${this.displayName}: No response body`);
 
     const reader = res.body.getReader();
-    yield* parseSSEStream(reader, (json) => {
-      const obj = json as Record<string, unknown>;
-      if (obj?.type === 'content_block_delta') {
-        const delta = obj.delta as Record<string, unknown> | undefined;
-        return (delta?.text as string) ?? null;
+    try {
+      yield* parseSSEStream(
+        reader,
+        (json) => {
+          const obj = json as Record<string, unknown>;
+          if (obj?.type === 'content_block_delta') {
+            const delta = obj.delta as Record<string, unknown> | undefined;
+            return (delta?.text as string) ?? null;
+          }
+          return null;
+        },
+        { timeoutMs: getSseTimeoutMs() },
+      );
+    } finally {
+      if (this.abortController === controller) {
+        this.abortController = null;
       }
-      return null;
-    });
+    }
   }
 
   dispose(): void {
     this.abortController?.abort();
+    this.abortController = null;
   }
 }
 

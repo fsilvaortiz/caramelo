@@ -28,6 +28,7 @@ import { generateChecklist } from './commands/generate-checklist.js';
 import { TemplateSync } from './speckit/sync.js';
 import { COMMAND_IDS, VIEW_IDS, SETTINGS_KEYS } from './constants.js';
 import { initProgressBar } from './progress.js';
+import { log } from './utils/log.js';
 import type { ProviderConfig } from './constants.js';
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -48,7 +49,9 @@ export function activate(context: vscode.ExtensionContext): void {
       const apiKeyId = `caramelo.provider.${config.id}.apiKey`;
       provider = new OpenAICompatibleProvider({ ...config, apiKeyId }, secrets);
     }
-    provider.authenticate().catch(() => {});
+    provider.authenticate().catch((err) => {
+      log.debug(`authenticate failed for ${provider.id}:`, err);
+    });
     registry.register(provider);
   }
   registry.restoreActiveFromSettings();
@@ -97,7 +100,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Template Sync (background, fire-and-forget)
   const templateSync = new TemplateSync();
-  templateSync.checkForUpdates().catch(() => {});
+  templateSync.checkForUpdates().catch((err) => {
+    log.warn('template sync failed:', err);
+  });
 
   // Status bar
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);

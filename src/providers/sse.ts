@@ -1,30 +1,47 @@
+import { TimeoutError } from '../errors.js';
+
+const DEFAULT_SSE_TIMEOUT_MS = 300_000; // 5 minutes
+
 export async function* parseSSEStream(
   reader: ReadableStreamDefaultReader<Uint8Array>,
-  extractContent: (json: unknown) => string | null
+  extractContent: (json: unknown) => string | null,
+  options: { timeoutMs?: number } = {}
 ): AsyncIterable<string> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_SSE_TIMEOUT_MS;
   const decoder = new TextDecoder();
   let buffer = '';
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
   try {
     while (true) {
-      // Timeout per-read: 5 minutes (Ollama can be slow on large prompts)
       const readPromise = reader.read();
-      const timeoutPromise = new Promise<{ done: true; value: undefined }>((_, reject) =>
-        setTimeout(() => reject(new Error('LLM response timeout — no data received for 5 minutes')), 300000)
-      );
+      const timeoutPromise = new Promise<{ done: true; value: undefined }>((_, reject) => {
+        timeoutHandle = setTimeout(
+          () =>
+            reject(
+              new TimeoutError(
+                `LLM response timeout — no data received for ${Math.round(timeoutMs / 1000)}s`,
+              ),
+            ),
+          timeoutMs,
+        );
+      });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let result: any;
+      let result: { done: boolean; value?: Uint8Array };
       try {
         result = await Promise.race([readPromise, timeoutPromise]);
       } catch (err) {
-        // On timeout, check if we got any data at all
+        // On timeout, flush any buffered data before throwing
         if (buffer.length > 0) {
-          // Process remaining buffer before throwing
           const { contents } = processSSEPart(buffer, extractContent);
           for (const content of contents) yield content;
         }
         throw err;
+      } finally {
+        if (timeoutHandle !== undefined) {
+          clearTimeout(timeoutHandle);
+          timeoutHandle = undefined;
+        }
       }
 
       if (result.done) break;
@@ -74,6 +91,7 @@ export async function* parseSSEStream(
       for (const content of contents) yield content;
     }
   } finally {
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
     reader.releaseLock();
   }
 }
