@@ -28,6 +28,7 @@ import { generateChecklist } from './commands/generate-checklist.js';
 import { TemplateSync } from './speckit/sync.js';
 import { COMMAND_IDS, VIEW_IDS, SETTINGS_KEYS } from './constants.js';
 import { initProgressBar } from './progress.js';
+import { log } from './utils/log.js';
 import type { ProviderConfig } from './constants.js';
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -48,7 +49,9 @@ export function activate(context: vscode.ExtensionContext): void {
       const apiKeyId = `caramelo.provider.${config.id}.apiKey`;
       provider = new OpenAICompatibleProvider({ ...config, apiKeyId }, secrets);
     }
-    provider.authenticate().catch(() => {});
+    provider.authenticate().catch((err) => {
+      log.debug(`authenticate failed for ${provider.id}:`, err);
+    });
     registry.register(provider);
   }
   registry.restoreActiveFromSettings();
@@ -97,7 +100,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Template Sync (background, fire-and-forget)
   const templateSync = new TemplateSync();
-  templateSync.checkForUpdates().catch(() => {});
+  templateSync.checkForUpdates().catch((err) => {
+    log.warn('template sync failed:', err);
+  });
 
   // Status bar
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -125,7 +130,7 @@ export function activate(context: vscode.ExtensionContext): void {
       addProviderWizard(registry, secrets)
     ),
     vscode.commands.registerCommand(COMMAND_IDS.editConstitution, () => {
-      editConstitution(context, { refresh: () => workflowView.refresh() } as import('./views/sidebar/constitution-tree.js').ConstitutionTreeDataProvider, registry);
+      editConstitution(context, { refresh: () => workflowView.refresh() }, registry);
     }),
     vscode.commands.registerCommand(COMMAND_IDS.newSpec, () => {
       if (!specWorkspace) { vscode.window.showWarningMessage('No workspace folder open'); return; }
@@ -135,17 +140,17 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(COMMAND_IDS.runPhase, (specNameOrItem: string | { spec: { name: string }; phase: { type: string } }, phaseType?: string) => {
       const [sn, pt] = extractSpecArgs(specNameOrItem, phaseType);
       if (!specWorkspace || !sn || !pt) return;
-      runPhase(sn, pt, specWorkspace, registry, templateManager, workflowEngine, { refresh: () => workflowView.refresh() } as never);
+      runPhase(sn, pt, specWorkspace, registry, templateManager, workflowEngine, { refresh: () => workflowView.refresh() });
     }),
     vscode.commands.registerCommand(COMMAND_IDS.approvePhase, (specNameOrItem: string | { spec: { name: string }; phase: { type: string } }, phaseType?: string) => {
       const [sn, pt] = extractSpecArgs(specNameOrItem, phaseType);
       if (!specWorkspace || !sn || !pt) return;
-      approvePhase(sn, pt, specWorkspace, { refresh: () => workflowView.refresh() } as never, phaseActionsProvider);
+      approvePhase(sn, pt, specWorkspace, { refresh: () => workflowView.refresh() }, phaseActionsProvider);
     }),
     vscode.commands.registerCommand(COMMAND_IDS.regeneratePhase, (specNameOrItem: string | { spec: { name: string }; phase: { type: string } }, phaseType?: string) => {
       const [sn, pt] = extractSpecArgs(specNameOrItem, phaseType);
       if (!specWorkspace || !sn || !pt) return;
-      runPhase(sn, pt, specWorkspace, registry, templateManager, workflowEngine, { refresh: () => workflowView.refresh() } as never);
+      runPhase(sn, pt, specWorkspace, registry, templateManager, workflowEngine, { refresh: () => workflowView.refresh() });
     }),
     vscode.commands.registerCommand(COMMAND_IDS.startTask, async (lineNumber: number, taskText: string, docUri: vscode.Uri) => {
       await startTask(lineNumber, taskText, docUri, registry);
@@ -204,18 +209,18 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('caramelo.approvePhaseFromEditor', () => {
       if (editorContext.currentSpecName && editorContext.currentPhaseType && specWorkspace) {
-        approvePhase(editorContext.currentSpecName, editorContext.currentPhaseType, specWorkspace, { refresh: () => workflowView.refresh() } as never, phaseActionsProvider);
+        approvePhase(editorContext.currentSpecName, editorContext.currentPhaseType, specWorkspace, { refresh: () => workflowView.refresh() }, phaseActionsProvider);
         setTimeout(() => editorContext.update(), 200);
       }
     }),
     vscode.commands.registerCommand('caramelo.regeneratePhaseFromEditor', () => {
       if (editorContext.currentSpecName && editorContext.currentPhaseType && specWorkspace) {
-        runPhase(editorContext.currentSpecName, editorContext.currentPhaseType, specWorkspace, registry, templateManager, workflowEngine, { refresh: () => workflowView.refresh() } as never);
+        runPhase(editorContext.currentSpecName, editorContext.currentPhaseType, specWorkspace, registry, templateManager, workflowEngine, { refresh: () => workflowView.refresh() });
       }
     }),
     vscode.commands.registerCommand('caramelo.nextPhaseFromEditor', () => {
       if (editorContext.currentSpecName && editorContext.currentNextPhase && specWorkspace) {
-        runPhase(editorContext.currentSpecName, editorContext.currentNextPhase, specWorkspace, registry, templateManager, workflowEngine, { refresh: () => workflowView.refresh() } as never);
+        runPhase(editorContext.currentSpecName, editorContext.currentNextPhase, specWorkspace, registry, templateManager, workflowEngine, { refresh: () => workflowView.refresh() });
       }
     }),
     vscode.commands.registerCommand('caramelo.runNextTaskFromEditor', async () => {

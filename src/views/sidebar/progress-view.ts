@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { SPECS_DIR_NAME, PHASE_FILES } from '../../constants.js';
+import { isObject, safeJsonParse } from '../../utils/safe-json.js';
 
 export class ProgressViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'caramelo.progress';
@@ -138,7 +139,10 @@ export class ProgressViewProvider implements vscode.WebviewViewProvider {
       let statuses: Record<string, string> = {};
       try {
         const raw = fs.readFileSync(metaPath, 'utf-8');
-        statuses = JSON.parse(raw).phases ?? {};
+        const data = safeJsonParse(raw, isObject);
+        if (data && isObject(data.phases)) {
+          statuses = data.phases as Record<string, string>;
+        }
       } catch { /* ignore */ }
 
       for (const [type, fileName] of Object.entries(PHASE_FILES)) {

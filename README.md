@@ -195,6 +195,46 @@ VS Code settings (`settings.json`):
 
 API keys and Jira tokens are stored securely in VS Code's SecretStorage, never in settings files.
 
+### Advanced settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `caramelo.sse.timeoutMs` | `300000` | Max time (ms) to wait for a chunk of streaming output before giving up. Increase for slow local models. Minimum 5000. |
+| `authHeader` (per provider) | `Authorization` / `x-api-key` | HTTP header used to send the API key. Letters, digits, hyphens only. |
+| `authPrefix` (per provider) | `Bearer` / empty | Prefix prepended to the key. Letters, digits, hyphens only. Leave empty to send the raw key. |
+
+Invalid values for `authHeader` / `authPrefix` (e.g. containing spaces, colons, or CR/LF) are rejected at runtime and the default is used instead.
+
+## Troubleshooting
+
+### The LLM request hangs or times out
+
+Caramelo aborts a streaming request if no data arrives for `caramelo.sse.timeoutMs` milliseconds (5 min by default). If you run large local models (Ollama, LM Studio) and hit this, raise the setting:
+
+```json
+{ "caramelo.sse.timeoutMs": 900000 }
+```
+
+Setting it below 5000 ms is ignored — the default is used.
+
+### "401" / "403" on generate
+
+The provider rejected your API key. Open the Providers panel, click the auth field next to the provider, and paste a fresh key. Keys are stored in VS Code SecretStorage, not `settings.json`. For corporate proxies, also verify `authHeader` / `authPrefix` match what your gateway expects.
+
+### "Connection error" or "Auth failed" when adding a Jira provider
+
+Caramelo now pings `/rest/api/3/myself` both when you click **Test** and when you click **Add Jira Provider**, so adding will fail cleanly if the email, URL, or API token are wrong. Generate a token at <https://id.atlassian.com/manage-profile/security/api-tokens> and use the full `https://<tenant>.atlassian.net` URL.
+
+### A phase is stuck on "pending" even though the file exists
+
+Opening the workflow sidebar should now auto-upgrade phases whose markdown has content to `pending-approval` and persist that change to `.caramelo-meta.json`. If it does not, delete the stale `.caramelo-meta.json` inside that spec directory — it will be rebuilt.
+
+### Seeing leaked tokens in DevTools / extension host output
+
+You shouldn't — the extension logs through a redacting logger that strips `Bearer`/`Basic` tokens, `Authorization` headers, and credentials embedded in URLs. Debug logs are only emitted when `CARAMELO_DEBUG=1` is set in the environment that launches VS Code.
+
+If you still see a leak, please open an issue with the redacted payload.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

@@ -2,16 +2,17 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { SpecWorkspace } from '../specs/workspace.js';
-import type { SpecsTreeDataProvider } from '../views/sidebar/specs-tree.js';
 import type { PhaseActionsCodeLensProvider } from '../views/codelens/phase-actions-codelens.js';
 import { setPhaseStatus, getPhaseLabel, getNextPhase, type PhaseType } from '../specs/spec.js';
 import { COMMAND_IDS } from '../constants.js';
+
+interface Refreshable { refresh(): void }
 
 export async function approvePhase(
   specName: string,
   phaseType: string,
   workspace: SpecWorkspace,
-  specsTree: SpecsTreeDataProvider,
+  specsTree: Refreshable,
   phaseActionsProvider?: PhaseActionsCodeLensProvider
 ): Promise<void> {
   const specs = workspace.listSpecs();

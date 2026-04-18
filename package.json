@@ -283,6 +283,18 @@
               "model": {
                 "type": "string",
                 "description": "Model identifier"
+              },
+              "authHeader": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9-]+$",
+                "maxLength": 64,
+                "description": "HTTP header name used to send the API key (e.g. Authorization, x-api-key). Letters, digits and hyphens only."
+              },
+              "authPrefix": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9-]*$",
+                "maxLength": 16,
+                "description": "Value prefix prepended to the API key (e.g. Bearer, Basic). Leave empty to send the raw key."
               }
             },
             "required": [
@@ -298,6 +310,12 @@
           "type": "string",
           "default": "",
           "description": "ID of the currently active LLM provider"
+        },
+        "caramelo.sse.timeoutMs": {
+          "type": "number",
+          "default": 300000,
+          "minimum": 5000,
+          "description": "Maximum time (ms) to wait for a single chunk of streaming output from the LLM before aborting. Raise this if you run slow local models."
         }
       }
     }
@@ -309,7 +327,9 @@
     }
   },
   "scripts": {
+    "vscode:prepublish": "node esbuild.js --production",
     "build": "node esbuild.js",
+    "build:prod": "node esbuild.js --production",
     "watch": "node esbuild.js --watch",
     "lint": "eslint src/",
     "test": "vitest run",

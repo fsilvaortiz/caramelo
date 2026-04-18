@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { CACHE_DIR, TEMPLATES_CACHE_DIR, VERSION_FILE, SPEC_KIT_API_URL } from '../constants.js';
+import { isObject, safeJsonParse } from '../utils/safe-json.js';
 
 interface VersionInfo {
   tag: string;
@@ -86,12 +87,13 @@ export class TemplateSync {
   }
 
   private readVersionInfo(): VersionInfo | null {
+    let raw: string;
     try {
-      const raw = fs.readFileSync(VERSION_FILE, 'utf-8');
-      return JSON.parse(raw);
+      raw = fs.readFileSync(VERSION_FILE, 'utf-8');
     } catch {
       return null;
     }
+    return safeJsonParse<VersionInfo>(raw, (v): v is VersionInfo => isObject(v) && typeof v.tag === 'string');
   }
 
   getCurrentVersion(): string | undefined {

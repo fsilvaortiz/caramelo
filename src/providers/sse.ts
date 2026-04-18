@@ -1,29 +1,47 @@
+import { TimeoutError } from '../errors.js';
+
+const DEFAULT_SSE_TIMEOUT_MS = 300_000; // 5 minutes
+
 export async function* parseSSEStream(
   reader: ReadableStreamDefaultReader<Uint8Array>,
-  extractContent: (json: unknown) => string | null
+  extractContent: (json: unknown) => string | null,
+  options: { timeoutMs?: number } = {}
 ): AsyncIterable<string> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_SSE_TIMEOUT_MS;
   const decoder = new TextDecoder();
   let buffer = '';
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
   try {
     while (true) {
-      // Timeout per-read: 5 minutes (Ollama can be slow on large prompts)
       const readPromise = reader.read();
-      const timeoutPromise = new Promise<{ done: true; value: undefined }>((_, reject) =>
-        setTimeout(() => reject(new Error('LLM response timeout — no data received for 5 minutes')), 300000)
-      );
+      const timeoutPromise = new Promise<{ done: true; value: undefined }>((_, reject) => {
+        timeoutHandle = setTimeout(
+          () =>
+            reject(
+              new TimeoutError(
+                `LLM response timeout — no data received for ${Math.round(timeoutMs / 1000)}s`,
+              ),
+            ),
+          timeoutMs,
+        );
+      });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let result: any;
+      let result: { done: boolean; value?: Uint8Array };
       try {
         result = await Promise.race([readPromise, timeoutPromise]);
       } catch (err) {
-        // On timeout, check if we got any data at all
+        // On timeout, flush any buffered data before throwing
         if (buffer.length > 0) {
-          // Process remaining buffer before throwing
-          yield* processBuffer(buffer, extractContent);
+          const { contents } = processSSEPart(buffer, extractContent);
+          for (const content of contents) yield content;
         }
         throw err;
+      } finally {
+        if (timeoutHandle !== undefined) {
+          clearTimeout(timeoutHandle);
+          timeoutHandle = undefined;
+        }
       }
 
       if (result.done) break;
@@ -36,7 +54,9 @@ export async function* parseSSEStream(
       buffer = parts.pop() ?? '';
 
       for (const part of parts) {
-        yield* processSSEPart(part, extractContent);
+        const { contents, done } = processSSEPart(part, extractContent);
+        for (const content of contents) yield content;
+        if (done) return;
       }
 
       // Check if buffer has accumulated single-line data events (Ollama sometimes sends data:\n instead of data:\n\n)
@@ -67,45 +87,38 @@ export async function* parseSSEStream(
 
     // Process any remaining buffer
     if (buffer.trim()) {
-      yield* processBuffer(buffer, extractContent);
+      const { contents } = processSSEPart(buffer, extractContent);
+      for (const content of contents) yield content;
     }
   } finally {
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
     reader.releaseLock();
   }
 }
 
-function* processSSEPart(
+interface ProcessedPart {
+  contents: string[];
+  done: boolean;
+}
+
+function processSSEPart(
   part: string,
   extractContent: (json: unknown) => string | null
-): Generator<string> {
+): ProcessedPart {
+  const contents: string[] = [];
   for (const line of part.split('\n')) {
     if (!line.startsWith('data: ')) continue;
     const data = line.slice(6).trim();
-    if (data === '[DONE]') return;
+    if (data === '[DONE]') return { contents, done: true };
     if (!data) continue;
 
     try {
       const json = JSON.parse(data);
       const content = extractContent(json);
-      if (content) yield content;
+      if (content) contents.push(content);
     } catch {
       // Skip malformed JSON lines
     }
   }
-}
-
-function* processBuffer(
-  buffer: string,
-  extractContent: (json: unknown) => string | null
-): Generator<string> {
-  for (const line of buffer.split('\n')) {
-    if (!line.startsWith('data: ')) continue;
-    const data = line.slice(6).trim();
-    if (data === '[DONE]' || !data) continue;
-    try {
-      const json = JSON.parse(data);
-      const content = extractContent(json);
-      if (content) yield content;
-    } catch { /* skip */ }
-  }
+  return { contents, done: false };
 }

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { SPECS_DIR_NAME, PHASE_FILES } from '../../constants.js';
+import { isObject, safeJsonParse } from '../../utils/safe-json.js';
 
 export class DagView {
   private panel: vscode.WebviewPanel | undefined;
@@ -68,7 +69,12 @@ export class DagView {
       const metaPath = path.join(specDir, '.caramelo-meta.json');
 
       let statuses: Record<string, string> = {};
-      try { statuses = JSON.parse(fs.readFileSync(metaPath, 'utf-8')).phases ?? {}; } catch { /* */ }
+      try {
+        const data = safeJsonParse(fs.readFileSync(metaPath, 'utf-8'), isObject);
+        if (data && isObject(data.phases)) {
+          statuses = data.phases as Record<string, string>;
+        }
+      } catch { /* */ }
 
       const phases: Array<{ type: string; status: string; filePath: string }> = [];
       for (const [type, fileName] of Object.entries(PHASE_FILES)) {

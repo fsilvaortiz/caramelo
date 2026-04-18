@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { META_FILE_NAME, PHASE_FILES } from '../constants.js';
+import { isObject, safeJsonParse } from '../utils/safe-json.js';
 
 export type PhaseType = 'requirements' | 'design' | 'tasks';
 export type PhaseStatus = 'pending' | 'generating' | 'pending-approval' | 'approved' | 'stale';
@@ -31,13 +32,15 @@ const DEFAULT_STATUSES: PhaseStatuses = {
 };
 
 export function parseMetadata(metaPath: string): PhaseStatuses {
+  let raw: string;
   try {
-    const raw = fs.readFileSync(metaPath, 'utf-8');
-    const data = JSON.parse(raw);
-    return { ...DEFAULT_STATUSES, ...data.phases };
+    raw = fs.readFileSync(metaPath, 'utf-8');
   } catch {
     return { ...DEFAULT_STATUSES };
   }
+  const data = safeJsonParse(raw, isObject);
+  const phases = data && isObject(data.phases) ? data.phases : {};
+  return { ...DEFAULT_STATUSES, ...phases };
 }
 
 export function writeMetadata(metaPath: string, statuses: PhaseStatuses): void {
@@ -63,6 +66,7 @@ export function setPhaseStatus(spec: Spec, phaseType: PhaseType, status: PhaseSt
 export function buildSpec(name: string, dirPath: string): Spec {
   const metaPath = path.join(dirPath, META_FILE_NAME);
   const statuses = parseMetadata(metaPath);
+  const originalStatuses = { ...statuses };
 
   const phases: SpecPhase[] = [
     { type: 'requirements', status: statuses.requirements, fileName: PHASE_FILES.requirements },
@@ -79,6 +83,20 @@ export function buildSpec(name: string, dirPath: string): Spec {
         phase.status = 'pending-approval';
         statuses[phase.type] = 'pending-approval';
       }
+    }
+  }
+
+  // Persist any auto-detected upgrades so the UI doesn't have to recompute
+  // them on every read and so other readers see a consistent view.
+  const changed =
+    statuses.requirements !== originalStatuses.requirements ||
+    statuses.design !== originalStatuses.design ||
+    statuses.tasks !== originalStatuses.tasks;
+  if (changed) {
+    try {
+      writeMetadata(metaPath, statuses);
+    } catch {
+      // Ignore — persistence is a best-effort optimisation, not required for correctness.
     }
   }
 
