@@ -436,7 +436,10 @@ function getWebviewContent(data: ConstitutionData, hasLLM: boolean): string {
       // Show and clear the stream output
       const streamEl = document.getElementById('streamOutput');
       streamEl.style.display = 'block';
-      streamEl.innerHTML = '<div class="stream-label">LLM Output</div>';
+      const label = document.createElement('div');
+      label.className = 'stream-label';
+      label.textContent = 'LLM Output';
+      streamEl.replaceChildren(label);
 
       vscode.postMessage({ command: 'generate', projectDescription: desc });
     }
@@ -470,20 +473,9 @@ function getWebviewContent(data: ConstitutionData, hasLLM: boolean): string {
 
           if (msg.data.principles && msg.data.principles.length > 0) {
             const container = document.getElementById('principles');
-            container.innerHTML = '';
-            msg.data.principles.forEach((p, i) => {
-              const div = document.createElement('div');
-              div.className = 'principle';
-              div.dataset.index = i;
-              div.innerHTML =
-                '<div class="principle-header">' +
-                  '<span class="principle-number">' + (i + 1) + '</span>' +
-                  '<input type="text" class="principle-name" value="' + escapeAttr(p.name) + '" />' +
-                  '<button class="btn-remove" onclick="removePrinciple(this)" title="Remove">×</button>' +
-                '</div>' +
-                '<textarea class="principle-desc">' + escapeHtml(p.description) + '</textarea>';
-              container.appendChild(div);
-            });
+            container.replaceChildren(...msg.data.principles.map((p, i) => {
+              return buildPrinciple(i, p.name, p.description);
+            }));
           }
 
           // Close the AI section
@@ -493,24 +485,44 @@ function getWebviewContent(data: ConstitutionData, hasLLM: boolean): string {
       }
     });
 
-    function escapeAttr(s) { return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
-    function escapeHtml(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
-
-    function addPrinciple() {
-      const container = document.getElementById('principles');
-      const index = container.children.length;
+    function buildPrinciple(index, name, description) {
       const div = document.createElement('div');
       div.className = 'principle';
       div.dataset.index = index;
-      div.innerHTML = \`
-        <div class="principle-header">
-          <span class="principle-number">\${index + 1}</span>
-          <input type="text" class="principle-name" placeholder="Principle name" />
-          <button class="btn-remove" onclick="removePrinciple(this)" title="Remove">×</button>
-        </div>
-        <textarea class="principle-desc" placeholder="Describe this principle..."></textarea>
-      \`;
-      container.appendChild(div);
+
+      const header = document.createElement('div');
+      header.className = 'principle-header';
+
+      const num = document.createElement('span');
+      num.className = 'principle-number';
+      num.textContent = index + 1;
+
+      const nameInput = document.createElement('input');
+      nameInput.type = 'text';
+      nameInput.className = 'principle-name';
+      if (name != null) nameInput.value = name;
+      else nameInput.placeholder = 'Principle name';
+
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'btn-remove';
+      removeBtn.title = 'Remove';
+      removeBtn.textContent = '×';
+      removeBtn.addEventListener('click', () => removePrinciple(removeBtn));
+
+      header.append(num, nameInput, removeBtn);
+
+      const descArea = document.createElement('textarea');
+      descArea.className = 'principle-desc';
+      if (description != null) descArea.value = description;
+      else descArea.placeholder = 'Describe this principle...';
+
+      div.append(header, descArea);
+      return div;
+    }
+
+    function addPrinciple() {
+      const container = document.getElementById('principles');
+      container.appendChild(buildPrinciple(container.children.length));
       renumber();
     }
 

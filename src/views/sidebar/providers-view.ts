@@ -6,6 +6,7 @@ import { CopilotProvider, getCopilotModels } from '../../providers/copilot.js';
 import { JiraClient } from '../../jira/jira-client.js';
 import { SETTINGS_KEYS } from '../../constants.js';
 import type { ProviderConfig } from '../../constants.js';
+import { log } from '../../utils/log.js';
 
 interface ModelInfo { id: string; name: string }
 
@@ -67,7 +68,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
           await this.handleRename(msg.id);
           break;
         case 'editAuth':
-          console.log('[Caramelo] editAuth:', msg.id);
+          log.debug('editAuth:', msg.id);
           this.handleEditAuth(msg.id);
           break;
         case 'saveAuth':
@@ -89,9 +90,9 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
           this.refresh();
           break;
         case 'testJiraConnection':
-          console.log('[Caramelo] Testing Jira connection:', msg.url);
+          log.debug('Testing Jira connection:', msg.url);
           this.handleTestJira(msg).catch((err) => {
-            console.error('[Caramelo] Jira test error:', err);
+            log.error('Jira test error:', err);
             this.view?.webview.postMessage({ command: 'jiraTestResult', success: false, error: String(err) });
           });
           break;
@@ -189,7 +190,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
 
   private async handleTestJira(msg: { url: string; email: string; token: string }): Promise<void> {
     const sendResult = (success: boolean, data?: { boards?: unknown[]; error?: string }) => {
-      console.log('[Caramelo] Jira test result:', success, data?.error ?? 'OK');
+      log.debug('Jira test result:', success, data?.error ?? 'OK');
       this.view?.webview.postMessage({ command: 'jiraTestResult', success, ...data });
     };
 
@@ -199,16 +200,16 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
 
     // Step 1: Test connection
     try {
-      console.log('[Caramelo] Jira: testing connection to', url);
+      log.debug('Jira: testing connection to', url);
       const res = await fetch(`${url}/rest/api/3/myself`, { headers, signal: AbortSignal.timeout(15000) });
-      console.log('[Caramelo] Jira: response status', res.status);
+      log.debug('Jira: response status', res.status);
       if (!res.ok) {
         sendResult(false, { error: `Auth failed (HTTP ${res.status}). Check email and API token.` });
         return;
       }
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      console.error('[Caramelo] Jira connection error:', error);
+      log.error('Jira connection error:', error);
       sendResult(false, { error: `Connection error: ${error}` });
       return;
     }
@@ -685,9 +686,12 @@ window.addEventListener('message', (event) => {
     if (models.length > 0) {
       section.style.display = 'block';
       manual.style.display = 'none';
-      select.innerHTML = models.map(m =>
-        '<option value="' + m.id + '">' + m.name + '</option>'
-      ).join('');
+      select.replaceChildren(...models.map(m => {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = m.name;
+        return opt;
+      }));
     } else {
       section.style.display = 'none';
       manual.style.display = 'block';
@@ -717,9 +721,13 @@ window.addEventListener('message', (event) => {
 
     if (boards.length > 0) {
       select.style.display = 'block';
-      select.innerHTML = boards.map(b =>
-        '<option value="' + b.id + '" data-name="' + b.name.replace(/"/g, '&quot;') + '">' + b.name + ' (' + b.type + ')</option>'
-      ).join('');
+      select.replaceChildren(...boards.map(b => {
+        const opt = document.createElement('option');
+        opt.value = b.id;
+        opt.dataset.name = b.name;
+        opt.textContent = b.name + ' (' + b.type + ')';
+        return opt;
+      }));
       if (hint) hint.textContent = boards.length + ' board(s) found';
       select.onchange = function() {
         if (btnJira) { btnJira.textContent = 'Add Jira Provider'; btnJira.disabled = false; btnJira.onclick = function() { submitJira(); }; }

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { SPECS_DIR_NAME, PHASE_FILES, COMMAND_IDS } from '../../constants.js';
+import { isObject, safeJsonParse } from '../../utils/safe-json.js';
 
 export class WorkflowViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'caramelo.workflow';
@@ -382,10 +383,19 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider {
   }
 
   private readMeta(dir: string): { phases: Record<string, string>; jira?: { key: string; url: string; boardName: string } } {
+    let raw: string;
     try {
-      const raw = JSON.parse(fs.readFileSync(path.join(dir, '.caramelo-meta.json'), 'utf-8'));
-      return { phases: raw.phases ?? {}, jira: raw.jira };
-    } catch { return { phases: {} }; }
+      raw = fs.readFileSync(path.join(dir, '.caramelo-meta.json'), 'utf-8');
+    } catch {
+      return { phases: {} };
+    }
+    const data = safeJsonParse(raw, isObject);
+    if (!data) return { phases: {} };
+    const phases = isObject(data.phases) ? (data.phases as Record<string, string>) : {};
+    const jira = isObject(data.jira)
+      ? (data.jira as { key: string; url: string; boardName: string })
+      : undefined;
+    return { phases, jira };
   }
 }
 
