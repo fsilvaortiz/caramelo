@@ -2,6 +2,17 @@
 
 ## [0.0.9] - 2026-04-18
 
+### Fixed (critical)
+
+- **Tasks no longer overwrite files**. Before 0.0.9 the task system prompt asked the LLM to emit whole-file bodies (`=== FILE: path === <content> === END FILE ===`) and `applyChanges` wrote that output straight over the existing file with a single `fs.writeFileSync`, so anything the LLM forgot to repeat was silently deleted. The new protocol only accepts:
+  - `=== FILE: path === <<<<<<< SEARCH / ======= / >>>>>>> REPLACE === END FILE ===` for edits, applied only when the SEARCH text matches exactly **one** place in the file (0 or >1 matches → aborted, file untouched).
+  - `=== CREATE: path === … === END CREATE ===` for brand-new files; refused if the path already exists.
+- **Task runs see the real file contents**. `loadSpecContext` used to only include `spec.md` and `plan.md`; the model had to reconstruct code from memory. `buildTaskContext` now attaches every workspace-relative file path mentioned in the spec / plan / tasks / task description as a `--- CURRENT FILE: … ---` block (configurable caps: 50 KB per file, 200 KB total).
+- **Pre-task safety stash**. When the workspace is a git repo and the working tree is dirty, Caramelo runs `git stash push -u -m caramelo-pre-task-<timestamp>` before touching anything and logs the exact command to restore it. When it is not a git repo, the user is prompted to confirm before Caramelo proceeds without a backup.
+- **Diff preview before writing**. By default each task opens a QuickPick with *Apply all / Review file-by-file / Cancel*; file-by-file opens a `vscode.diff` for every change and asks per-file. Power users can set `caramelo.autoApplyEdits: true` to skip the review.
+- **Legacy output is refused, not silently applied**. If the LLM emits the old whole-file format, the parser throws a `LegacyFormatError` and nothing is written; the user sees an explicit error in the Caramelo output channel.
+- **Parallel `[P]` tasks are safe with the new write pipeline**. `Run All Tasks` fans out `[P]`-marked tasks via `Promise.all`; with 0.0.9's new interactive steps this would have raced `git stash push` on `.git/index.lock`, stacked ambiguous QuickPicks, and let two edits against the same file shift each other's SEARCH context. An `AsyncMutex` inside `startTask` now serializes the stash/review/apply phases while still running the LLM stream outside the lock so parallel throughput is preserved. QuickPick and diff titles are tagged with the task text so users can tell which prompt belongs to which task.
+
 ### Security
 
 - **XSS hardening**: replaced `innerHTML` with DOM APIs in three sinks fed by untrusted data (model list from provider APIs, Jira board list, LLM-generated constitution principles) — no more markup injection from arbitrary OpenAI-compatible endpoints or LLM output.

@@ -316,6 +316,11 @@
           "default": 300000,
           "minimum": 5000,
           "description": "Maximum time (ms) to wait for a single chunk of streaming output from the LLM before aborting. Raise this if you run slow local models."
+        },
+        "caramelo.autoApplyEdits": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, task edits are written to disk without a diff preview or confirmation dialog. Leave this off unless you have a reliable git safety net — Caramelo creates one automatically when the workspace is a git repo."
         }
       }
     }
