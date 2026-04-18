@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.0.9] - 2026-04-18
+
+### Fixed (critical)
+
+- **Tasks no longer overwrite files**. Before 0.0.9 the task system prompt asked the LLM to emit whole-file bodies (`=== FILE: path === <content> === END FILE ===`) and `applyChanges` wrote that output straight over the existing file with a single `fs.writeFileSync`, so anything the LLM forgot to repeat was silently deleted. The new protocol only accepts:
+  - `=== FILE: path === <<<<<<< SEARCH / ======= / >>>>>>> REPLACE === END FILE ===` for edits, applied only when the SEARCH text matches exactly **one** place in the file (0 or >1 matches → aborted, file untouched).
+  - `=== CREATE: path === … === END CREATE ===` for brand-new files; refused if the path already exists.
+- **Task runs see the real file contents**. `loadSpecContext` used to only include `spec.md` and `plan.md`; the model had to reconstruct code from memory. `buildTaskContext` now attaches every workspace-relative file path mentioned in the spec / plan / tasks / task description as a `--- CURRENT FILE: … ---` block (configurable caps: 50 KB per file, 200 KB total).
+- **Pre-task safety stash**. When the workspace is a git repo and the working tree is dirty, Caramelo runs `git stash push -u -m caramelo-pre-task-<timestamp>` before touching anything and logs the exact command to restore it. When it is not a git repo, the user is prompted to confirm before Caramelo proceeds without a backup.
+- **Diff preview before writing**. By default each task opens a QuickPick with *Apply all / Review file-by-file / Cancel*; file-by-file opens a `vscode.diff` for every change and asks per-file. Power users can set `caramelo.autoApplyEdits: true` to skip the review.
+- **Legacy output is refused, not silently applied**. If the LLM emits the old whole-file format, the parser throws a `LegacyFormatError` and nothing is written; the user sees an explicit error in the Caramelo output channel.
+- **Parallel `[P]` tasks are safe with the new write pipeline**. `Run All Tasks` fans out `[P]`-marked tasks via `Promise.all`; with 0.0.9's new interactive steps this would have raced `git stash push` on `.git/index.lock`, stacked ambiguous QuickPicks, and let two edits against the same file shift each other's SEARCH context. An `AsyncMutex` inside `startTask` now serializes the stash/review/apply phases while still running the LLM stream outside the lock so parallel throughput is preserved. QuickPick and diff titles are tagged with the task text so users can tell which prompt belongs to which task.
+
+### Security
+
+- **XSS hardening**: replaced `innerHTML` with DOM APIs in three sinks fed by untrusted data (model list from provider APIs, Jira board list, LLM-generated constitution principles) — no more markup injection from arbitrary OpenAI-compatible endpoints or LLM output.
+- **Redacting logger** (`utils/log`): strips `Bearer`/`Basic` tokens, `Authorization` / `x-api-key` / `token` values, and `user:pass@` credentials from URLs before writing to the output channel. Debug logs are now gated behind `CARAMELO_DEBUG=1` so they are silent in production.
+- **Header injection guard**: `authHeader` and `authPrefix` are now constrained by a pattern in the settings schema and re-validated at runtime, so a hand-edited `settings.json` cannot smuggle CR/LF into outbound HTTP requests.
+- **Jira credential validation at save time**: adding a Jira provider now pings `/rest/api/3/myself` before persisting, closing a gap where a stale token could be stored if the user skipped the Test button.
+
+### Fixed
+
+- **SSE `[DONE]` marker correctly terminates the stream**: `processSSEPart`'s inner `return` only stopped the inner generator, so frames arriving after `[DONE]` were still yielded and could corrupt generated specs or delay completion until the 5 min timeout fired. Refactored to return `{ contents, done }` so the outer loop stops reading immediately.
+- **SSE timeout handles no longer leak**: the per-read `setTimeout` is now cleared on every loop iteration and in a `finally` block.
+- **AbortController lifecycle** in Claude and OpenAI-compatible providers: a new `chat()` aborts any in-flight request before starting, and the controller reference is nulled in a `finally` block instead of lingering after the stream completes.
+- **Phase auto-detection is now persisted**: when `buildSpec` finds an existing phase file on disk while metadata still says `pending`, it upgrades to `pending-approval` and writes the change back to `.caramelo-meta.json` — the UI and the filesystem no longer disagree.
+- **Safer JSON parsing** in spec metadata readers (`spec.ts`, `progress-view`, `dag-view`, `workflow-view`) and the template sync version file via a shared `safeJsonParse` + `isObject` guard.
+
+### Added
+
+- **New setting `caramelo.sse.timeoutMs`** (default 300000, min 5000) — raise it for slow local models like Ollama on CPU.
+- **Typed error hierarchy** (`CarameloError`, `TimeoutError`, `NetworkError`, `AuthError`, `ProviderError`) so callers can distinguish transport failures, auth failures (401/403), and server-side provider errors.
+- **Test suite**: first automated tests (52 across Vitest), wired into CI. Covers spec metadata, SSE parsing, log redaction, safe JSON, error hierarchy, and header sanitising.
+- **Advanced Settings and Troubleshooting sections** in the README.
+
+### Changed
+
+- **Production bundle is now minified**: esbuild runs with `treeShaking`, strips legal comments, and a new `vscode:prepublish` hook ensures `vsce package` always uses `--production`. Bundle size: **229 KB → 159 KB** (−30 %).
+- **Silent `.catch(() => {})`** in extension activation replaced with logged warnings through the redacting logger.
+- `@typescript-eslint/no-explicit-any` promoted from `warn` to `error`; removed six `as never` casts and one inline `as import(...)` cast by narrowing parameter types to `{ refresh(): void }` where appropriate.
+
 ## [0.0.8] - 2026-04-03
 
 ### Added

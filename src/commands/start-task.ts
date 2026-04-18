@@ -3,7 +3,15 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { ProviderRegistry } from '../providers/registry.js';
 import { SPECS_DIR_NAME } from '../constants.js';
-import { showProgress, updateProgress, hideProgress } from '../progress.js';
+import { showProgress, hideProgress } from '../progress.js';
+import { LegacyFormatError, ParseError, parseEdits } from './task-edits/parser.js';
+import { applyEdits, type ApplyOutcome } from './task-edits/apply.js';
+import { buildTaskContext } from './task-edits/context.js';
+import { createSafetyStash } from './task-edits/git-safety.js';
+import { confirmApplyChoice, previewEdit } from './task-edits/diff-preview.js';
+import { TASK_SYSTEM_PROMPT } from './task-edits/prompt.js';
+import { AsyncMutex } from './task-edits/mutex.js';
+import { log } from '../utils/log.js';
 
 let outputChannel: vscode.OutputChannel | undefined;
 
@@ -14,11 +22,24 @@ function getOutputChannel(): vscode.OutputChannel {
   return outputChannel;
 }
 
+/**
+ * Serializes the pieces of a task that are NOT safe to run concurrently:
+ *   1. `git stash push -u` (races on .git/index.lock)
+ *   2. modal warnings / confirm QuickPicks (VS Code shows one at a time)
+ *   3. `previewEdit` diff tabs
+ *   4. `applyEdits` — two edits hitting the same file from different
+ *      task runs would shift each other's SEARCH context.
+ *
+ * The LLM streaming call happens OUTSIDE this lock so that the throughput
+ * benefit of `[P]`-marked parallel tasks is preserved.
+ */
+const interactiveLock = new AsyncMutex();
+
 export async function startTask(
   lineNumber: number,
   taskText: string,
   docUri: vscode.Uri,
-  registry: ProviderRegistry
+  registry: ProviderRegistry,
 ): Promise<void> {
   const provider = registry.activeProvider;
   if (!provider) {
@@ -27,169 +48,210 @@ export async function startTask(
     return;
   }
 
-  // Find parent spec directory
-  const docPath = docUri.fsPath;
-  const specDir = findSpecDir(docPath);
-  const context = specDir ? loadSpecContext(specDir) : '';
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!workspaceRoot) {
+    vscode.window.showWarningMessage('No workspace folder open — task execution requires a workspace.');
+    return;
+  }
 
-  const systemPrompt = `You are a code generation assistant. The user will give you a task to implement.
-Output your response as code changes in this format for EACH file you want to create or modify:
+  const channel = getOutputChannel();
+  channel.show(true);
+  channel.appendLine(`\n${'─'.repeat(60)}`);
+  channel.appendLine(`▶ Task: ${taskText}`);
+  channel.appendLine(`  ${new Date().toLocaleTimeString()}`);
+  channel.appendLine('─'.repeat(60));
 
-=== FILE: path/to/file.ext ===
-<complete file content here>
-=== END FILE ===
+  // Phase A — safety stash + no-git confirmation. Must be serialized across
+  // concurrent startTask invocations so two parallel [P] tasks don't race
+  // on .git/index.lock or stack modal dialogs on top of each other. When a
+  // prior task already took a stash the worktree is clean here, so this
+  // returns kind:'clean' and takes no second stash — one batch-wide stash
+  // is enough to revert everything.
+  const phaseA = await interactiveLock.run(async () => {
+    const safety = await createSafetyStash(workspaceRoot);
+    channel.appendLine(`↪ [${taskText.slice(0, 40)}] ${safety.message}`);
+    if (safety.kind === 'no-git') {
+      const proceed = await vscode.window.showWarningMessage(
+        `Task "${taskText.slice(0, 60)}": ${safety.message} Proceed anyway?`,
+        { modal: true },
+        'Proceed without backup',
+      );
+      if (proceed !== 'Proceed without backup') {
+        return { abort: true as const, safety };
+      }
+    }
+    return { abort: false as const, safety };
+  });
+  if (phaseA.abort) {
+    channel.appendLine('✗ Task cancelled by user — no backup available.');
+    return;
+  }
+  const safety = phaseA.safety;
 
-Only output file blocks. No explanations outside file blocks.`;
+  // Build context — pure reads, safe to run in parallel with other tasks.
+  const specDir = findSpecDir(docUri.fsPath);
+  const ctx = specDir
+    ? buildTaskContext({ specDir, workspaceRoot, taskText })
+    : { text: '', includedFiles: [], skippedFiles: [] };
+  if (ctx.includedFiles.length > 0) {
+    channel.appendLine(`↪ Included in context: ${ctx.includedFiles.join(', ')}`);
+  }
+  if (ctx.skippedFiles.length > 0) {
+    channel.appendLine(`↪ Skipped (context budget): ${ctx.skippedFiles.join(', ')}`);
+  }
 
-  const userPrompt = `Task: ${taskText}\n\n${context ? `Context:\n${context}` : ''}`;
+  const userPrompt = `Task: ${taskText}\n\n${ctx.text ? `Context:\n${ctx.text}` : ''}`;
 
   const abortController = new AbortController();
   showProgress(`Task: ${taskText.slice(0, 40)}...`, () => abortController.abort());
 
   try {
-      const channel = getOutputChannel();
-      channel.show(true);
-      channel.appendLine(`\n${'─'.repeat(60)}`);
-      channel.appendLine(`▶ Task: ${taskText}`);
-      channel.appendLine(`  ${new Date().toLocaleTimeString()}`);
-      channel.appendLine('─'.repeat(60));
+    let output = '';
+    try {
+      for await (const chunk of provider.chat(
+        [
+          { role: 'system', content: TASK_SYSTEM_PROMPT },
+          { role: 'user', content: userPrompt },
+        ],
+        { signal: abortController.signal },
+      )) {
+        output += chunk;
+        channel.append(chunk);
+      }
+    } catch (err) {
+      if (abortController.signal.aborted) {
+        channel.appendLine('\n\n⚠ Task cancelled.');
+        return;
+      }
+      const msg = err instanceof Error ? err.message : String(err);
+      channel.appendLine(`\n\n✗ Error: ${msg}`);
+      vscode.window.showErrorMessage(`Task failed: ${msg}`);
+      return;
+    }
 
-      let output = '';
-      try {
-        for await (const chunk of provider.chat(
-          [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-          ],
-          { signal: abortController.signal }
-        )) {
-          output += chunk;
-          channel.append(chunk);
-        }
-      } catch (err) {
-        if (abortController.signal.aborted) {
-          channel.appendLine('\n\n⚠ Task cancelled.');
+    // Parse edits. Hard fail on legacy-format output so we never fall
+    // back to raw overwrites.
+    let edits;
+    try {
+      edits = parseEdits(output);
+    } catch (err) {
+      if (err instanceof LegacyFormatError) {
+        channel.appendLine(`\n\n✗ ${err.message}`);
+        vscode.window.showErrorMessage(
+          'Caramelo rejected an out-of-protocol response (legacy whole-file format). Nothing was written. See the Caramelo output channel for details.',
+        );
+        return;
+      }
+      if (err instanceof ParseError) {
+        channel.appendLine(`\n\n✗ Malformed edit protocol: ${err.message}`);
+        vscode.window.showErrorMessage(
+          'Caramelo could not parse the proposed edits. Nothing was written. See the Caramelo output channel for details.',
+        );
+        return;
+      }
+      log.error('unexpected parseEdits error', err);
+      throw err;
+    }
+
+    if (edits.length === 0) {
+      channel.appendLine('\n\n⚠ No edits detected in LLM output. Nothing to apply.');
+      vscode.window.showInformationMessage('No edits proposed by the LLM.');
+      return;
+    }
+
+    channel.appendLine(`\n\n${'─'.repeat(40)}`);
+    channel.appendLine(`✓ ${edits.length} edit block(s) parsed.`);
+
+    // Phase C — review + apply + markTaskComplete + openDoc. Serialized so
+    // two parallel tasks don't stack QuickPicks or race on applyEdits
+    // against the same file. The LLM stream above ran outside the lock so
+    // we still get parallel throughput on `chat()`.
+    await interactiveLock.run(async () => {
+      const auto = vscode.workspace.getConfiguration().get<boolean>('caramelo.autoApplyEdits') === true;
+      let toApply = edits;
+      if (!auto) {
+        const choice = await confirmApplyChoice(edits.length, taskText);
+        if (choice === 'cancel') {
+          channel.appendLine('✗ Task cancelled by user at review step.');
           return;
         }
-        const msg = err instanceof Error ? err.message : String(err);
-        channel.appendLine(`\n\n✗ Error: ${msg}`);
-        vscode.window.showErrorMessage(`Task failed: ${msg}`);
+        if (choice === 'file-by-file') {
+          const accepted = [];
+          for (const edit of edits) {
+            const result = await previewEdit(edit, { workspaceRoot, taskText });
+            if (result === 'cancel-all') {
+              channel.appendLine('✗ Review cancelled; remaining edits discarded.');
+              break;
+            }
+            if (result === 'accept') accepted.push(edit);
+            else channel.appendLine(`  skipped: ${edit.filePath}`);
+          }
+          toApply = accepted;
+        }
+      }
+
+      if (toApply.length === 0) {
+        channel.appendLine('⚠ Nothing selected for application.');
         return;
       }
 
-      // Parse file blocks
-      const fileBlocks = parseFileBlocks(output);
-      if (fileBlocks.length === 0) {
-        channel.appendLine('\n\n⚠ No file changes detected in LLM output.');
-        vscode.window.showInformationMessage('No file changes proposed by the LLM.');
-        return;
-      }
+      const outcomes = applyEdits(toApply, { workspaceRoot });
+      const applied = logOutcomes(channel, outcomes);
 
-      channel.appendLine(`\n\n${'─'.repeat(40)}`);
-      channel.appendLine(`✓ ${fileBlocks.length} file(s) to apply:`);
-      fileBlocks.forEach((b) => channel.appendLine(`  → ${b.filePath}`));
-
-      // Apply changes directly
-      const applied = await applyChanges(fileBlocks);
       if (applied > 0) {
         await markTaskComplete(docUri, lineNumber, taskText);
-        channel.appendLine(`✓ Task complete. ${applied} file(s) created/updated.`);
-        vscode.window.showInformationMessage(`Task complete. ${applied} file(s) created/updated.`);
+        channel.appendLine(`✓ Task complete. ${applied} file(s) changed.`);
+        vscode.window.showInformationMessage(`Task complete. ${applied} file(s) changed.`);
+        const first = outcomes.find((o) => o.wrote);
+        if (first) {
+          const abs = path.isAbsolute(first.filePath)
+            ? first.filePath
+            : path.join(workspaceRoot, first.filePath);
+          const doc = await vscode.workspace.openTextDocument(abs);
+          await vscode.window.showTextDocument(doc, { preview: false });
+        }
+      } else {
+        const hint = safety.kind === 'stashed'
+          ? ` Your work is safe in stash "${safety.stashName}".`
+          : '';
+        vscode.window.showWarningMessage(
+          `Task "${taskText.slice(0, 50)}" produced no applicable edits.${hint} See the Caramelo output channel for details.`,
+        );
       }
+    });
   } finally {
     hideProgress();
   }
 }
 
-interface FileBlock {
-  filePath: string;
-  content: string;
-}
-
-function parseFileBlocks(output: string): FileBlock[] {
-  const blocks: FileBlock[] = [];
-
-  // Try strict format first: === FILE: path === ... === END FILE ===
-  const strictRegex = /=== FILE: (.+?) ===\n([\s\S]*?)\n=== END FILE ===/g;
-  let match;
-  while ((match = strictRegex.exec(output)) !== null) {
-    blocks.push({ filePath: match[1].trim(), content: match[2] });
-  }
-  if (blocks.length > 0) return blocks;
-
-  // Fallback: handle truncated output where === END FILE === is missing
-  // Split on === FILE: headers and take content until next header or end
-  const headerRegex = /=== FILE: (.+?) ===/g;
-  const headers: Array<{ path: string; start: number }> = [];
-  while ((match = headerRegex.exec(output)) !== null) {
-    headers.push({ path: match[1].trim(), start: match.index + match[0].length + 1 });
-  }
-
-  for (let i = 0; i < headers.length; i++) {
-    const start = headers[i].start;
-    const end = i + 1 < headers.length
-      ? headers[i + 1].start - headers[i + 1].path.length - 14 // back up past "=== FILE: x ==="
-      : output.length;
-    let content = output.slice(start, end).trim();
-    // Remove trailing === END FILE === if present
-    content = content.replace(/\n=== END FILE ===\s*$/, '');
-    if (content.length > 0) {
-      blocks.push({ filePath: headers[i].path, content });
-    }
-  }
-
-  return blocks;
-}
-
-async function applyChanges(blocks: FileBlock[]): Promise<number> {
-  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!workspaceRoot) return 0;
-
+function logOutcomes(channel: vscode.OutputChannel, outcomes: ApplyOutcome[]): number {
   let applied = 0;
-  const fileNames: string[] = [];
-
-  for (const block of blocks) {
-    const absPath = path.isAbsolute(block.filePath)
-      ? block.filePath
-      : path.join(workspaceRoot, block.filePath);
-
-    const dir = path.dirname(absPath);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(absPath, block.content);
-    applied++;
-    fileNames.push(block.filePath);
+  for (const outcome of outcomes) {
+    const icon = outcome.status === 'applied' ? '✓' : '✗';
+    channel.appendLine(`${icon} [${outcome.status}] ${outcome.filePath}`);
+    if (outcome.status !== 'applied') {
+      for (const line of outcome.detail.split('\n')) channel.appendLine(`    ${line}`);
+    }
+    if (outcome.wrote) applied++;
   }
-
-  // Open the first created/modified file
-  if (fileNames.length > 0) {
-    const firstPath = path.isAbsolute(fileNames[0])
-      ? fileNames[0]
-      : path.join(workspaceRoot, fileNames[0]);
-    const doc = await vscode.workspace.openTextDocument(firstPath);
-    await vscode.window.showTextDocument(doc, { preview: false });
-  }
-
   return applied;
 }
 
-// Mutex to prevent concurrent writes to the same tasks file
+// Mutex to prevent concurrent writes to the same tasks file.
 let writeLock: Promise<void> = Promise.resolve();
 
 async function markTaskComplete(docUri: vscode.Uri, lineNumber: number, taskText?: string): Promise<void> {
-  // Serialize writes — wait for any pending write to finish
   writeLock = writeLock.then(async () => {
     const filePath = docUri.fsPath;
     const content = fs.readFileSync(filePath, 'utf-8');
     const lines = content.split('\n');
 
-    // Strategy 1: try exact line number
     if (lineNumber < lines.length && lines[lineNumber].includes('- [ ]')) {
       lines[lineNumber] = lines[lineNumber].replace('- [ ]', '- [x]');
       fs.writeFileSync(filePath, lines.join('\n'), 'utf-8');
       return;
     }
 
-    // Strategy 2: find by task text (handles shifted lines)
     if (taskText) {
       const searchStr = taskText.slice(0, 30);
       for (let i = 0; i < lines.length; i++) {
@@ -201,7 +263,6 @@ async function markTaskComplete(docUri: vscode.Uri, lineNumber: number, taskText
       }
     }
 
-    // Strategy 3: mark the first unchecked task (last resort)
     for (let i = 0; i < lines.length; i++) {
       if (lines[i].trimStart().startsWith('- [ ]')) {
         lines[i] = lines[i].replace('- [ ]', '- [x]');
@@ -220,15 +281,4 @@ function findSpecDir(filePath: string): string | null {
     dir = path.dirname(dir);
   }
   return null;
-}
-
-function loadSpecContext(specDir: string): string {
-  const parts: string[] = [];
-  for (const file of ['spec.md', 'plan.md']) {
-    const filePath = path.join(specDir, file);
-    if (fs.existsSync(filePath)) {
-      parts.push(fs.readFileSync(filePath, 'utf-8'));
-    }
-  }
-  return parts.join('\n\n---\n\n');
 }
