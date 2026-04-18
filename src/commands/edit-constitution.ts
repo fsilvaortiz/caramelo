@@ -1,12 +1,13 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import type { ConstitutionTreeDataProvider } from '../views/sidebar/constitution-tree.js';
 import type { ProviderRegistry } from '../providers/registry.js';
+
+interface Refreshable { refresh(): void }
 
 export function editConstitution(
   context: vscode.ExtensionContext,
-  constitutionTree: ConstitutionTreeDataProvider,
+  constitutionTree: Refreshable,
   registry?: ProviderRegistry
 ): void {
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];

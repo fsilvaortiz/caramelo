@@ -1,12 +1,13 @@
 import * as vscode from 'vscode';
 import type { SpecWorkspace } from '../specs/workspace.js';
-import type { SpecsTreeDataProvider } from '../views/sidebar/specs-tree.js';
 import type { ConstitutionTreeDataProvider } from '../views/sidebar/constitution-tree.js';
 import { COMMAND_IDS } from '../constants.js';
 
+interface Refreshable { refresh(): void }
+
 export async function newSpec(
   workspace: SpecWorkspace,
-  specsTree: SpecsTreeDataProvider,
+  specsTree: Refreshable,
   constitutionTree: ConstitutionTreeDataProvider
 ): Promise<void> {
   // Constitution is mandatory before creating specs

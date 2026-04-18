@@ -3,8 +3,9 @@ import type { SpecWorkspace } from '../specs/workspace.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { TemplateManager } from '../speckit/templates.js';
 import type { WorkflowEngine } from '../specs/workflow.js';
-import type { SpecsTreeDataProvider } from '../views/sidebar/specs-tree.js';
 import { getPhaseStatus, type PhaseType } from '../specs/spec.js';
+
+interface Refreshable { refresh(): void }
 
 const PHASE_ORDER: PhaseType[] = ['requirements', 'design', 'tasks'];
 const PHASE_LABELS: Record<PhaseType, string> = {
@@ -20,7 +21,7 @@ export async function runPhase(
   registry: ProviderRegistry,
   templateManager: TemplateManager,
   workflowEngine: WorkflowEngine,
-  specsTree: SpecsTreeDataProvider
+  specsTree: Refreshable
 ): Promise<void> {
   if (!registry.activeProvider) {
     vscode.window.showWarningMessage('No active LLM provider. Configure one first.');
