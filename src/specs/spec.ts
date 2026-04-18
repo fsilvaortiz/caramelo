@@ -66,6 +66,7 @@ export function setPhaseStatus(spec: Spec, phaseType: PhaseType, status: PhaseSt
 export function buildSpec(name: string, dirPath: string): Spec {
   const metaPath = path.join(dirPath, META_FILE_NAME);
   const statuses = parseMetadata(metaPath);
+  const originalStatuses = { ...statuses };
 
   const phases: SpecPhase[] = [
     { type: 'requirements', status: statuses.requirements, fileName: PHASE_FILES.requirements },
@@ -82,6 +83,20 @@ export function buildSpec(name: string, dirPath: string): Spec {
         phase.status = 'pending-approval';
         statuses[phase.type] = 'pending-approval';
       }
+    }
+  }
+
+  // Persist any auto-detected upgrades so the UI doesn't have to recompute
+  // them on every read and so other readers see a consistent view.
+  const changed =
+    statuses.requirements !== originalStatuses.requirements ||
+    statuses.design !== originalStatuses.design ||
+    statuses.tasks !== originalStatuses.tasks;
+  if (changed) {
+    try {
+      writeMetadata(metaPath, statuses);
+    } catch {
+      // Ignore — persistence is a best-effort optimisation, not required for correctness.
     }
   }
 

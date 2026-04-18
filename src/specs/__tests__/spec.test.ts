@@ -69,6 +69,29 @@ describe('buildSpec', () => {
     expect(getPhaseStatus(spec, 'requirements')).toBe('pending-approval');
   });
 
+  it('persists auto-detected status upgrades to metadata', () => {
+    fs.writeFileSync(path.join(tmpDir, PHASE_FILES.requirements), '# Spec content');
+    buildSpec('feature-a', tmpDir);
+    const saved = parseMetadata(path.join(tmpDir, META_FILE_NAME));
+    expect(saved.requirements).toBe('pending-approval');
+  });
+
+  it('does not rewrite metadata when nothing changed', () => {
+    writeMetadata(path.join(tmpDir, META_FILE_NAME), {
+      requirements: 'approved',
+      design: 'pending',
+      tasks: 'pending',
+    });
+    const metaPath = path.join(tmpDir, META_FILE_NAME);
+    const before = fs.statSync(metaPath).mtimeMs;
+    // Wait briefly so a rewrite would show up in mtime.
+    const wait = Date.now() + 10;
+    while (Date.now() < wait) { /* spin */ }
+    buildSpec('feature-a', tmpDir);
+    const after = fs.statSync(metaPath).mtimeMs;
+    expect(after).toBe(before);
+  });
+
   it('keeps pending when the phase file is empty', () => {
     fs.writeFileSync(path.join(tmpDir, PHASE_FILES.requirements), '   \n  ');
     const spec = buildSpec('feature-a', tmpDir);
