@@ -2,14 +2,26 @@ import * as vscode from 'vscode';
 import type { LLMProvider } from './types.js';
 import { SETTINGS_KEYS } from '../constants.js';
 
+export type HealthStatus = 'unknown' | 'ok' | 'fail' | 'checking';
+
+export interface HealthState {
+  status: HealthStatus;
+  error?: string;
+  checkedAt?: number;
+}
+
 export class ProviderRegistry implements vscode.Disposable {
   private readonly providers = new Map<string, LLMProvider>();
+  private readonly healthByProvider = new Map<string, HealthState>();
   private _activeProvider: LLMProvider | undefined;
   private readonly _onDidChangeActiveProvider = new vscode.EventEmitter<LLMProvider | undefined>();
   readonly onDidChangeActiveProvider = this._onDidChangeActiveProvider.event;
 
   private readonly _onDidChangeProviders = new vscode.EventEmitter<void>();
   readonly onDidChangeProviders = this._onDidChangeProviders.event;
+
+  private readonly _onDidChangeHealth = new vscode.EventEmitter<{ id: string; state: HealthState }>();
+  readonly onDidChangeHealth = this._onDidChangeHealth.event;
 
   get activeProvider(): LLMProvider | undefined {
     return this._activeProvider;
@@ -25,12 +37,28 @@ export class ProviderRegistry implements vscode.Disposable {
     if (provider) {
       provider.dispose();
       this.providers.delete(id);
+      this.healthByProvider.delete(id);
       if (this._activeProvider?.id === id) {
         this._activeProvider = undefined;
         this._onDidChangeActiveProvider.fire(undefined);
       }
       this._onDidChangeProviders.fire();
     }
+  }
+
+  getHealth(id: string): HealthState {
+    return this.healthByProvider.get(id) ?? { status: 'unknown' };
+  }
+
+  recordHealth(id: string, status: HealthStatus, error?: string): void {
+    if (!this.providers.has(id)) return;
+    const state: HealthState = {
+      status,
+      error: status === 'fail' ? error : undefined,
+      checkedAt: status === 'checking' ? this.healthByProvider.get(id)?.checkedAt : Date.now(),
+    };
+    this.healthByProvider.set(id, state);
+    this._onDidChangeHealth.fire({ id, state });
   }
 
   getAll(): LLMProvider[] {
@@ -67,7 +95,9 @@ export class ProviderRegistry implements vscode.Disposable {
       provider.dispose();
     }
     this.providers.clear();
+    this.healthByProvider.clear();
     this._onDidChangeActiveProvider.dispose();
     this._onDidChangeProviders.dispose();
+    this._onDidChangeHealth.dispose();
   }
 }
