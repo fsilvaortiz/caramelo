@@ -194,7 +194,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     const vsConfig = vscode.workspace.getConfiguration();
     const existing = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
     existing.push(config);
-    await vsConfig.update(SETTINGS_KEYS.providers, existing, vscode.ConfigurationTarget.Workspace);
+    await vsConfig.update(SETTINGS_KEYS.providers, existing, vscode.ConfigurationTarget.Global);
 
     await this.registry.setActive(id);
     this.refresh();
@@ -210,7 +210,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     this.registry.unregister(id);
     const vsConfig = vscode.workspace.getConfiguration();
     const configs = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
-    await vsConfig.update(SETTINGS_KEYS.providers, configs.filter((c) => c.id !== id), vscode.ConfigurationTarget.Workspace);
+    await vsConfig.update(SETTINGS_KEYS.providers, configs.filter((c) => c.id !== id), vscode.ConfigurationTarget.Global);
     this.refresh();
   }
 
@@ -304,7 +304,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     const vsConfig = vscode.workspace.getConfiguration();
     const existing = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
     existing.push(config);
-    await vsConfig.update(SETTINGS_KEYS.providers, existing, vscode.ConfigurationTarget.Workspace);
+    await vsConfig.update(SETTINGS_KEYS.providers, existing, vscode.ConfigurationTarget.Global);
 
     this.refresh();
     vscode.window.showInformationMessage(`Jira provider "${name}" added.`);
@@ -350,7 +350,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     this.view?.webview.postMessage({ command: 'modelValidation', id, status: 'validating' });
 
     config.model = model;
-    await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Workspace);
+    await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Global);
 
     // Re-register with new model
     this.registry.unregister(id);
@@ -418,7 +418,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     if (!newName || newName === config.name) return;
 
     config.name = newName;
-    await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Workspace);
+    await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Global);
 
     // Re-register with new name
     this.registry.unregister(id);
@@ -448,7 +448,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
 
     config.authHeader = msg.authHeader || undefined;
     config.authPrefix = msg.authPrefix || undefined;
-    await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Workspace);
+    await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Global);
 
     // Re-register provider with new auth
     this.registry.unregister(msg.id);
@@ -478,7 +478,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     config.endpoint = msg.instanceUrl;
     config.email = msg.email;
     config.boardName = msg.boardName;
-    await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Workspace);
+    await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Global);
 
     this.editingState = null;
     this.refresh();

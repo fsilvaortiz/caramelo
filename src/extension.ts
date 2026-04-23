@@ -29,11 +29,16 @@ import { TemplateSync } from './speckit/sync.js';
 import { COMMAND_IDS, VIEW_IDS, SETTINGS_KEYS } from './constants.js';
 import { initProgressBar } from './progress.js';
 import { log } from './utils/log.js';
+import { migrateProviderSettingsToGlobal } from './utils/migrate-providers.js';
 import type { ProviderConfig } from './constants.js';
 
 export function activate(context: vscode.ExtensionContext): void {
   const registry = new ProviderRegistry();
   const secrets = context.secrets;
+
+  // One-shot: lift legacy Workspace-scoped provider settings to Global so they
+  // survive opening a different folder. Safe no-op if Global is already set.
+  migrateProviderSettingsToGlobal().catch((err) => log.warn('provider settings migration failed:', err));
 
   // Register providers from settings
   const providerConfigs = vscode.workspace.getConfiguration().get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];

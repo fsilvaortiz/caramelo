@@ -78,7 +78,7 @@ export class ProviderRegistry implements vscode.Disposable {
     this._onDidChangeActiveProvider.fire(provider);
 
     const config = vscode.workspace.getConfiguration();
-    await config.update(SETTINGS_KEYS.activeProvider, id, vscode.ConfigurationTarget.Workspace);
+    await config.update(SETTINGS_KEYS.activeProvider, id, vscode.ConfigurationTarget.Global);
   }
 
   restoreActiveFromSettings(): void {
