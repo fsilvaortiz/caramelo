@@ -50,13 +50,18 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
   async isAvailable(): Promise<boolean> {
     try {
-      const headers: Record<string, string> = {};
-      if (this.apiKey) headers[this.authHeader] = this.authPrefix ? `${this.authPrefix} ${this.apiKey}` : this.apiKey;
-      const res = await fetch(`${this.endpoint}/models`, {
-        headers,
-        signal: AbortSignal.timeout(5000),
-      });
-      return res.ok;
+      // Hitting /models only proves the endpoint is reachable; it doesn't
+      // prove that the configured model is loaded (Ollama returns 200 even
+      // for models that aren't pulled) or that this key can call /chat
+      // through the corporate proxy. Run a tiny streaming generation so the
+      // health check matches what real chats will do.
+      for await (const _chunk of this.chat(
+        [{ role: 'user', content: 'ping' }],
+        { maxTokens: 1, signal: AbortSignal.timeout(15_000) },
+      )) {
+        return true;
+      }
+      return false;
     } catch {
       return false;
     }

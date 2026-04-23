@@ -50,21 +50,16 @@ export class ClaudeProvider implements LLMProvider {
   async isAvailable(): Promise<boolean> {
     if (!this.apiKey) return false;
     try {
-      const res = await fetch(`${this.endpoint}/v1/messages`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          [this.authHeader]: this.authPrefix ? `${this.authPrefix} ${this.apiKey}` : this.apiKey!,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model: this.model,
-          max_tokens: 1,
-          messages: [{ role: 'user', content: 'ping' }],
-        }),
-        signal: AbortSignal.timeout(5000),
-      });
-      return res.ok || res.status === 400; // 400 = valid key, bad request
+      // Exercise the same code path as chat() so the result reflects what a
+      // real generation will see: model exists, credentials accepted by the
+      // streaming endpoint, custom auth headers honoured by the proxy, etc.
+      for await (const _chunk of this.chat(
+        [{ role: 'user', content: 'ping' }],
+        { maxTokens: 1, signal: AbortSignal.timeout(15_000) },
+      )) {
+        return true;
+      }
+      return false;
     } catch {
       return false;
     }
