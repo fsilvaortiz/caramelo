@@ -35,6 +35,17 @@ function getOutputChannel(): vscode.OutputChannel {
  */
 const interactiveLock = new AsyncMutex();
 
+/**
+ * Per-session dismissal of the "no git repo" safety prompt. Resets on window
+ * reload. Users who always work in non-git dirs can also flip
+ * `caramelo.tasks.allowWithoutGit` once and never see the prompt again.
+ */
+let sessionAllowNoGit = false;
+
+function isAllowWithoutGitEnabled(): boolean {
+  return vscode.workspace.getConfiguration().get<boolean>('caramelo.tasks.allowWithoutGit', false);
+}
+
 export async function startTask(
   lineNumber: number,
   taskText: string,
@@ -70,13 +81,18 @@ export async function startTask(
   const phaseA = await interactiveLock.run(async () => {
     const safety = await createSafetyStash(workspaceRoot);
     channel.appendLine(`↪ [${taskText.slice(0, 40)}] ${safety.message}`);
-    if (safety.kind === 'no-git') {
-      const proceed = await vscode.window.showWarningMessage(
+    if (safety.kind === 'no-git' && !sessionAllowNoGit && !isAllowWithoutGitEnabled()) {
+      const proceedOnce = 'Proceed without backup';
+      const proceedSession = 'Proceed — don\'t ask again this session';
+      const choice = await vscode.window.showWarningMessage(
         `Task "${taskText.slice(0, 60)}": ${safety.message} Proceed anyway?`,
         { modal: true },
-        'Proceed without backup',
+        proceedOnce,
+        proceedSession,
       );
-      if (proceed !== 'Proceed without backup') {
+      if (choice === proceedSession) {
+        sessionAllowNoGit = true;
+      } else if (choice !== proceedOnce) {
         return { abort: true as const, safety };
       }
     }
