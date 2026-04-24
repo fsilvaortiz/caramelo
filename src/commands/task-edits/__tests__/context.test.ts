@@ -72,7 +72,7 @@ describe('buildTaskContext', () => {
       taskText: 'Update src/foo.ts to export 2',
     });
 
-    expect(ctx.text).toContain('--- CURRENT FILE: src/foo.ts ---');
+    expect(ctx.text).toContain('--- EXISTING FILE: src/foo.ts ---');
     expect(ctx.text).toContain('export const foo = 1;');
     expect(ctx.includedFiles).toContain('src/foo.ts');
   });
@@ -128,5 +128,34 @@ describe('buildTaskContext', () => {
     writeWs('specs/feature-a/spec.md', 'Refers to `src/ghost.ts`.');
     const ctx = buildTaskContext({ specDir, workspaceRoot: tmp, taskText: '' });
     expect(ctx.includedFiles).not.toContain('src/ghost.ts');
+  });
+
+  it('suffix-matches candidates against existing workspace files', () => {
+    // Task mentions src/main/.../Foo.java but the real file lives at a
+    // module prefix — simulates a monorepo / Gradle multi-module layout.
+    writeWs('some-module/src/main/java/Foo.java', 'class Foo {}');
+    writeWs('specs/feature-a/spec.md', '# spec');
+    const ctx = buildTaskContext({
+      specDir,
+      workspaceRoot: tmp,
+      taskText: 'Edit `src/main/java/Foo.java` to rename Foo.',
+    });
+    expect(ctx.text).toContain('--- EXISTING FILE: some-module/src/main/java/Foo.java ---');
+    expect(ctx.includedFiles).toContain('some-module/src/main/java/Foo.java');
+  });
+
+  it('prefers literal match over suffix match when both exist', () => {
+    writeWs('src/foo.ts', 'literal');
+    writeWs('packages/pkg/src/foo.ts', 'suffix');
+    writeWs('specs/feature-a/spec.md', '# spec');
+    const ctx = buildTaskContext({
+      specDir,
+      workspaceRoot: tmp,
+      taskText: 'Edit `src/foo.ts`',
+    });
+    expect(ctx.includedFiles).toContain('src/foo.ts');
+    // We don't aggressively expand to unrelated suffix matches when the
+    // literal path exists; only one file gets attached for that candidate.
+    expect(ctx.includedFiles).not.toContain('packages/pkg/src/foo.ts');
   });
 });

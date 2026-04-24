@@ -4,7 +4,7 @@ import * as path from 'path';
 import type { ProviderRegistry } from '../providers/registry.js';
 import { SPECS_DIR_NAME } from '../constants.js';
 import { showProgress, hideProgress } from '../progress.js';
-import { LegacyFormatError, ParseError, parseEdits } from './task-edits/parser.js';
+import { LegacyFormatError, ParseError, parseEdits, type Edit } from './task-edits/parser.js';
 import { applyEdits, type ApplyOutcome } from './task-edits/apply.js';
 import { buildTaskContext } from './task-edits/context.js';
 import { createSafetyStash } from './task-edits/git-safety.js';
@@ -229,6 +229,90 @@ export async function startTask(
       }
 
       const outcomes = applyEdits(toApply, { workspaceRoot });
+
+      // Recovery: if CREATE blocks collided with existing files, do a single
+      // second round asking the LLM to emit SEARCH/REPLACE against the real
+      // content instead. The user already consented to applying these edits,
+      // so the retry applies automatically as well.
+      const conflicts = outcomes.filter((o) => o.status === 'aborted-exists');
+      if (conflicts.length > 0) {
+        channel.appendLine(
+          `↻ ${conflicts.length} CREATE block(s) hit existing file(s); retrying as SEARCH/REPLACE…`,
+        );
+        const retryCtx = conflicts
+          .map((c) => {
+            const abs = path.isAbsolute(c.filePath)
+              ? c.filePath
+              : path.join(workspaceRoot, c.filePath);
+            let current = '';
+            try { current = fs.readFileSync(abs, 'utf-8'); } catch { /* ignore */ }
+            return `--- EXISTING FILE: ${c.filePath} ---\n${current}\n--- END FILE ---`;
+          })
+          .join('\n\n');
+        const retryPrompt =
+          'Your previous response emitted CREATE blocks for paths that already exist on disk. ' +
+          'For each file below, emit a FILE block with SEARCH/REPLACE pairs that transform the current content into your intended content. ' +
+          'If the current content already matches your intent, emit no block for that file.\n\n' +
+          retryCtx;
+        let retryOutput = '';
+        try {
+          channel.appendLine('\n--- retry round ---');
+          for await (const chunk of provider.chat(
+            [
+              { role: 'system', content: TASK_SYSTEM_PROMPT },
+              { role: 'user', content: userPrompt },
+              { role: 'assistant', content: output },
+              { role: 'user', content: retryPrompt },
+            ],
+            { signal: abortController.signal },
+          )) {
+            retryOutput += chunk;
+            channel.append(chunk);
+          }
+          channel.appendLine('\n--- end retry ---');
+        } catch (err) {
+          channel.appendLine(`⚠ Retry LLM call failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        if (retryOutput) {
+          let retryEdits: Edit[] = [];
+          try {
+            retryEdits = parseEdits(retryOutput);
+          } catch (err) {
+            channel.appendLine(`⚠ Retry output could not be parsed: ${err instanceof Error ? err.message : String(err)}`);
+          }
+          // Only accept retry edits that touch one of the conflicted files.
+          const conflictPaths = new Set(conflicts.map((c) => c.filePath));
+          const filteredRetry = retryEdits.filter(
+            (e) => e.kind === 'edit' && conflictPaths.has(e.filePath),
+          );
+          if (filteredRetry.length > 0) {
+            const retryOutcomes = applyEdits(filteredRetry, { workspaceRoot });
+            for (const ro of retryOutcomes) {
+              const idx = outcomes.findIndex(
+                (o) => o.filePath === ro.filePath && o.status === 'aborted-exists',
+              );
+              if (idx >= 0) outcomes[idx] = ro;
+            }
+          } else {
+            // LLM produced no applicable edits — either the current content
+            // already matches its intent (no-op) or it couldn't recover.
+            for (const c of conflicts) {
+              const idx = outcomes.findIndex(
+                (o) => o.filePath === c.filePath && o.status === 'aborted-exists',
+              );
+              if (idx >= 0) {
+                outcomes[idx] = {
+                  filePath: c.filePath,
+                  status: 'applied',
+                  detail: `Retry produced no edits for "${c.filePath}" — treating the existing file as already up to date.`,
+                  wrote: false,
+                };
+              }
+            }
+          }
+        }
+      }
+
       const applied = logOutcomes(channel, outcomes);
 
       if (applied > 0) {

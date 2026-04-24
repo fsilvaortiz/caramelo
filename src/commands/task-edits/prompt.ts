@@ -39,8 +39,18 @@ General rules:
 
 - Paths are always workspace-relative. Never use absolute paths or
   "..". Never touch files outside the workspace.
-- The CURRENT FILE blocks in the user prompt show the authoritative
-  state of each file. Do not rely on memory — copy from them.
+- If a file appears under an EXISTING FILE header in the user prompt,
+  it ALREADY EXISTS on disk — you MUST edit it with a SEARCH/REPLACE
+  block, NEVER with CREATE. CREATE is only for paths that do not appear
+  under an EXISTING FILE header.
+- The EXISTING FILE / CURRENT FILE blocks in the user prompt show the
+  authoritative state of each file. Do not rely on memory — copy from
+  them. The path you emit in the FILE block header must match that
+  header's path exactly, including any module/directory prefix.
+- If the task description refers to a file without its module prefix
+  (e.g. "src/main/.../Foo.java") but you can see the real path under
+  an EXISTING FILE header (e.g. "some-module/src/main/.../Foo.java"),
+  use the real path.
 - If you are unsure whether a change is safe, prefer to explain the
   problem in prose and emit no blocks rather than guessing.
 - Never emit binary content, never emit delete markers.
