@@ -13,7 +13,7 @@ import { WorkflowViewProvider } from './views/sidebar/workflow-view.js';
 import { SpecWorkspace } from './specs/workspace.js';
 import { TemplateManager } from './speckit/templates.js';
 import { WorkflowEngine } from './specs/workflow.js';
-import { selectProvider, addProviderWizard } from './commands/select-provider.js';
+import { selectProvider } from './commands/select-provider.js';
 import { newSpec } from './commands/new-spec.js';
 import { runPhase } from './commands/run-phase.js';
 import { approvePhase } from './commands/approve-phase.js';
@@ -109,17 +109,19 @@ export function activate(context: vscode.ExtensionContext): void {
     log.warn('template sync failed:', err);
   });
 
-  // Status bar
+  // Status bar. Click focuses the Providers sidebar webview — never opens
+  // a top-bar QuickPick. Provider selection / editing lives inline in
+  // the sidebar (see feedback_no_quickpick).
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-  statusBar.command = COMMAND_IDS.selectProvider;
+  statusBar.command = 'caramelo.providers.focus';
   const updateStatusBar = () => {
     const active = registry.activeProvider;
     if (active) {
       statusBar.text = `$(hubot) ${active.displayName}`;
-      statusBar.tooltip = `Caramelo: ${active.displayName}`;
+      statusBar.tooltip = `Caramelo: ${active.displayName} — click to manage providers`;
     } else {
       statusBar.text = '$(hubot) No Provider';
-      statusBar.tooltip = 'Caramelo: Click to select a provider';
+      statusBar.tooltip = 'Caramelo: click to open the Providers panel';
     }
     statusBar.show();
   };
@@ -128,11 +130,22 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Commands
   context.subscriptions.push(
-    vscode.commands.registerCommand(COMMAND_IDS.selectProvider, (providerId?: string) =>
-      selectProvider(registry, secrets, providerId)
-    ),
+    // Programmatic-only: accepts a providerId from the sidebar webview's
+    // postMessage. Never invoked without an argument, so never falls
+    // through to the legacy QuickPick.
+    vscode.commands.registerCommand(COMMAND_IDS.selectProvider, (providerId?: string) => {
+      if (!providerId) {
+        // Human-initiated (command palette) → focus the sidebar instead
+        // of the legacy top-bar picker.
+        vscode.commands.executeCommand('caramelo.providers.focus');
+        return;
+      }
+      return selectProvider(registry, secrets, providerId);
+    }),
     vscode.commands.registerCommand('caramelo.addProvider', () =>
-      addProviderWizard(registry, secrets)
+      // Routed to the sidebar's inline Add form — kept as a registered
+      // command so keybindings / the command palette still work.
+      vscode.commands.executeCommand('caramelo.providers.focus'),
     ),
     vscode.commands.registerCommand(COMMAND_IDS.editConstitution, () => {
       editConstitution(context, { refresh: () => workflowView.refresh() }, registry);
