@@ -4,6 +4,15 @@ import * as path from 'path';
 const DEFAULT_MAX_FILE_BYTES = 50 * 1024;
 const DEFAULT_MAX_TOTAL_BYTES = 200 * 1024;
 
+/** Folders we never descend into while indexing the workspace. */
+const SKIP_DIRS = new Set([
+  'node_modules', '.git', '.specify', 'dist', 'build', 'out', 'target',
+  '.gradle', '.mvn', '.idea', '.vscode', '.next', '.nuxt', '.cache',
+  'coverage', '__pycache__', '.pytest_cache', '.tox', 'venv', '.venv',
+]);
+const MAX_WALK_FILES = 5000;
+const MAX_WALK_DEPTH = 12;
+
 // Match backticked paths (`src/foo.ts`) and bare paths that look like
 // workspace-relative code files. We intentionally restrict to extensions
 // that a code-gen task is likely to edit — this keeps us out of prose noise.
@@ -100,17 +109,27 @@ export function buildTaskContext(args: BuildContextArgs): BuiltContext {
   const candidates = extractReferencedPaths(scanText);
 
   // 3. Include each candidate if it exists, fits in budget, and is inside
-  //    the workspace root.
+  //    the workspace root. If the literal candidate path doesn't exist we
+  //    search the workspace for any file whose path ends with that candidate,
+  //    so a task that says `src/main/.../Foo.java` still matches
+  //    `some-module/src/main/.../Foo.java`. This is how we stop the LLM from
+  //    emitting a CREATE for a file that already exists under a module prefix.
+  const index = buildWorkspaceIndex(args.workspaceRoot);
+  const resolved = new Set<string>();
   for (const rel of candidates) {
-    if (includedFiles.includes(rel)) continue;
-    const abs = resolveInsideWorkspace(rel, args.workspaceRoot);
-    if (!abs) continue;
-    // Don't re-include spec docs under a different label.
-    if (path.relative(args.specDir, abs) && specDocs.includes(path.basename(abs))) continue;
-    const read = safeRead(abs, maxFile);
-    if (!read) continue;
-    const ok = append('CURRENT FILE', rel, read.content);
-    if (!ok) break; // budget exhausted
+    const targets = resolveCandidate(rel, args.workspaceRoot, index);
+    for (const resolvedRel of targets) {
+      if (resolved.has(resolvedRel)) continue;
+      resolved.add(resolvedRel);
+      if (includedFiles.includes(resolvedRel)) continue;
+      const abs = path.resolve(args.workspaceRoot, resolvedRel);
+      // Don't re-include spec docs under a different label.
+      if (path.relative(args.specDir, abs) && specDocs.includes(path.basename(abs))) continue;
+      const read = safeRead(abs, maxFile);
+      if (!read) continue;
+      const ok = append('EXISTING FILE', resolvedRel, read.content);
+      if (!ok) break; // budget exhausted
+    }
   }
 
   return {
@@ -154,4 +173,55 @@ function resolveInsideWorkspace(rel: string, root: string): string | null {
   const relFromRoot = path.relative(path.resolve(root), abs);
   if (relFromRoot.startsWith('..') || path.isAbsolute(relFromRoot)) return null;
   return abs;
+}
+
+/** Build a flat list of workspace-relative file paths (posix-separated). */
+export function buildWorkspaceIndex(root: string): string[] {
+  const out: string[] = [];
+  const stack: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }];
+  while (stack.length > 0 && out.length < MAX_WALK_FILES) {
+    const { dir, depth } = stack.pop()!;
+    if (depth > MAX_WALK_DEPTH) continue;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      if (SKIP_DIRS.has(e.name)) continue;
+      if (e.name.startsWith('.') && e.name !== '.github') continue;
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        stack.push({ dir: full, depth: depth + 1 });
+      } else if (e.isFile()) {
+        out.push(path.relative(root, full).replace(/\\/g, '/'));
+        if (out.length >= MAX_WALK_FILES) break;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Map a candidate path (possibly missing a module/directory prefix) to one or
+ * more real workspace-relative paths. Priority:
+ *   1. Exact match at the literal location.
+ *   2. Files whose path ENDS with the candidate (suffix match).
+ *   3. Otherwise empty — the candidate might be a file to create.
+ */
+export function resolveCandidate(candidate: string, root: string, index: string[]): string[] {
+  const normalized = candidate.replace(/\\/g, '/').replace(/^\.\//, '');
+  const literal = resolveInsideWorkspace(normalized, root);
+  if (literal) {
+    try {
+      if (fs.statSync(literal).isFile()) return [normalized];
+    } catch { /* fall through */ }
+  }
+  const matches = index.filter(
+    (rel) => rel === normalized || rel.endsWith('/' + normalized),
+  );
+  // Cap to a small number so a vague suffix like `config.json` doesn't flood
+  // context with unrelated files.
+  return matches.slice(0, 3);
 }

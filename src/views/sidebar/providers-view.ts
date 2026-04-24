@@ -31,6 +31,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
   ) {
     registry.onDidChangeActiveProvider(() => this.refresh());
     registry.onDidChangeProviders(() => this.refresh());
+    registry.onDidChangeHealth(() => this.refresh());
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -40,10 +41,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage(async (msg) => {
       switch (msg.command) {
         case 'selectActive':
-          if (this.registry.activeProvider?.id !== msg.id) {
-            await this.registry.setActive(msg.id);
-            this.refresh();
-          }
+          await this.activateWithHealthcheck(msg.id);
           break;
         case 'deleteProvider':
           await this.handleDelete(msg.id);
@@ -65,7 +63,24 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
           await this.handleSetModel(msg.id, msg.model);
           break;
         case 'renameProvider':
-          await this.handleRename(msg.id);
+          this.handleRename(msg.id);
+          break;
+        case 'saveName':
+          await this.handleSaveName(msg.id, msg.name);
+          break;
+        case 'editEndpoint':
+          this.editingState = { type: 'endpoint', providerId: msg.id };
+          this.refresh();
+          break;
+        case 'saveEndpoint':
+          await this.handleSaveEndpoint(msg.id, msg.endpoint);
+          break;
+        case 'editApiKey':
+          this.editingState = { type: 'apiKey', providerId: msg.id };
+          this.refresh();
+          break;
+        case 'saveApiKey':
+          await this.handleSaveApiKey(msg.id, msg.apiKey);
           break;
         case 'editAuth':
           log.debug('editAuth:', msg.id);
@@ -110,8 +125,47 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
 
   private providerErrors = new Map<string, string>();
 
+  private async activateWithHealthcheck(id: string): Promise<void> {
+    const provider = this.registry.get(id);
+    if (!provider) return;
+
+    this.registry.recordHealth(id, 'checking');
+
+    const ok = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Window,
+        title: `Caramelo: testing ${provider.displayName}…`,
+      },
+      async () => {
+        try {
+          await provider.authenticate();
+        } catch (err) {
+          log.debug(`authenticate failed for ${id}:`, err);
+          return false;
+        }
+        return provider.isAvailable();
+      },
+    );
+
+    if (ok) {
+      this.registry.recordHealth(id, 'ok');
+      await this.registry.setActive(id);
+    } else {
+      this.registry.recordHealth(id, 'fail', 'Healthcheck failed — endpoint, model or credentials rejected the test request');
+      vscode.window.showWarningMessage(
+        `✗ ${provider.displayName}: a test request did not complete. Check endpoint, model and credentials.`,
+        'Open Provider Settings',
+      ).then((choice) => {
+        if (choice === 'Open Provider Settings') {
+          vscode.commands.executeCommand('caramelo.providers.focus');
+        }
+      });
+    }
+    this.refresh();
+  }
+
   private editingState: {
-    type: 'model' | 'auth' | 'jira';
+    type: 'model' | 'auth' | 'jira' | 'name' | 'endpoint' | 'apiKey';
     providerId: string;
     models?: ModelInfo[] | null; // null = loading, [] = none found
   } | null = null;
@@ -157,7 +211,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     const vsConfig = vscode.workspace.getConfiguration();
     const existing = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
     existing.push(config);
-    await vsConfig.update(SETTINGS_KEYS.providers, existing, vscode.ConfigurationTarget.Workspace);
+    await vsConfig.update(SETTINGS_KEYS.providers, existing, vscode.ConfigurationTarget.Global);
 
     await this.registry.setActive(id);
     this.refresh();
@@ -173,7 +227,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     this.registry.unregister(id);
     const vsConfig = vscode.workspace.getConfiguration();
     const configs = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
-    await vsConfig.update(SETTINGS_KEYS.providers, configs.filter((c) => c.id !== id), vscode.ConfigurationTarget.Workspace);
+    await vsConfig.update(SETTINGS_KEYS.providers, configs.filter((c) => c.id !== id), vscode.ConfigurationTarget.Global);
     this.refresh();
   }
 
@@ -267,7 +321,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     const vsConfig = vscode.workspace.getConfiguration();
     const existing = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
     existing.push(config);
-    await vsConfig.update(SETTINGS_KEYS.providers, existing, vscode.ConfigurationTarget.Workspace);
+    await vsConfig.update(SETTINGS_KEYS.providers, existing, vscode.ConfigurationTarget.Global);
 
     this.refresh();
     vscode.window.showInformationMessage(`Jira provider "${name}" added.`);
@@ -313,7 +367,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     this.view?.webview.postMessage({ command: 'modelValidation', id, status: 'validating' });
 
     config.model = model;
-    await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Workspace);
+    await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Global);
 
     // Re-register with new model
     this.registry.unregister(id);
@@ -356,9 +410,11 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     if (valid) {
       await this.registry.setActive(id);
       this.providerErrors.delete(id);
+      this.registry.recordHealth(id, 'ok');
       vscode.window.showInformationMessage(`✓ Model "${model}" is working.`);
     } else {
       this.providerErrors.set(id, errorMsg || 'Model validation failed');
+      this.registry.recordHealth(id, 'fail', errorMsg || 'Model validation failed');
       vscode.window.showWarningMessage(`✗ Model "${model}": ${errorMsg || 'validation failed'}. Change model or check auth settings.`);
     }
 
@@ -366,34 +422,81 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     this.refresh();
   }
 
-  private async handleRename(id: string): Promise<void> {
+  private handleRename(id: string): void {
+    this.editingState = { type: 'name', providerId: id };
+    this.refresh();
+  }
+
+  private async handleSaveName(id: string, rawName: string): Promise<void> {
+    const newName = (rawName ?? '').trim();
+    const config = this.findConfig(id);
+    if (!config || !newName || newName === config.name) {
+      this.editingState = null;
+      this.refresh();
+      return;
+    }
+    await this.updateConfig(id, (c) => ({ ...c, name: newName }));
+    await this.rebuildProvider(id);
+    this.editingState = null;
+    this.refresh();
+  }
+
+  private async handleSaveEndpoint(id: string, rawEndpoint: string): Promise<void> {
+    const newEndpoint = (rawEndpoint ?? '').trim();
+    const config = this.findConfig(id);
+    if (!config || !newEndpoint || newEndpoint === config.endpoint) {
+      this.editingState = null;
+      this.refresh();
+      return;
+    }
+    await this.updateConfig(id, (c) => ({ ...c, endpoint: newEndpoint }));
+    await this.rebuildProvider(id);
+    this.editingState = null;
+    this.refresh();
+  }
+
+  private async handleSaveApiKey(id: string, rawKey: string): Promise<void> {
+    const newKey = (rawKey ?? '').trim();
+    if (!newKey) {
+      this.editingState = null;
+      this.refresh();
+      return;
+    }
+    await this.secrets.store(`caramelo.provider.${id}.apiKey`, newKey);
+    await this.rebuildProvider(id);
+    this.editingState = null;
+    this.refresh();
+  }
+
+  private findConfig(id: string): ProviderConfig | undefined {
+    const configs = vscode.workspace.getConfiguration().get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
+    return configs.find((c) => c.id === id);
+  }
+
+  private async updateConfig(id: string, mutate: (c: ProviderConfig) => ProviderConfig): Promise<void> {
     const vsConfig = vscode.workspace.getConfiguration();
     const configs = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
-    const config = configs.find((c) => c.id === id);
+    const idx = configs.findIndex((c) => c.id === id);
+    if (idx < 0) return;
+    configs[idx] = mutate(configs[idx]);
+    await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Global);
+  }
+
+  private async rebuildProvider(id: string): Promise<void> {
+    const config = this.findConfig(id);
     if (!config) return;
-
-    const newName = await vscode.window.showInputBox({
-      prompt: 'Provider name',
-      value: config.name,
-    });
-    if (!newName || newName === config.name) return;
-
-    config.name = newName;
-    await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Workspace);
-
-    // Re-register with new name
     this.registry.unregister(id);
+    const apiKeyId = `caramelo.provider.${id}.apiKey`;
     let provider: import('../../providers/types.js').LLMProvider;
     if (config.type === 'copilot') {
-      provider = new CopilotProvider(id, newName, config.model);
+      provider = new CopilotProvider(id, config.name, config.model);
     } else if (config.type === 'anthropic') {
-      provider = new ClaudeProvider({ ...config, apiKeyId: `caramelo.provider.${id}.apiKey` }, this.secrets);
+      provider = new ClaudeProvider({ ...config, apiKeyId }, this.secrets);
     } else {
-      provider = new OpenAICompatibleProvider({ ...config, apiKeyId: `caramelo.provider.${id}.apiKey` }, this.secrets);
+      provider = new OpenAICompatibleProvider({ ...config, apiKeyId }, this.secrets);
     }
-    await provider.authenticate().catch(() => {});
+    await provider.authenticate().catch((err) => log.debug(`authenticate failed for ${id}:`, err));
     this.registry.register(provider);
-    this.refresh();
   }
 
   private handleEditAuth(id: string): void {
@@ -409,7 +512,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
 
     config.authHeader = msg.authHeader || undefined;
     config.authPrefix = msg.authPrefix || undefined;
-    await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Workspace);
+    await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Global);
 
     // Re-register provider with new auth
     this.registry.unregister(msg.id);
@@ -439,7 +542,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     config.endpoint = msg.instanceUrl;
     config.email = msg.email;
     config.boardName = msg.boardName;
-    await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Workspace);
+    await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Global);
 
     this.editingState = null;
     this.refresh();
@@ -510,15 +613,70 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     const providersHtml = providers.map((p) => {
       const config = configs.find((c) => c.id === p.id);
       const isActive = p.id === activeId;
-      const error = this.providerErrors.get(p.id);
+      const health = this.registry.getHealth(p.id);
+      const setupError = this.providerErrors.get(p.id);
+      const error = setupError ?? (health.status === 'fail' ? health.error : undefined);
+
+      // Dot colour: gray (inactive), green (active+ok), red (active+fail or any
+      // setup error), amber (active+unknown/checking — never tested or in-flight).
+      let dotClass = '';
+      let dotTitle = 'Click to validate and set as active';
+      if (setupError || health.status === 'fail') {
+        dotClass = 'error';
+        dotTitle = setupError ?? 'Last health check failed — click to retry';
+      } else if (health.status === 'checking') {
+        dotClass = 'checking';
+        dotTitle = 'Testing…';
+      } else if (isActive && health.status === 'ok') {
+        dotClass = 'on';
+        dotTitle = 'Active and healthy — click to re-test';
+      } else if (isActive) {
+        dotClass = 'warn';
+        dotTitle = 'Active but never tested — click to run a healthcheck';
+      }
+
       return `<div class="provider-item ${isActive ? 'active' : ''} ${error ? 'has-error' : ''}">
         <div class="provider-main">
-          <span class="provider-dot ${isActive ? 'on' : ''} ${error ? 'error' : ''}" onclick="msg('selectActive',{id:'${p.id}'})" title="Click to set as active" style="cursor:pointer"></span>
+          <span class="provider-dot ${dotClass}" onclick="msg('selectActive',{id:'${p.id}'})" title="${esc(dotTitle)}" style="cursor:pointer"></span>
           <div class="provider-info">
-            <span class="provider-name" onclick="event.stopPropagation(); msg('renameProvider',{id:'${p.id}'})" title="Click to rename">${esc(p.displayName)}</span>
+            ${this.editingState?.type === 'name' && this.editingState.providerId === p.id
+              ? `<input class="input" id="editName-${p.id}" value="${esc(p.displayName)}" placeholder="Provider name" autofocus
+                   onkeydown="if(event.key==='Enter'){msg('saveName',{id:'${p.id}',name:this.value});}else if(event.key==='Escape'){msg('cancelEdit');}"
+                   onload="this.select()" />
+                 <div style="display:flex;gap:4px;margin:2px 0">
+                   <button class="phase-btn approve" style="font-size:0.75em;padding:2px 8px"
+                     onclick="msg('saveName',{id:'${p.id}',name:document.getElementById('editName-${p.id}').value})">Save</button>
+                   <button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px"
+                     onclick="msg('cancelEdit')">Cancel</button>
+                 </div>`
+              : `<span class="provider-name" onclick="event.stopPropagation(); msg('renameProvider',{id:'${p.id}'})" title="Click to rename">${esc(p.displayName)}</span>`}
             ${this.editingState?.type === 'model' && this.editingState.providerId === p.id
               ? this.renderModelEditor(p.id, config?.model ?? '', this.editingState.models)
               : `<span class="provider-model" id="model-${p.id}" onclick="msg('changeModel',{id:'${p.id}'})" title="Click to change model">${esc(config?.model ?? '')}</span>`}
+            ${config && config.type !== 'copilot' ? (
+              this.editingState?.type === 'endpoint' && this.editingState.providerId === p.id
+                ? `<input class="input" style="font-size:0.8em;margin:2px 0" id="editEndpoint-${p.id}" value="${esc(config.endpoint)}" placeholder="Endpoint URL" autofocus
+                     onkeydown="if(event.key==='Enter'){msg('saveEndpoint',{id:'${p.id}',endpoint:this.value});}else if(event.key==='Escape'){msg('cancelEdit');}" />
+                   <div style="display:flex;gap:4px;margin:2px 0">
+                     <button class="phase-btn approve" style="font-size:0.75em;padding:2px 8px"
+                       onclick="msg('saveEndpoint',{id:'${p.id}',endpoint:document.getElementById('editEndpoint-${p.id}').value})">Save</button>
+                     <button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px"
+                       onclick="msg('cancelEdit')">Cancel</button>
+                   </div>`
+                : `<span class="provider-endpoint" onclick="msg('editEndpoint',{id:'${p.id}'})" title="Click to edit endpoint URL">${esc(truncateUrl(config.endpoint))}</span>`
+            ) : ''}
+            ${config && config.type !== 'copilot' ? (
+              this.editingState?.type === 'apiKey' && this.editingState.providerId === p.id
+                ? `<input class="input" type="password" style="font-size:0.8em;margin:2px 0" id="editApiKey-${p.id}" placeholder="API key (paste new value to replace)" autofocus
+                     onkeydown="if(event.key==='Enter'){msg('saveApiKey',{id:'${p.id}',apiKey:this.value});}else if(event.key==='Escape'){msg('cancelEdit');}" />
+                   <div style="display:flex;gap:4px;margin:2px 0">
+                     <button class="phase-btn approve" style="font-size:0.75em;padding:2px 8px"
+                       onclick="msg('saveApiKey',{id:'${p.id}',apiKey:document.getElementById('editApiKey-${p.id}').value})">Save</button>
+                     <button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px"
+                       onclick="msg('cancelEdit')">Cancel</button>
+                   </div>`
+                : `<span class="provider-key" onclick="msg('editApiKey',{id:'${p.id}'})" title="Click to set or replace the API key (stored in SecretStorage)">key: ●●●●  <em style="opacity:0.6">(click to replace)</em></span>`
+            ) : ''}
             ${this.editingState?.type === 'auth' && this.editingState.providerId === p.id
               ? `<input class="input" style="font-size:0.8em;margin:2px 0" id="editAuthHeader-${p.id}" value="${esc(config?.authHeader ?? (config?.type === 'anthropic' ? 'x-api-key' : 'Authorization'))}" placeholder="Header name (e.g. Authorization)" />
                  <input class="input" style="font-size:0.8em;margin:2px 0" id="editAuthPrefix-${p.id}" value="${esc(config?.authPrefix ?? (config?.type === 'anthropic' ? '' : 'Bearer'))}" placeholder="Prefix (e.g. Bearer)" />
@@ -627,6 +785,11 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
 
 function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+}
+
+function truncateUrl(url: string, max = 36): string {
+  if (url.length <= max) return url;
+  return url.slice(0, max - 1) + '…';
 }
 
 const SCRIPT = (addingPresetIndex?: number) => `<script>
@@ -868,7 +1031,10 @@ body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); 
 .provider-main { display: flex; align-items: center; gap: 6px; }
 .provider-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--vscode-descriptionForeground); opacity: 0.3; flex-shrink: 0; }
 .provider-dot.on { background: #4CAF50; opacity: 1; box-shadow: 0 0 4px rgba(76,175,80,0.5); }
+.provider-dot.warn { background: #f9a825; opacity: 1; box-shadow: 0 0 4px rgba(249,168,37,0.5); }
 .provider-dot.error { background: #f44336; opacity: 1; box-shadow: 0 0 4px rgba(244,67,54,0.5); }
+.provider-dot.checking { background: var(--vscode-descriptionForeground); opacity: 1; animation: caramelo-pulse 1s ease-in-out infinite; }
+@keyframes caramelo-pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
 .provider-item.has-error { border-left-color: #f44336; }
 .provider-error { font-size: 0.75em; color: #f44336; padding: 2px 8px 0 20px; }
 .provider-icon { font-size: 1em; flex-shrink: 0; }
@@ -887,6 +1053,16 @@ body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); 
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;
 }
 .provider-model:hover { color: var(--vscode-textLink-foreground); text-decoration: underline; }
+.provider-endpoint {
+  display: block; font-size: 0.72em; color: var(--vscode-descriptionForeground); opacity: 0.7;
+  cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.provider-endpoint:hover { opacity: 1; color: var(--vscode-textLink-foreground); }
+.provider-key {
+  display: block; font-size: 0.7em; color: var(--vscode-descriptionForeground); opacity: 0.6;
+  cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.provider-key:hover { opacity: 1; color: var(--vscode-textLink-foreground); }
 .provider-delete {
   background: none; border: none; color: var(--vscode-descriptionForeground); cursor: pointer;
   font-size: 1.2em; padding: 0 2px; opacity: 0; transition: opacity 0.15s;

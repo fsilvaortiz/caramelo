@@ -142,7 +142,7 @@ async function addProvider(
   const vsConfig = vscode.workspace.getConfiguration();
   const existing = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
   existing.push(config);
-  await vsConfig.update(SETTINGS_KEYS.providers, existing, vscode.ConfigurationTarget.Workspace);
+  await vsConfig.update(SETTINGS_KEYS.providers, existing, vscode.ConfigurationTarget.Global);
 
   await registry.setActive(id);
   vscode.window.showInformationMessage(`Provider "${name}" added and set as active.`);
@@ -189,7 +189,7 @@ export async function editProvider(
 
   const key = field.label.toLowerCase() as 'name' | 'endpoint' | 'model';
   config[key] = newValue;
-  await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Workspace);
+  await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Global);
 
   // Re-register provider with new config
   registry.unregister(providerId);
@@ -222,7 +222,7 @@ export async function deleteProvider(
   const vsConfig = vscode.workspace.getConfiguration();
   const configs = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
   const updated = configs.filter((c) => c.id !== providerId);
-  await vsConfig.update(SETTINGS_KEYS.providers, updated, vscode.ConfigurationTarget.Workspace);
+  await vsConfig.update(SETTINGS_KEYS.providers, updated, vscode.ConfigurationTarget.Global);
 
   vscode.window.showInformationMessage(`Provider deleted.`);
 }
@@ -324,7 +324,7 @@ async function addJiraProvider(
   const vsConfig = vscode.workspace.getConfiguration();
   const existing = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
   existing.push(config);
-  await vsConfig.update(SETTINGS_KEYS.providers, existing, vscode.ConfigurationTarget.Workspace);
+  await vsConfig.update(SETTINGS_KEYS.providers, existing, vscode.ConfigurationTarget.Global);
 
   // Note: Jira providers are not LLM providers — they don't go in the ProviderRegistry
   // They're handled separately by the Jira spec creation flow

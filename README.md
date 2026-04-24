@@ -91,7 +91,7 @@ Search for **"Caramelo"** in the Extensions panel, or install from the [Marketpl
 ### From VSIX
 
 ```bash
-code --install-extension caramelo-0.0.9.vsix
+code --install-extension caramelo-0.0.10.vsix
 ```
 
 ### From Source
@@ -220,6 +220,24 @@ Setting it below 5000 ms is ignored — the default is used.
 ### "401" / "403" on generate
 
 The provider rejected your API key. Open the Providers panel, click the auth field next to the provider, and paste a fresh key. Keys are stored in VS Code SecretStorage, not `settings.json`. For corporate proxies, also verify `authHeader` / `authPrefix` match what your gateway expects.
+
+### The provider dot is green but generations fail
+
+Since v0.0.10 the dot reflects the result of a real one-token streaming ping, not just whether you clicked it. If a previously green dot turns red, click it again to re-test — the Caramelo output channel and the warning notification will say what failed (auth, model not found, timeout, network).
+
+Dot legend:
+
+| Colour | Meaning |
+|--------|---------|
+| Gray | Provider configured but inactive |
+| Amber (steady) | Active, never tested in this session |
+| Amber (pulsing) | Healthcheck in progress |
+| Green | Active and last ping returned tokens |
+| Red | Active but the last ping failed — click to retry |
+
+### My providers disappeared when I opened a different folder
+
+Up to v0.0.9 `caramelo.providers` and `caramelo.activeProvider` were stored per workspace. From v0.0.10 they live in User Settings, and the extension migrates them once on startup. If you preferred per-workspace overrides, you can still set them in `.vscode/settings.json` — VS Code's normal scope precedence applies.
 
 ### "Connection error" or "Auth failed" when adding a Jira provider
 

@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.0.10] - 2026-04-18
+
+### Fixed (critical)
+
+- **Provider dot now reflects real connectivity, not "I clicked it"**. Up to v0.0.9, clicking a provider only called `setActive(id)` and the dot turned green regardless of whether the endpoint, model or credentials worked. Activating a provider now runs a one-token streaming `chat()` ping inside `vscode.window.withProgress`; the dot only goes green if tokens come back. On failure the provider is left inactive, the dot turns red, and a warning notification surfaces the cause (auth, model not found, timeout, network).
+- **`isAvailable()` actually exercises chat()**. Before, Claude treated HTTP 400 as "valid" (so a wrong model lit the dot green) and OpenAI-compatible only hit `GET /models` (Ollama returns 200 even when the model isn't pulled, and corporate proxies often expose `/models` without exposing `/chat/completions`). Both providers now use a 1-token streaming generation as the health check, capped by `AbortSignal.timeout(15s)`.
+- **Provider list survives opening a new window**. `caramelo.providers` and `caramelo.activeProvider` were written to `ConfigurationTarget.Workspace` from 13 call sites, so opening a different folder wiped the list. They are now stored in `Global` scope. A one-shot migration runs on startup that lifts existing Workspace values to Global only when Global is empty (never overwrites a populated Global), then clears the Workspace entry. Per-workspace overrides via `.vscode/settings.json` still work — VS Code's normal scope precedence applies.
+
+### Added
+
+- **Three-state health on the provider dot** with a pulsing amber while a healthcheck is in flight: gray (inactive), amber steady (active but never tested), amber pulsing (checking…), green (active + last ping ok), red (active + last ping failed or setup error). Hover tooltip explains each state.
+- **`HealthStatus` / `HealthState`** plus `getHealth(id)`, `recordHealth(id, status, error?)` and `onDidChangeHealth` event on `ProviderRegistry`. `handleSetModel` now records into the same channel as `activateWithHealthcheck` so the validation it already does shows up on the dot.
+- **`utils/migrate-providers.ts`** + 9 new tests (5 for the registry health surface, 4 for the migration). Total Vitest suite now 102 passing across 13 files.
+
+### Changed
+
+- README troubleshooting section: new "The provider dot is green but generations fail" entry with a colour legend, and "My providers disappeared when I opened a different folder" explaining the Global-scope move.
+
 ## [0.0.9] - 2026-04-18
 
 ### Fixed (critical)

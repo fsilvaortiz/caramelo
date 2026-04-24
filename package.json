@@ -2,7 +2,7 @@
   "name": "caramelo",
   "displayName": "Caramelo",
   "description": "Visual spec-driven development extension, LLM-agnostic, compatible with GitHub Spec Kit",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "publisher": "fsilvaortiz",
   "license": "MIT",
   "icon": "resources/icons/caramelo-logo.png",
@@ -316,6 +316,11 @@
           "default": 300000,
           "minimum": 5000,
           "description": "Maximum time (ms) to wait for a single chunk of streaming output from the LLM before aborting. Raise this if you run slow local models."
+        },
+        "caramelo.tasks.allowWithoutGit": {
+          "type": "boolean",
+          "default": false,
+          "description": "Skip the 'no backup available' confirmation when running tasks in workspaces that are not git repositories. Leave false for safety; enable it only when you intentionally use Caramelo in non-versioned folders."
         },
         "caramelo.autoApplyEdits": {
           "type": "boolean",
