@@ -25,7 +25,7 @@ function ensureRegistered(context?: vscode.ExtensionContext): void {
   registered = true;
 }
 
-export type ConfirmChoice = 'apply-all' | 'file-by-file' | 'cancel';
+export type ConfirmChoice = 'apply-all' | 'apply-all-session' | 'file-by-file' | 'cancel';
 
 export interface PreviewOptions {
   context?: vscode.ExtensionContext;
@@ -44,6 +44,11 @@ export async function confirmApplyChoice(count: number, taskText?: string): Prom
         value: 'apply-all' as const,
       },
       {
+        label: '$(check-all) Apply all — don\'t ask again this session',
+        description: 'Auto-apply every subsequent task until you reload the window',
+        value: 'apply-all-session' as const,
+      },
+      {
         label: '$(eye) Review file-by-file',
         description: 'Open a diff for each file before applying it',
         value: 'file-by-file' as const,
@@ -54,7 +59,9 @@ export async function confirmApplyChoice(count: number, taskText?: string): Prom
         value: 'cancel' as const,
       },
     ],
-    { placeHolder: `${label} — ${count} edit(s). How do you want to proceed?` },
+    {
+      placeHolder: `${label} — ${count} edit(s). Tip: set caramelo.autoApplyEdits:true to skip permanently.`,
+    },
   );
   return pick?.value ?? 'cancel';
 }

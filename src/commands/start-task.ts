@@ -42,8 +42,22 @@ const interactiveLock = new AsyncMutex();
  */
 let sessionAllowNoGit = false;
 
+/**
+ * Per-session dismissal of the Apply/Review QuickPick. Set when the user
+ * clicks "Apply all — don't ask again this session". Resets on reload.
+ * The permanent switch is `caramelo.autoApplyEdits`.
+ */
+let sessionAutoApply = false;
+
 function isAllowWithoutGitEnabled(): boolean {
   return vscode.workspace.getConfiguration().get<boolean>('caramelo.tasks.allowWithoutGit', false);
+}
+
+function isAutoApplyEnabled(): boolean {
+  return (
+    sessionAutoApply ||
+    vscode.workspace.getConfiguration().get<boolean>('caramelo.autoApplyEdits', false)
+  );
 }
 
 export async function startTask(
@@ -183,13 +197,16 @@ export async function startTask(
     // against the same file. The LLM stream above ran outside the lock so
     // we still get parallel throughput on `chat()`.
     await interactiveLock.run(async () => {
-      const auto = vscode.workspace.getConfiguration().get<boolean>('caramelo.autoApplyEdits') === true;
       let toApply = edits;
-      if (!auto) {
+      if (!isAutoApplyEnabled()) {
         const choice = await confirmApplyChoice(edits.length, taskText);
         if (choice === 'cancel') {
           channel.appendLine('✗ Task cancelled by user at review step.');
           return;
+        }
+        if (choice === 'apply-all-session') {
+          sessionAutoApply = true;
+          channel.appendLine('↪ Auto-apply enabled for this session.');
         }
         if (choice === 'file-by-file') {
           const accepted = [];
