@@ -170,29 +170,36 @@ function resolveHooks(
   };
 }
 
+const APPLY_ALL = 'Apply all';
+const APPLY_ALL_SESSION = "Don't ask again this session";
+const CANCEL_RUN = 'Cancel run';
+
 function defaultConfirmWrites(opts: {
   setSessionAutoApply(v: boolean): void;
 }): ApprovalHooks['confirmWrites'] {
   return async (writes) => {
-    const paths = writes.map((w) => describeWrite(w)).join('\n');
-    const pick = await vscode.window.showQuickPick(
-      [
-        { label: '$(check) Apply all', description: `${writes.length} change(s)`, value: 'apply-all' as const },
-        {
-          label: "$(check-all) Apply all — don't ask again this session",
-          description: 'Auto-apply subsequent write tools until reload',
-          value: 'apply-all-session' as const,
-        },
-        { label: '$(x) Cancel run', description: 'Abort the agent run', value: 'cancel' as const },
-      ],
+    // Modal dialog (centered) rather than a top-bar QuickPick — user
+    // feedback: top-bar QuickPicks feel like the command palette and
+    // clash with the extension's "inline UX" preference. The modal also
+    // matches the bash-approval shape, so the approval surface is
+    // consistent across tool categories.
+    const detail = writes.map((w) => `• ${describeWrite(w)}`).join('\n');
+    const choice = await vscode.window.showInformationMessage(
+      `Caramelo agent proposes ${writes.length} write${writes.length === 1 ? '' : 's'}`,
       {
-        placeHolder: `Caramelo agent: ${writes.length} write(s) proposed\n${paths}`,
+        modal: true,
+        detail:
+          `${detail}\n\n` +
+          `Tip: set caramelo.autoApplyEdits=true to skip this prompt permanently.`,
       },
+      APPLY_ALL,
+      APPLY_ALL_SESSION,
+      CANCEL_RUN,
     );
-    if (!pick || pick.value === 'cancel') {
+    if (!choice || choice === CANCEL_RUN) {
       return Object.fromEntries(writes.map((w) => [w.call.id, 'abort'] as const));
     }
-    if (pick.value === 'apply-all-session') opts.setSessionAutoApply(true);
+    if (choice === APPLY_ALL_SESSION) opts.setSessionAutoApply(true);
     return Object.fromEntries(writes.map((w) => [w.call.id, 'allow'] as const));
   };
 }

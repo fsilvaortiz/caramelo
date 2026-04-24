@@ -135,16 +135,17 @@ describe('readOnlyAutoBatchedWritesPolicy', () => {
     expect(out.e).toBe('deny');
   });
 
-  it('calls setSessionAutoApply when batched prompt is fed by the default', async () => {
-    // We exercise the default confirmWrites via the vscode mock; vscode
-    // stub returns undefined from showQuickPick → 'abort' mapping.
+  it('aborts when the default modal dialog is dismissed', async () => {
+    // The default `confirmWrites` opens a modal via
+    // `vscode.window.showInformationMessage({modal:true}, …)`. The vscode
+    // test stub returns `undefined` for any show*Message, which the hook
+    // treats as "dialog dismissed" → abort.
     const setSessionAutoApply = vi.fn();
     const policy = readOnlyAutoBatchedWritesPolicy({
       isAutoApplyEnabled: () => false,
       setSessionAutoApply,
     });
     const out = await policy.decide([call('e', editTool, { path: 'a', search: 'x', replace: 'y' })], ctx);
-    // Default QuickPick mock returns undefined → aborts.
     expect(out.e).toBe('abort');
     expect(setSessionAutoApply).not.toHaveBeenCalled();
   });
