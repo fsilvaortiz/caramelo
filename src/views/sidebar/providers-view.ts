@@ -63,7 +63,10 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
           await this.handleSetModel(msg.id, msg.model);
           break;
         case 'renameProvider':
-          await this.handleRename(msg.id);
+          this.handleRename(msg.id);
+          break;
+        case 'saveName':
+          await this.handleSaveName(msg.id, msg.name);
           break;
         case 'editAuth':
           log.debug('editAuth:', msg.id);
@@ -148,7 +151,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
   }
 
   private editingState: {
-    type: 'model' | 'auth' | 'jira';
+    type: 'model' | 'auth' | 'jira' | 'name';
     providerId: string;
     models?: ModelInfo[] | null; // null = loading, [] = none found
   } | null = null;
@@ -405,22 +408,31 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     this.refresh();
   }
 
-  private async handleRename(id: string): Promise<void> {
+  private handleRename(id: string): void {
+    this.editingState = { type: 'name', providerId: id };
+    this.refresh();
+  }
+
+  private async handleSaveName(id: string, rawName: string): Promise<void> {
+    const newName = (rawName ?? '').trim();
     const vsConfig = vscode.workspace.getConfiguration();
     const configs = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
     const config = configs.find((c) => c.id === id);
-    if (!config) return;
-
-    const newName = await vscode.window.showInputBox({
-      prompt: 'Provider name',
-      value: config.name,
-    });
-    if (!newName || newName === config.name) return;
+    if (!config) {
+      this.editingState = null;
+      this.refresh();
+      return;
+    }
+    if (!newName || newName === config.name) {
+      this.editingState = null;
+      this.refresh();
+      return;
+    }
 
     config.name = newName;
     await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Global);
 
-    // Re-register with new name
+    // Re-register with the new display name. Health is preserved via re-check on demand.
     this.registry.unregister(id);
     let provider: import('../../providers/types.js').LLMProvider;
     if (config.type === 'copilot') {
@@ -430,8 +442,10 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     } else {
       provider = new OpenAICompatibleProvider({ ...config, apiKeyId: `caramelo.provider.${id}.apiKey` }, this.secrets);
     }
-    await provider.authenticate().catch(() => {});
+    await provider.authenticate().catch((err) => log.debug(`authenticate failed for ${id}:`, err));
     this.registry.register(provider);
+
+    this.editingState = null;
     this.refresh();
   }
 
@@ -575,7 +589,17 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
         <div class="provider-main">
           <span class="provider-dot ${dotClass}" onclick="msg('selectActive',{id:'${p.id}'})" title="${esc(dotTitle)}" style="cursor:pointer"></span>
           <div class="provider-info">
-            <span class="provider-name" onclick="event.stopPropagation(); msg('renameProvider',{id:'${p.id}'})" title="Click to rename">${esc(p.displayName)}</span>
+            ${this.editingState?.type === 'name' && this.editingState.providerId === p.id
+              ? `<input class="input" id="editName-${p.id}" value="${esc(p.displayName)}" placeholder="Provider name" autofocus
+                   onkeydown="if(event.key==='Enter'){msg('saveName',{id:'${p.id}',name:this.value});}else if(event.key==='Escape'){msg('cancelEdit');}"
+                   onload="this.select()" />
+                 <div style="display:flex;gap:4px;margin:2px 0">
+                   <button class="phase-btn approve" style="font-size:0.75em;padding:2px 8px"
+                     onclick="msg('saveName',{id:'${p.id}',name:document.getElementById('editName-${p.id}').value})">Save</button>
+                   <button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px"
+                     onclick="msg('cancelEdit')">Cancel</button>
+                 </div>`
+              : `<span class="provider-name" onclick="event.stopPropagation(); msg('renameProvider',{id:'${p.id}'})" title="Click to rename">${esc(p.displayName)}</span>`}
             ${this.editingState?.type === 'model' && this.editingState.providerId === p.id
               ? this.renderModelEditor(p.id, config?.model ?? '', this.editingState.models)
               : `<span class="provider-model" id="model-${p.id}" onclick="msg('changeModel',{id:'${p.id}'})" title="Click to change model">${esc(config?.model ?? '')}</span>`}
