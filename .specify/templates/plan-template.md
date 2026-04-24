@@ -31,7 +31,55 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+Derived from `.specify/memory/constitution.md` v1.0.0. Mark each gate
+PASS / FAIL / N/A with a one-line justification. Any FAIL must be
+resolved in design or recorded in `Complexity Tracking` below with a
+rejected simpler alternative.
+
+- [ ] **I. LLM-Agnostic by Adapter Invariants** — No new vendor SDK
+      dependency; any new provider-facing code routes through
+      `LLMProvider` (`src/providers/types.ts`) and preserves the four
+      invariants (redacting transport, abortable per-chunk-timeout
+      streaming, `authHeader` / `authPrefix` pass-through, bundle
+      budget).
+- [ ] **II. Inline Visual UX** — User-facing actions surface inline
+      (sidebar webview, CodeLens, editor menu); no new `QuickPick` or
+      `InputBox` for provider management; long-running work reports via
+      status bar progress, not modal notifications.
+- [ ] **III. Secrets Stay Secret** — Any new credential is stored in
+      `SecretStorage`; no secrets written to settings, specs,
+      `.caramelo-meta.json`, or logs; every new log site goes through
+      the redacting logger; tool-call I/O is redacted before hitting
+      the Output Channel.
+- [ ] **IV. Spec Kit Compatibility** — On-disk layout under `specs/`
+      follows Spec Kit (`spec.md`, `plan.md`, `tasks.md`, …); Caramelo-
+      only state stays in `.caramelo-meta.json`; bundled offline
+      fallback still works; schema changes are backward-compatible or
+      ship a migration.
+- [ ] **V. Tested, Typed, Linted** — Non-trivial modules have Vitest
+      coverage under `src/**/__tests__/`; `npm test && npm run lint`
+      and `npx tsc --noEmit` are expected to pass in CI; public
+      exports at package boundaries are fully typed.
+- [ ] **VI. Extensible Abstraction via Capabilities** — New vendor
+      features are exposed through the capability set; no new
+      `provider.type === '…'` dispatch in business logic; absent
+      capabilities degrade gracefully (affordance hidden, fallback
+      taken, or user-actionable failure).
+- [ ] **VII. Tool Calling as First-Class** — New agent tools are
+      declared in the typed registry with JSON schema, runtime
+      validation, and Vitest coverage; approval policy respects
+      `caramelo.agent.approval`; non-tool-calling providers degrade to
+      the legacy protocol with explicit user feedback.
+- [ ] **VIII. Recoverable by Default** — Destructive operations go
+      through the git-safety stash when the workspace is a git repo;
+      non-git workspaces prompt unless
+      `caramelo.tasks.allowWithoutGit`; tool calls respect the
+      workspace-root boundary; untrusted workspaces block LLM
+      execution.
+- [ ] **IX. Traceable Generation** — Prompt composition, streamed
+      output, and tool-call I/O are observable in the Output Channel;
+      errors surface user-actionable messages naming cause and
+      remedy; context assembly is deterministic given the same inputs.
 
 ## Project Structure
 
