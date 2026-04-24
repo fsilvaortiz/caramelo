@@ -3,10 +3,12 @@ import { redactString } from '../utils/log.js';
 import type { AgentEvent } from './types.js';
 
 /**
- * One-line prologue written to the Output Channel at the start of an agent
- * run. Per Constitution IX: every run MUST log the active provider, model,
- * capability set, and the context composition — all redacted. This lives
- * alongside `formatEvent` so the same redactor covers both.
+ * One-line prologue written to the Output Channel at the start of an
+ * agent run. Answers "what did the LLM see?" from the channel alone —
+ * the user never has to attach a debugger to know which provider/model
+ * ran, which capabilities were declared, or which tools were exposed.
+ * Every field passes through `redactString` so leaked credentials in
+ * a model id or provider name don't land in the log.
  */
 export interface AgentRunPrologue {
   providerId: string;
@@ -35,8 +37,9 @@ export function formatPrologue(p: AgentRunPrologue): string {
  * Format an AgentEvent as a line for the Caramelo output channel. One place
  * so every command that drives the agent (/start-task today, /plan and
  * /tasks later) shows identical, scannable output. Every string that could
- * carry user/model-supplied content passes through `redactString` first —
- * Constitution III forbids raw credentials in the Output Channel.
+ * carry user/model-supplied content passes through `redactString` first so
+ * raw `Bearer` / `Authorization` / URL credentials can never land in the
+ * Output Channel — even if a tool result or file read returns them.
  */
 export function formatEvent(event: AgentEvent): string | null {
   switch (event.kind) {

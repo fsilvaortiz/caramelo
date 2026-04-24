@@ -16,10 +16,11 @@ export interface LLMOptions {
 }
 
 /**
- * Capability tags a provider may advertise. Constitution VI mandates that
- * runtime code branches on **capabilities**, never on provider type
- * strings. Add new tags here as providers gain features; every tag MUST
- * have graceful-degradation behaviour elsewhere in the codebase.
+ * Capability tags a provider may advertise. Runtime code branches on
+ * **capabilities**, never on provider type strings — adding a new vendor
+ * must not require teaching every call site about the vendor's class.
+ * Add new tags here as providers gain features; every tag MUST have
+ * graceful-degradation behaviour elsewhere in the codebase.
  */
 export type Capability =
   | 'streaming'

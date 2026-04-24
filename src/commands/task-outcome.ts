@@ -3,44 +3,45 @@ import type { AgentResult } from '../agent/types.js';
 /**
  * Pure decision about what a terminated agent run means for the `tasks.md`
  * checkbox and the user-visible outcome. Extracted so the contract is
- * unit-testable without booting the full `startTask` stack.
- *
- * A regression that marks `max_iterations` or `error` as `complete` would
- * silently corrupt `tasks.md`, so this function is the canonical source
- * of truth for "did the task succeed?".
+ * unit-testable without booting the full `startTask` stack. A regression
+ * that marks `max_iterations` or `error` as complete would silently
+ * corrupt `tasks.md` — the discriminated shape below prevents that at
+ * the type level: `markComplete: true` is ONLY representable on
+ * `kind: 'success'`.
  */
 
 export type TaskOutcomeKind =
-  | 'success'                  // mark the task checkbox; informational toast
-  | 'cancelled'                // user hit cancel; no toast
-  | 'aborted_by_user'          // user picked "Abort run" at approval; no toast
-  | 'max_iterations_hit'       // agent didn't finish in time; warning toast
-  | 'runtime_error'            // runtime threw or provider gave up; error toast
-  | 'no_action'                // agent stopped without calling any tool
-  | 'finished_with_errors';    // agent finished but ≥1 tool call returned is_error
+  | 'success'
+  | 'cancelled'
+  | 'aborted_by_user'
+  | 'max_iterations_hit'
+  | 'runtime_error'
+  | 'no_action'
+  | 'finished_with_errors';
 
-export interface TaskOutcome {
-  kind: TaskOutcomeKind;
-  /** Line written to the Output Channel. */
-  channelLine: string;
-  /**
-   * Severity + text for the VS Code toast. `null` means "silent" —
-   * cancellations/user-aborts don't toast because the user performed the
-   * action themselves.
-   */
-  toast:
-    | { severity: 'info' | 'warning' | 'error'; message: string }
-    | null;
-  /** Whether `markTaskComplete` should be invoked. */
-  markComplete: boolean;
-}
+export type ToastSeverity = 'info' | 'warning' | 'error';
+export type Toast = { severity: ToastSeverity; message: string };
+
+export type TaskOutcome =
+  | {
+      kind: 'success';
+      channelLine: string;
+      toast: Toast;
+      markComplete: true;
+    }
+  | {
+      kind: Exclude<TaskOutcomeKind, 'success'>;
+      channelLine: string;
+      toast: Toast | null;
+      markComplete: false;
+    };
 
 /**
  * Success is narrowly defined: the agent stopped cleanly
  * (`stopReason === 'stop'`), made at least one tool call, and every tool
- * call succeeded. max-iterations / error / cancelled / tool-error states
- * all fall through to a non-success outcome that does NOT mark the task
- * checkbox, regardless of how many edits landed on disk.
+ * call succeeded. Everything else falls through to a non-success outcome
+ * whose type literally forbids `markComplete: true`, regardless of how
+ * many edits landed on disk.
  */
 export function decideTaskOutcome(
   result: AgentResult,

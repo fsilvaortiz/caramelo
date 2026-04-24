@@ -136,8 +136,8 @@ export class OpenAICompatibleProvider implements LLMProvider {
     const caps = new Set<Capability>(['streaming']);
     // tool-calling advertises when either (a) an API key is loaded, or
     // (b) no key is needed (local endpoints like Ollama/LM Studio). The
-    // actual endpoint may still refuse tool_calls; an error then surfaces
-    // via the runtime's fallback-notification path (FR-009).
+    // actual endpoint may still refuse tool_calls; an error then
+    // surfaces via the runtime's fallback-notification path.
     if (this.apiKey !== null || this.apiKeyId === null) {
       caps.add('tool-calling');
     }
@@ -191,23 +191,47 @@ export class OpenAICompatibleProvider implements LLMProvider {
     // index carries id + function.name; subsequent chunks append to
     // function.arguments. Flushed when finish_reason arrives OR when the
     // stream ends (some endpoints don't send finish_reason reliably).
-    interface PartialToolCall { id?: string; name?: string; args: string }
+    //
+    // Discriminated shape: a tool call is "partial" until we've seen both
+    // id and name. `flushToolCalls` skips partials instead of emitting
+    // corrupted events — and the type system makes that skip explicit,
+    // since `complete` requires both fields as strings.
+    type PartialToolCall =
+      | { kind: 'partial'; id?: string; name?: string; args: string }
+      | { kind: 'complete'; id: string; name: string; args: string };
+
     const toolCalls = new Map<number, PartialToolCall>();
     let flushed = false;
     const displayName = this.displayName;
 
+    const promoteIfReady = (tc: PartialToolCall): PartialToolCall => {
+      if (tc.kind === 'complete') return tc;
+      if (tc.id && tc.name) return { kind: 'complete', id: tc.id, name: tc.name, args: tc.args };
+      return tc;
+    };
+
     function* flushToolCalls(): Generator<AgentEvent> {
       if (flushed) return;
       flushed = true;
-      // Sort by index so call IDs come out in a deterministic order.
       const ordered = Array.from(toolCalls.entries()).sort((a, b) => a[0] - b[0]);
       for (const [idx, tc] of ordered) {
-        if (!tc.id || !tc.name) continue;
+        if (tc.kind !== 'complete') {
+          // Partial call at stream end — the model stopped mid-tool-use
+          // or the server closed the stream. Better to surface than
+          // silently drop so users see why nothing happened.
+          yield {
+            kind: 'done',
+            reason: 'error',
+            error:
+              `${displayName}: tool_call[${idx}] is incomplete (missing ` +
+              `${!tc.id ? 'id' : 'name'}) — stream likely truncated.`,
+          };
+          return;
+        }
         let args: Record<string, unknown>;
         if (tc.args.length === 0) {
           // OpenAI normally sends "{}" but some endpoints send "" for
-          // tools with no required fields (list_dir, etc.). Treat the
-          // empty string as "no arguments" — NOT a parse error.
+          // tools with no required fields. Empty string → no arguments.
           args = {};
         } else {
           try {
@@ -264,14 +288,19 @@ export class OpenAICompatibleProvider implements LLMProvider {
         }
         if (delta?.tool_calls) {
           for (const tc of delta.tool_calls) {
-            let entry = toolCalls.get(tc.index);
-            if (!entry) {
-              entry = { args: '' };
-              toolCalls.set(tc.index, entry);
-            }
-            if (tc.id) entry.id = tc.id;
-            if (tc.function?.name) entry.name = tc.function.name;
-            if (tc.function?.arguments) entry.args += tc.function.arguments;
+            const existing = toolCalls.get(tc.index) ?? { kind: 'partial' as const, args: '' };
+            // Work on a mutable copy — `existing` may be `complete`, which
+            // is readonly-ish in practice. We rebuild via promoteIfReady.
+            const next: PartialToolCall =
+              existing.kind === 'complete'
+                ? { ...existing, args: existing.args + (tc.function?.arguments ?? '') }
+                : {
+                    kind: 'partial',
+                    id: tc.id ?? existing.id,
+                    name: tc.function?.name ?? existing.name,
+                    args: existing.args + (tc.function?.arguments ?? ''),
+                  };
+            toolCalls.set(tc.index, promoteIfReady(next));
           }
         }
         if (choice?.finish_reason === 'tool_calls' || choice?.finish_reason === 'stop') {

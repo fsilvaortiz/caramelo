@@ -6,7 +6,43 @@ import type {
   ProviderToolCallRequest,
   Tool,
 } from '../agent/types.js';
-import { AuthError } from '../errors.js';
+import { AuthError, isAbortError } from '../errors.js';
+
+/**
+ * Discriminating type predicates for vscode.lm stream parts. `instanceof`
+ * would see two different class identities when tests swap the `vscode`
+ * module for a stub — duck-typing on the stable public fields survives
+ * that. TextPart has `value: string`; ToolCallPart has `callId`, `name`,
+ * `input`.
+ */
+function isTextPart(p: unknown): p is { value: string } {
+  return (
+    typeof (p as { value?: unknown })?.value === 'string' &&
+    typeof (p as { callId?: unknown })?.callId === 'undefined'
+  );
+}
+
+function isToolCallPart(p: unknown): p is { callId: string; name: string; input: unknown } {
+  return (
+    typeof (p as { callId?: unknown })?.callId === 'string' &&
+    typeof (p as { name?: unknown })?.name === 'string'
+  );
+}
+
+/**
+ * True when an error arose because the caller's AbortSignal fired (or
+ * because the vscode CancellationToken propagated back through `sendRequest`).
+ * Different from a generic provider error — the runtime uses this to
+ * classify the run as `cancelled` rather than `error`.
+ */
+function isCancellation(err: unknown, signal: AbortSignal | undefined): boolean {
+  if (isAbortError(err)) return true;
+  if (signal?.aborted) return true;
+  // vscode LanguageModelError carries cause === 'CancellationError' or
+  // message-matches in the real extension host; best-effort match.
+  const m = err instanceof Error ? err.message : String(err);
+  return /cancell?ed|cancellation/i.test(m);
+}
 
 export class CopilotProvider implements LLMProvider {
   readonly id: string;
@@ -88,7 +124,7 @@ export class CopilotProvider implements LLMProvider {
     // families (gpt-4o, gpt-4o-mini, claude-3.5-sonnet, …) all support
     // tools; older gpt-3.5-turbo may not. If the specific model rejects
     // a tool request, the error surfaces via the runtime's fallback-
-    // notification path (FR-009) rather than a silent downgrade.
+    // notification path rather than a silent downgrade.
     if (this.model) caps.add('tool-calling');
     return caps;
   }
@@ -128,6 +164,11 @@ export class CopilotProvider implements LLMProvider {
         cts.token,
       );
     } catch (err) {
+      // Abort/cancellation MUST propagate as a thrown error — the runtime
+      // checks `signal.aborted` in its outer catch and classifies as
+      // `cancelled`. Emitting `done:error` here would surface a spurious
+      // "stream failed" toast on plain Cancel.
+      if (isCancellation(err, req.signal)) throw err;
       const msg = err instanceof Error ? err.message : String(err);
       yield {
         kind: 'done',
@@ -139,45 +180,30 @@ export class CopilotProvider implements LLMProvider {
 
     try {
       for await (const part of response.stream) {
-        // Duck-type on discriminating fields instead of `instanceof`. The
-        // runtime `vscode` module is swapped for a mock in unit tests, so
-        // instanceof would see two different class identities for the
-        // same logical type. `value` on TextPart vs `callId`/`name` on
-        // ToolCallPart is reliable and matches the stable public API.
-        if (
-          typeof (part as { value?: unknown }).value === 'string' &&
-          (part as { callId?: unknown }).callId === undefined
-        ) {
-          yield {
-            kind: 'text',
-            delta: (part as { value: string }).value,
-          };
+        if (isTextPart(part)) {
+          yield { kind: 'text', delta: part.value };
           continue;
         }
-        if (
-          typeof (part as { callId?: unknown }).callId === 'string' &&
-          typeof (part as { name?: unknown }).name === 'string'
-        ) {
-          const tc = part as { callId: string; name: string; input: unknown };
+        if (isToolCallPart(part)) {
           // vscode.lm delivers `input` as a fully-parsed object (it does
           // the JSON.parse on our behalf). Still validate the shape —
           // a non-object input would break tool dispatch downstream.
-          if (!tc.input || typeof tc.input !== 'object' || Array.isArray(tc.input)) {
+          if (!part.input || typeof part.input !== 'object' || Array.isArray(part.input)) {
             yield {
               kind: 'done',
               reason: 'error',
               error:
-                `${this.displayName}: tool_call "${tc.name}" input was not an object ` +
-                `(got ${Array.isArray(tc.input) ? 'array' : typeof tc.input}).`,
+                `${this.displayName}: tool_call "${part.name}" input was not an object ` +
+                `(got ${Array.isArray(part.input) ? 'array' : typeof part.input}).`,
             };
             return;
           }
           yield {
             kind: 'tool_call',
             call: {
-              id: tc.callId,
-              name: tc.name,
-              arguments: tc.input as Record<string, unknown>,
+              id: part.callId,
+              name: part.name,
+              arguments: part.input as Record<string, unknown>,
             },
           };
         }
@@ -185,6 +211,7 @@ export class CopilotProvider implements LLMProvider {
         // forward compatibility without blind dispatch.
       }
     } catch (err) {
+      if (isCancellation(err, req.signal)) throw err;
       const msg = err instanceof Error ? err.message : String(err);
       yield {
         kind: 'done',

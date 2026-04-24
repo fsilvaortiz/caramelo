@@ -188,39 +188,54 @@ describe('CopilotProvider.chatWithTools', () => {
     expect(options.toolMode).toBe(vscode.LanguageModelChatToolMode.Auto);
   });
 
-  it('cancels the vscode.lm CancellationToken when the AbortSignal aborts mid-run', async () => {
-    // Model that never resolves its stream — we just want to verify the
-    // cancellation wiring.
-    const cancelled: { flag: boolean } = { flag: false };
+  it('re-throws when sendRequest fails due to cancellation — so runtime classifies as cancelled', async () => {
+    // The contract: when cancel fires, the provider MUST throw (not
+    // emit done:error) so the runtime's outer catch sees an error AND
+    // `signal.aborted === true` and classifies the run as `cancelled`.
+    // Prior behaviour emitted a spurious "stream failed" toast on every
+    // user-initiated cancel.
     const model = {
-      sendRequest: vi.fn().mockImplementation((_msgs, _opts, token) => {
-        token.onCancellationRequested(() => {
-          cancelled.flag = true;
-        });
-        return Promise.resolve({ stream: mockStream([]), text: mockStream([]) });
+      sendRequest: vi.fn().mockRejectedValue(new Error('Canceled by user')),
+    };
+    installModel(model);
+
+    const provider = new CopilotProvider('co', 'Copilot', 'gpt-4o');
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      collect(
+        provider.chatWithTools({
+          messages: [{ role: 'user', content: 'x' }],
+          tools: [readTool],
+          signal: controller.signal,
+        }),
+      ),
+    ).rejects.toThrow(/Cancel/i);
+  });
+
+  it('re-throws when the stream errors with a cancellation-shaped message', async () => {
+    const model = {
+      sendRequest: vi.fn().mockResolvedValue({
+        stream: (async function* () {
+          throw new Error('CancellationError: user requested stop');
+        })(),
+        text: mockStream([]),
       }),
     };
     installModel(model);
 
     const provider = new CopilotProvider('co', 'Copilot', 'gpt-4o');
     const controller = new AbortController();
-    controller.abort(); // pre-aborted: cts.cancel() fires immediately inside chatWithTools
-    await collect(
-      provider.chatWithTools({
-        messages: [{ role: 'user', content: 'x' }],
-        tools: [readTool],
-        signal: controller.signal,
-      }),
-    );
-    // The CancellationTokenSource.cancel() was triggered — we can't
-    // easily observe it in the mock token, but we at least verify the
-    // stream ran without throwing and produced no events.
-    expect(model.sendRequest).toHaveBeenCalled();
-    // Intentionally: cancelled.flag may stay false in the mock token
-    // (our stub's onCancellationRequested doesn't fire). What matters
-    // is the call completed cleanly. This test mainly documents the
-    // cancellation code path exists.
-    expect(cancelled).toBeDefined();
+    await expect(
+      collect(
+        provider.chatWithTools({
+          messages: [{ role: 'user', content: 'x' }],
+          tools: [readTool],
+          signal: controller.signal,
+        }),
+      ),
+    ).rejects.toThrow(/cancell?ation/i);
   });
 });
 

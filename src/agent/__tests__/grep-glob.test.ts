@@ -116,13 +116,32 @@ describe('glob tool', () => {
     expect(String(result.content)).toMatch(/no matches/);
   });
 
-  it('rejects an invalid pattern', async () => {
-    // Unbalanced braces are treated literally — not an error. A pattern
-    // that breaks the regex compiler inside globToRegExp would
-    // surface as a catch. We assert graceful handling either way.
+  it('treats unbalanced brace as a literal (graceful, no error)', async () => {
+    write('a.ts', '');
+    // Unbalanced `{` never matches a real path (nothing contains literal
+    // `{`). We assert no crash AND zero matches — previously this test
+    // accepted anything non-error, which let regressions that silently
+    // produced matches slip through.
     const result = await globTool.execute({ pattern: 'a{b,c' }, ctx());
-    // Treated as literal `a{b,c` path: should produce no matches, not
-    // an error.
-    expect(result.isError ?? false).toBe(false);
+    expect(result.isError).toBeFalsy();
+    expect(String(result.content)).toMatch(/no matches/);
+  });
+
+  it('returns is_error when the pattern compiles to an invalid regex', async () => {
+    // `[` is a regex metachar that globToSegment does NOT escape (we
+    // need the user to be able to type literal brackets). An unclosed
+    // character class reaches `new RegExp()` and throws.
+    const result = await globTool.execute({ pattern: '[abc' }, ctx());
+    expect(result.isError).toBe(true);
+  });
+
+  it('cannot match paths outside the workspace via .. prefix', async () => {
+    write('inside.ts', '');
+    // buildWorkspaceIndex only returns paths inside the workspace — no
+    // '..' components can reach the matcher. A `../*.ts` pattern
+    // structurally cannot match anything.
+    const result = await globTool.execute({ pattern: '../*.ts' }, ctx());
+    expect(result.isError).toBeFalsy();
+    expect(String(result.content)).toMatch(/no matches/);
   });
 });

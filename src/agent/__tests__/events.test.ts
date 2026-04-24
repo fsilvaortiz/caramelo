@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { formatEvent, formatPrologue } from '../events.js';
 import type { AgentEvent } from '../types.js';
 
-describe('formatEvent — redaction (Constitution III)', () => {
+describe('formatEvent — redaction of credentials in events', () => {
   it('redacts Bearer tokens in text deltas', () => {
     const out = formatEvent({
       kind: 'text',

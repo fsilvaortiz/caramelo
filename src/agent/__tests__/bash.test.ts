@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -82,7 +82,7 @@ describe('bash tool', () => {
     expect(String(result.content)).toMatch(/reason: aborted/);
   });
 
-  it('truncates stdout past 10 KB', async () => {
+  it('truncates stdout at exactly 10 KB', async () => {
     if (!hasShell) return;
     // Produce ~20 KB of output via a POSIX-portable command (brace
     // expansion is a bash-ism, not available under /bin/sh).
@@ -91,18 +91,70 @@ describe('bash tool', () => {
       ctxFor(),
     );
     expect(result.isError).toBeFalsy();
-    expect(String(result.content)).toMatch(/truncated/);
+    const out = String(result.content);
+    // Extract the stdout section and verify its byte count is the exact
+    // cap — a regression removing the cap would produce a much larger
+    // section. The header advertises the byte count; we verify both the
+    // header and the actual payload length.
+    const match = out.match(/--- stdout \((\d+) B, truncated\) ---\n([\s\S]*?)\n--- stderr/);
+    expect(match).toBeTruthy();
+    if (match) {
+      const byteCount = parseInt(match[1], 10);
+      const payload = match[2];
+      expect(byteCount).toBe(10 * 1024);
+      expect(payload.length).toBe(10 * 1024);
+    }
   });
 
-  it('clamps huge timeouts to 120 s', async () => {
+  it('clamps huge timeout_ms values to the 120 s hard max', async () => {
     if (!hasShell) return;
-    // We only verify the clamp by passing an absurd value and confirming
-    // the call doesn't hang forever — the command itself exits fast.
-    const result = await bashTool.execute(
-      { command: 'echo fast', timeout_ms: 999_999_999 },
-      ctxFor(),
-    );
-    expect(result.isError).toBeFalsy();
-    expect(String(result.content)).toMatch(/exit_code: 0/);
+    // Spy on setTimeout and assert the delay the tool passes in is
+    // clamped to MAX_TIMEOUT_MS (120_000), even when we request ~16
+    // minutes. Without the clamp, a compromised/buggy agent could pin
+    // the worker for hours before SIGKILL fires.
+    const originalSetTimeout = globalThis.setTimeout;
+    const delays: number[] = [];
+    const spy = ((fn: (...args: unknown[]) => void, delay: number, ...rest: unknown[]) => {
+      delays.push(delay);
+      return originalSetTimeout(fn, delay, ...rest);
+    }) as unknown as typeof setTimeout;
+    globalThis.setTimeout = spy;
+    try {
+      const result = await bashTool.execute(
+        { command: 'echo fast', timeout_ms: 999_999_999 },
+        ctxFor(),
+      );
+      expect(result.isError).toBeFalsy();
+      // The tool's own setTimeout call for the watchdog is the largest
+      // one we expect (dominating any libuv internal timers that might
+      // also route through setTimeout). Assert 120_000 appears.
+      expect(delays).toContain(120_000);
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+    }
+  });
+
+  it('clamps tiny timeout_ms values up to the 100 ms floor', async () => {
+    if (!hasShell) return;
+    const originalSetTimeout = globalThis.setTimeout;
+    const delays: number[] = [];
+    const spy = ((fn: (...args: unknown[]) => void, delay: number, ...rest: unknown[]) => {
+      delays.push(delay);
+      return originalSetTimeout(fn, delay, ...rest);
+    }) as unknown as typeof setTimeout;
+    globalThis.setTimeout = spy;
+    try {
+      await bashTool.execute(
+        { command: 'echo ok', timeout_ms: 1 },
+        ctxFor(),
+      );
+      expect(delays).toContain(100);
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+    }
   });
 });
+
+// Hook `vi` so TS doesn't complain about the import being unused in the
+// no-shell path on platforms where `hasShell` is false.
+void vi;

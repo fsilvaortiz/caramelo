@@ -372,6 +372,122 @@ describe('OpenAICompatibleProvider.chatWithTools', () => {
       collect(p.chatWithTools({ messages: [{ role: 'user', content: 'hi' }], tools: [readTool] })),
     ).rejects.toThrow(/401/);
   });
+
+  it('dispatches 429 rate-limit as a ProviderError', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      statusText: 'Too Many Requests',
+      text: async () => 'rate limit',
+    } as unknown as Response);
+
+    const p = provider();
+    await p.authenticate();
+    await expect(
+      collect(p.chatWithTools({ messages: [{ role: 'user', content: 'hi' }], tools: [readTool] })),
+    ).rejects.toThrow(/429 Too Many Requests/);
+  });
+
+  it('dispatches 500 as a ProviderError (non-auth error path)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      text: async () => 'oops',
+    } as unknown as Response);
+
+    const p = provider();
+    await p.authenticate();
+    await expect(
+      collect(p.chatWithTools({ messages: [{ role: 'user', content: 'hi' }], tools: [readTool] })),
+    ).rejects.toThrow(/500 Internal Server Error/);
+  });
+
+  it('surfaces an incomplete tool_call when the stream ends without finish_reason', async () => {
+    // A partial tool_call whose id never arrived (some local servers
+    // drop the final chunk). Previously this would silently hang or
+    // emit a half-parsed tool_call. We now emit done:error.
+    const transcript = [
+      sseChunk({
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                // No id! Name + partial arguments only.
+                { index: 0, type: 'function', function: { name: 'file_read', arguments: '{"pat' } },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      }),
+      // Stream ends without [DONE] or finish_reason — we simulate a
+      // truncated response.
+      'data: [DONE]\n\n',
+    ];
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      body: streamOf(transcript),
+    } as unknown as Response);
+
+    const p = provider();
+    await p.authenticate();
+    const events = await collect(
+      p.chatWithTools({ messages: [{ role: 'user', content: 'x' }], tools: [readTool] }),
+    );
+    const done = events.find((e) => e.kind === 'done');
+    expect(done?.kind).toBe('done');
+    if (done?.kind === 'done') {
+      expect(done.reason).toBe('error');
+      expect(done.error).toMatch(/incomplete|truncated|missing/i);
+    }
+    expect(events.some((e) => e.kind === 'tool_call')).toBe(false);
+  });
+
+  it('empty-args with a required-field tool is emitted as-is (schema catches it)', async () => {
+    // This documents the contract boundary: the provider doesn't
+    // short-circuit the call just because the tool SCHEMA has
+    // required fields. The empty-args → {} conversion happens at
+    // the SSE layer. The tool registry then rejects the call via
+    // validateAgainstSchema, producing an is_error tool_result that
+    // the model sees and can retry. Reviewer's concern: file_read({})
+    // reaching the tool. Answer: it doesn't — `required: ['path']`
+    // catches it at registry.execute time. We prove the provider
+    // emits the call and the agent runtime enforces the rest.
+    const transcript = [
+      sseChunk({
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                { index: 0, id: 'call_e', type: 'function', function: { name: 'file_read', arguments: '' } },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      }),
+      sseChunk({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] }),
+      'data: [DONE]\n\n',
+    ];
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      body: streamOf(transcript),
+    } as unknown as Response);
+
+    const p = provider();
+    await p.authenticate();
+    const events = await collect(
+      p.chatWithTools({ messages: [{ role: 'user', content: 'x' }], tools: [readTool] }),
+    );
+    const calls = events.filter((e): e is Extract<AgentEvent, { kind: 'tool_call' }> => e.kind === 'tool_call');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].call.arguments).toEqual({});
+    // The downstream runtime (ToolRegistry.execute) rejects this because
+    // the schema has `required: ['path']`. That protection is covered
+    // by tool-registry.test.ts; the provider's job is just to faithfully
+    // surface what the model sent.
+  });
 });
 
 describe('OpenAICompatibleProvider.capabilities', () => {

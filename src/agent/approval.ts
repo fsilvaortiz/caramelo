@@ -32,9 +32,8 @@ export interface ApprovalHooks {
   /**
    * Per-call bash prompt. Bash is ALWAYS routed through this regardless
    * of which policy is in force — it's the only tool that can run
-   * arbitrary code, so the user MUST confirm every invocation. See
-   * Constitution VII ("No code path may silently auto-execute bash") and
-   * FR-006.
+   * arbitrary code, so the user MUST confirm every invocation. No code
+   * path may silently auto-execute bash, including auto-all mode.
    */
   confirmBash(
     call: ToolCallApproval,
@@ -129,9 +128,9 @@ export function perCallPolicy(opts: {
 
 /**
  * "Auto-all" — auto-allow reads and writes. **bash still prompts
- * per-call** (Constitution VII: no silent auto-execute). Users opt in
- * via `caramelo.agent.approval === "auto-all"` and accept that
- * recoverability relies on the git safety stash.
+ * per-call** (no silent auto-execute). Users opt in via
+ * `caramelo.agent.approval === "auto-all"` and accept that recoverability
+ * relies on the git safety stash.
  */
 export function autoAllAllPolicy(opts?: {
   hooks?: Partial<Pick<ApprovalHooks, 'confirmBash'>>;

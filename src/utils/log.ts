@@ -7,8 +7,9 @@ const URL_CREDENTIALS_RE = /(https?:\/\/)[^/@\s]+:[^/@\s]+@/gi;
 /**
  * Strip bearer tokens, authorization-like headers, and URL-embedded
  * credentials from a string. Exported so tool-call argument/result
- * rendering (src/agent/events.ts) can apply the same rules before writing
- * to the Output Channel, per Constitution III.
+ * rendering (src/agent/events.ts) can apply the same rules before any
+ * log line reaches the Output Channel — one redactor, one source of
+ * truth for what a credential looks like.
  */
 export function redactString(value: string): string {
   return value

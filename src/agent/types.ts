@@ -124,17 +124,20 @@ export type AgentMessage =
       isError?: boolean;
     };
 
+/**
+ * How an agent run ended. Shared between `AgentEvent.done.reason` (the
+ * stream event) and `AgentResult.stopReason` (the final return value)
+ * so callers don't have to cross-walk two independent literal unions.
+ */
+export type StopReason = 'stop' | 'max_iterations' | 'cancelled' | 'aborted_by_user' | 'error';
+
 export type AgentEvent =
   | { kind: 'iteration'; index: number; reason: 'start' | 'continue' }
   | { kind: 'text'; delta: string }
   | { kind: 'tool_call'; call: AgentToolCall }
   | { kind: 'tool_result'; callId: string; toolName: string; result: ToolResult }
   | { kind: 'tool_denied'; callId: string; toolName: string; reason: string }
-  | {
-      kind: 'done';
-      reason: 'stop' | 'max_iterations' | 'cancelled' | 'aborted_by_user' | 'error';
-      error?: string;
-    };
+  | { kind: 'done'; reason: StopReason; error?: string };
 
 export interface ApprovalContext {
   workspaceRoot: string;
@@ -226,12 +229,7 @@ export interface AgentResult {
    * and every tool_result. Useful for logging + future resume-run flows.
    */
   messages: AgentMessage[];
-  stopReason:
-    | 'stop'
-    | 'max_iterations'
-    | 'cancelled'
-    | 'aborted_by_user'
-    | 'error';
+  stopReason: StopReason;
   error?: string;
   /** Count of tool calls actually executed (approved and not-aborted). */
   executedToolCalls: number;

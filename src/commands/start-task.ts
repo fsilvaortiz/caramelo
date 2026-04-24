@@ -156,9 +156,10 @@ export async function startTask(
   channel.appendLine(`  ${new Date().toLocaleTimeString()}`);
   channel.appendLine('─'.repeat(60));
 
-  // Constitution VIII (FR-018): untrusted workspaces block ALL LLM execution.
-  // Checked before the safety-stash + no-git modal so we don't ask the user
-  // to confirm "proceed without backup" and then refuse the task anyway.
+  // Untrusted workspaces block LLM execution — both the agent path and
+  // the legacy path. Checked before the safety-stash + no-git modal so
+  // we don't ask the user to confirm "proceed without backup" and then
+  // refuse the task anyway.
   if (vscode.workspace.isTrusted === false) {
     channel.appendLine(
       '\n✗ Task refused: workspace is not trusted. ' +
@@ -244,9 +245,9 @@ export async function startTask(
     return;
   }
 
-  // Constitution VII: providers without native tool-calling MUST inform the
-  // user which execution mode is active — no silent drift between agent and
-  // legacy paths.
+  // Providers without native tool-calling inform the user which
+  // execution mode is active — no silent drift between agent and legacy
+  // paths.
   if (agentLoopRequested && !canDoAgent) {
     channel.appendLine(
       `↪ provider "${provider.displayName}" does not advertise the 'tool-calling' capability ` +
@@ -587,8 +588,9 @@ async function runTaskWithAgent(args: AgentRunArgs): Promise<void> {
   const approval = buildApprovalPolicy();
   const runtime = new AgentRuntime();
 
-  // Constitution IX — every LLM run logs provider, model, capability set,
-  // tool inventory, and approval mode. Redacted via events.ts.
+  // Prologue logs provider, model, capability set, tool inventory, and
+  // approval mode — redacted via events.ts. So "what did the LLM see?"
+  // is answerable from the channel alone.
   const providerForPrologue = provider as {
     id: string;
     displayName: string;

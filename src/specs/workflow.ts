@@ -10,7 +10,9 @@ import { buildDefaultToolSet } from '../agent/tools/index.js';
 import { formatPrologue, pipeToOutputChannel } from '../agent/events.js';
 import { autoAllAllPolicy, readOnlyAutoBatchedWritesPolicy } from '../agent/approval.js';
 import { isToolCallingProvider } from '../agent/types.js';
+import type { AgentMessage } from '../agent/types.js';
 import type { LLMProvider } from '../providers/types.js';
+import { log } from '../utils/log.js';
 
 let phaseOutputChannel: vscode.OutputChannel | undefined;
 
@@ -35,6 +37,52 @@ function getAgentMaxIterations(): number {
   return Math.max(3, Math.min(50, Math.floor(raw)));
 }
 
+// ---------------------------------------------------------------------------
+// Pure helpers extracted so the behaviour is unit-testable without booting
+// the whole VS Code stack. See `__tests__/workflow.test.ts`.
+// ---------------------------------------------------------------------------
+
+/**
+ * Decide whether the given phase generation should go through the agent
+ * loop or the legacy text-only path. Only `design` and `tasks` benefit
+ * from filesystem exploration (the LLM needs to see real paths / patterns);
+ * `requirements` has no existing code to inspect.
+ */
+export function shouldUsePhaseAgent(
+  phaseType: PhaseType,
+  agentLoopEnabled: boolean,
+  toolCallingProvider: boolean,
+): boolean {
+  if (phaseType !== 'design' && phaseType !== 'tasks') return false;
+  return agentLoopEnabled && toolCallingProvider;
+}
+
+/**
+ * The terminal assistant message (no tool calls) IS the artifact.
+ *
+ * The agent may interleave text and tool_calls across turns — e.g., emit
+ * an interim narration message that contains both text and a tool_call.
+ * Only a turn with `toolCalls` empty or absent qualifies as the final
+ * artifact. Walking backwards is necessary because the runtime sometimes
+ * persists a placeholder assistant turn between the last tool result and
+ * the final message.
+ *
+ * Returns an empty string when no suitable terminal message exists —
+ * callers must treat that as "nothing to write" (don't clobber the
+ * placeholder with empty content).
+ */
+export function pickTerminalArtifact(messages: AgentMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== 'assistant') continue;
+    if (m.toolCalls && m.toolCalls.length > 0) continue;
+    return m.content;
+  }
+  return '';
+}
+
+// ---------------------------------------------------------------------------
+
 export class WorkflowEngine {
   async runPhase(
     spec: Spec,
@@ -49,8 +97,10 @@ export class WorkflowEngine {
       return;
     }
 
-    // Constitution VIII (FR-018): untrusted workspaces block LLM
-    // execution — both phase generation and agent tasks.
+    // Untrusted workspaces block LLM execution — both the agent path and
+    // the legacy text-only path. The check lives here (before any file
+    // IO or progress indicator) so the refusal message is the first
+    // thing the user sees.
     if (vscode.workspace.isTrusted === false) {
       vscode.window.showWarningMessage(
         'Caramelo: LLM execution is blocked in untrusted workspaces. Trust the workspace to generate phases.',
@@ -58,7 +108,8 @@ export class WorkflowEngine {
       return;
     }
 
-    // If regenerating an already-completed phase, mark downstream phases as stale
+    // Regenerating an already-completed phase marks downstream as stale
+    // so the sidebar nudges the user to regenerate them too.
     const currentStatus = spec.phases.find((p) => p.type === phaseType)?.status;
     if (currentStatus === 'approved' || currentStatus === 'pending-approval' || currentStatus === 'stale') {
       markDownstreamStale(spec, phaseType);
@@ -74,18 +125,14 @@ export class WorkflowEngine {
     if (!fileName) return;
     const filePath = path.join(spec.dirPath, fileName);
 
-    // Per research.md R11: only design (plan.md) and tasks (tasks.md) go
-    // through the agent path — the LLM benefits from inspecting the
-    // codebase when proposing file paths / tasks. requirements is
-    // text-only (no code exists yet to explore); research.md / data-model.md
-    // / contracts/ stay text-only (narrow structured-output prompts).
-    const canAgent =
-      (phaseType === 'design' || phaseType === 'tasks') &&
-      isAgentLoopEnabled() &&
-      isToolCallingProvider(provider);
+    const useAgent = shouldUsePhaseAgent(
+      phaseType,
+      isAgentLoopEnabled(),
+      isToolCallingProvider(provider),
+    );
 
     let output: string | null;
-    if (canAgent) {
+    if (useAgent) {
       output = await this.generatePhaseViaAgent(
         spec,
         phaseType,
@@ -117,9 +164,10 @@ export class WorkflowEngine {
 
     setPhaseStatus(spec, phaseType, 'pending-approval');
 
-    // Intermediate artifacts for the Design phase — always text-only per R11.
-    // These are narrow structured-output tasks whose quality doesn't improve
-    // with filesystem exploration.
+    // Intermediate artifacts for the Design phase — always text-only.
+    // Narrow structured-output prompts don't benefit from filesystem
+    // exploration; keeping them on chat() saves tokens and matches the
+    // 3-separate-calls UX of streaming into the editor.
     if (phaseType === 'design') {
       await this.generateIntermediateArtifacts(spec, output, context, provider);
     }
@@ -129,9 +177,9 @@ export class WorkflowEngine {
    * Agent-driven phase generation. The agent can grep / file_read / glob
    * the real codebase while producing the artifact. The terminal
    * assistant message (no tool calls) IS the file content — written once
-   * at the end rather than streamed word-by-word into the editor. That's
-   * an intentional UX trade: tool-call visibility in the Output Channel
-   * replaces the streaming-text UX from the text-only path.
+   * at the end rather than streamed word-by-word into the editor. Tool
+   * calls stream to the Output Channel instead, so the user still sees
+   * the generation happening — just in a different surface.
    */
   private async generatePhaseViaAgent(
     spec: Spec,
@@ -141,8 +189,10 @@ export class WorkflowEngine {
     provider: LLMProvider,
     filePath: string,
   ): Promise<string | null> {
-    // Placeholder file opened right away so the user can see where the
-    // artifact will land.
+    // Placeholder file opened right away so the user sees where the
+    // artifact will land. We delete it on cancel/error so the user
+    // doesn't end up with a half-empty `plan.md` containing only our
+    // HTML comment.
     fs.writeFileSync(
       filePath,
       `<!-- Caramelo agent is generating ${phaseType}…\n` +
@@ -163,15 +213,13 @@ export class WorkflowEngine {
     showProgress(`Generating ${phaseType} (agent)…`, () => abortController.abort());
 
     const tools = buildDefaultToolSet({ enableBash: isBashToolEnabled() });
-    // Phase generation is read-heavy; still use the default write-approval
-    // policy so any file_edit/file_write the agent proposes mid-generation
-    // gets user review.
-    const approval = isReadOnlyPhaseMode()
-      ? autoAllAllPolicy() // fast path: reads auto-run, bash still prompts
-      : readOnlyAutoBatchedWritesPolicy({
-          isAutoApplyEnabled: () => false,
-          setSessionAutoApply: () => { /* phase gen is one-shot; ignore */ },
-        });
+    const approval = readOnlyAutoBatchedWritesPolicy({
+      isAutoApplyEnabled: () => false,
+      setSessionAutoApply: () => { /* phase gen is one-shot; don't persist */ },
+    });
+    // Silence unused-import warning: autoAllAllPolicy is retained as an
+    // escape hatch for when we expose a "fast phase gen" setting.
+    void autoAllAllPolicy;
 
     const systemPrompt = buildAgentSystemPrompt(phaseType, template);
     const userPrompt =
@@ -183,28 +231,29 @@ export class WorkflowEngine {
       `When you are done, emit the COMPLETE markdown artifact as your final assistant message with ` +
       `NO tool calls. The extension will take that final message and write it verbatim to ${path.basename(filePath)}.`;
 
-    const prov = provider as LLMProvider & { id: string; displayName: string };
     channel.appendLine(
       formatPrologue({
-        providerId: prov.id,
-        providerName: prov.displayName,
+        providerId: provider.id,
+        providerName: provider.displayName,
         model: undefined,
-        capabilities: Array.from(prov.capabilities()),
+        capabilities: Array.from(provider.capabilities()),
         toolNames: tools.map((t) => t.name),
-        approvalMode: isReadOnlyPhaseMode() ? 'auto-all (phase-gen)' : 'auto-reads-batched-writes',
+        approvalMode: 'auto-reads-batched-writes',
         bashEnabled: isBashToolEnabled(),
         maxIterations: getAgentMaxIterations(),
       }),
     );
 
     const runtime = new AgentRuntime();
-    try {
-      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      if (!workspaceRoot) {
-        channel.appendLine('\n✗ No workspace folder open.');
-        return null;
-      }
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      channel.appendLine('\n✗ No workspace folder open.');
+      hideProgress();
+      cleanupPlaceholder(filePath);
+      return null;
+    }
 
+    try {
       const result = await runtime.run(provider, {
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }],
@@ -218,6 +267,7 @@ export class WorkflowEngine {
 
       if (result.stopReason === 'cancelled') {
         channel.appendLine('\n⚠ Phase generation cancelled.');
+        cleanupPlaceholder(filePath);
         return null;
       }
       if (result.stopReason === 'error') {
@@ -225,6 +275,7 @@ export class WorkflowEngine {
         vscode.window.showErrorMessage(
           `Phase generation failed: ${result.error ?? 'unknown error'}`,
         );
+        cleanupPlaceholder(filePath);
         return null;
       }
       if (result.stopReason === 'max_iterations') {
@@ -232,26 +283,17 @@ export class WorkflowEngine {
         vscode.window.showWarningMessage(
           `${phaseType} generation stopped — max agent iterations. Inspect the Caramelo output channel.`,
         );
+        cleanupPlaceholder(filePath);
         return null;
       }
 
-      // The terminal assistant message (no tool calls) is the artifact.
-      // We walk backward from the end — if the model intersperses tool
-      // calls with content, only the final empty-toolCalls turn counts.
-      let artifact = '';
-      for (let i = result.messages.length - 1; i >= 0; i--) {
-        const m = result.messages[i];
-        if (m.role !== 'assistant') continue;
-        if (m.toolCalls && m.toolCalls.length > 0) continue;
-        artifact = m.content;
-        break;
-      }
-
+      const artifact = pickTerminalArtifact(result.messages);
       if (!artifact.trim()) {
         channel.appendLine('\n⚠ Agent finished without producing a final artifact message.');
         vscode.window.showWarningMessage(
           `${phaseType} generation produced no content. The agent may have stopped early — see the Caramelo output channel.`,
         );
+        cleanupPlaceholder(filePath);
         return null;
       }
 
@@ -292,19 +334,21 @@ export class WorkflowEngine {
           for await (const chunk of provider.chat(messages, { signal: abortController.signal })) {
             output += chunk;
             charCount += chunk.length;
-            // Editor may have been closed — write to file directly if edit fails
             try {
               await editor.edit((eb) => eb.insert(doc.positionAt(doc.getText().length), chunk));
               const lastLine = doc.lineCount - 1;
               editor.revealRange(new vscode.Range(lastLine, 0, lastLine, 0), vscode.TextEditorRevealType.Default);
-            } catch {
-              // Editor closed — continue collecting output silently
+            } catch (err) {
+              // Editor may have been closed or the document disposed —
+              // swallow so we keep collecting output into the file. Log
+              // at debug so a recurring failure (e.g. broken extension
+              // host editor state) isn't invisible.
+              log.debug('[workflow] editor.edit failed — continuing:', err);
             }
             updateProgress(`Generating ${label}... ${charCount} chars`);
           }
         } catch (err) {
           if (abortController.signal.aborted) return null;
-          // If we have partial output, save it
           if (output.length > 0) {
             fs.writeFileSync(filePath, output, 'utf-8');
             vscode.window.showWarningMessage(
@@ -331,7 +375,6 @@ export class WorkflowEngine {
     specContext: string,
     provider: Pick<import('../providers/types.js').LLMProvider, 'chat'>
   ): Promise<void> {
-    // Generate research.md
     const researchPath = path.join(spec.dirPath, 'research.md');
     await this.generateArtifact(
       researchPath,
@@ -340,7 +383,6 @@ export class WorkflowEngine {
       provider
     );
 
-    // Generate data-model.md
     const dataModelPath = path.join(spec.dirPath, 'data-model.md');
     await this.generateArtifact(
       dataModelPath,
@@ -367,15 +409,33 @@ export class WorkflowEngine {
         output += chunk;
       }
       fs.writeFileSync(filePath, output, 'utf-8');
-    } catch {
-      // Non-critical — intermediate artifacts are optional
+    } catch (err) {
+      // Intermediate artifacts are optional — we don't abort the whole
+      // phase if research.md fails — but the failure MUST surface. A
+      // silent catch has left downstream `tasks` phase reading stale
+      // files in the past.
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`[workflow] ${label} generation failed:`, msg);
+      vscode.window.showWarningMessage(
+        `Caramelo: ${label} artifact could not be generated (${msg}). ` +
+        `The main phase document was saved. You can regenerate ${path.basename(filePath)} ` +
+        `manually or retry the phase.`,
+      );
+      // If we produced partial output before the error, save it so the
+      // user can inspect it.
+      if (output.length > 0) {
+        try {
+          fs.writeFileSync(filePath, output, 'utf-8');
+        } catch (writeErr) {
+          log.warn(`[workflow] could not save partial ${label}:`, writeErr);
+        }
+      }
     }
   }
 
   private gatherContext(spec: Spec, phaseType: PhaseType): string {
     const parts: string[] = [];
 
-    // Always include constitution if available
     const constitutionPath = path.join(spec.dirPath, '..', '..', '.specify', 'memory', 'constitution.md');
     const altConstitutionPath = path.join(spec.dirPath, '..', '..', '..', '.specify', 'memory', 'constitution.md');
     for (const cPath of [constitutionPath, altConstitutionPath]) {
@@ -390,7 +450,6 @@ export class WorkflowEngine {
 
     if (phaseType === 'requirements') {
       parts.push(`Feature: ${spec.name}`);
-      // Include Jira context if available
       const jiraContextPath = path.join(spec.dirPath, 'jira-context.md');
       if (fs.existsSync(jiraContextPath)) {
         parts.push(`## Jira Issue Context\n\n${fs.readFileSync(jiraContextPath, 'utf-8')}`);
@@ -405,14 +464,12 @@ export class WorkflowEngine {
     }
 
     if (phaseType === 'tasks') {
-      // Include plan + intermediate artifacts
       for (const file of ['plan.md', 'research.md', 'data-model.md']) {
         const filePath = path.join(spec.dirPath, file);
         if (fs.existsSync(filePath)) {
           parts.push(`## ${file}\n\n${fs.readFileSync(filePath, 'utf-8')}`);
         }
       }
-      // Include contracts
       const contractsDir = path.join(spec.dirPath, 'contracts');
       if (fs.existsSync(contractsDir)) {
         const files = fs.readdirSync(contractsDir).filter((f) => f.endsWith('.md'));
@@ -449,11 +506,14 @@ function buildAgentSystemPrompt(phaseType: PhaseType, template: string): string 
   );
 }
 
-function isReadOnlyPhaseMode(): boolean {
-  // Design/tasks phase generation is read-heavy. We still route writes
-  // through approval by default, but users can set this to speed up
-  // phase generation in trusted workspaces. Exposed as a future setting
-  // — today it's hard-coded off so the default behaviour matches user
-  // expectations.
-  return false;
+/** Remove the placeholder file we opened up-front. Silent on ENOENT. */
+function cleanupPlaceholder(filePath: string): void {
+  try {
+    fs.unlinkSync(filePath);
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+    if (e.code !== 'ENOENT') {
+      log.debug('[workflow] could not remove placeholder:', err);
+    }
+  }
 }
