@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { LLMMessage, LLMOptions, LLMProvider } from './types.js';
+import type { Capability, LLMMessage, LLMOptions, LLMProvider } from './types.js';
 
 export class CopilotProvider implements LLMProvider {
   readonly id: string;
@@ -72,6 +72,12 @@ export class CopilotProvider implements LLMProvider {
     for await (const chunk of response.text) {
       yield chunk;
     }
+  }
+
+  capabilities(): Set<Capability> {
+    // Phase A: streaming-only. `tool-calling` joins this set when Phase C
+    // (CopilotProvider.chatWithTools via vscode.lm tool support) ships.
+    return new Set<Capability>(['streaming']);
   }
 
   dispose(): void {

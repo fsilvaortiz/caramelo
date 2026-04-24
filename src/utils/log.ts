@@ -4,7 +4,13 @@ const BEARER_RE = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi;
 const AUTH_HEADER_RE = /("?(authorization|x-api-key|api-key|token)"?\s*[:=]\s*"?)[^"\s,}]+/gi;
 const URL_CREDENTIALS_RE = /(https?:\/\/)[^/@\s]+:[^/@\s]+@/gi;
 
-function redactString(value: string): string {
+/**
+ * Strip bearer tokens, authorization-like headers, and URL-embedded
+ * credentials from a string. Exported so tool-call argument/result
+ * rendering (src/agent/events.ts) can apply the same rules before writing
+ * to the Output Channel, per Constitution III.
+ */
+export function redactString(value: string): string {
   return value
     .replace(BEARER_RE, (_m, scheme) => `${scheme} [REDACTED]`)
     .replace(AUTH_HEADER_RE, (_m, prefix) => `${prefix}[REDACTED]`)

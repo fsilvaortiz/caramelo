@@ -48,6 +48,9 @@ export const workspace = {
     update: () => Promise.resolve(),
     inspect: () => undefined,
   }),
+  // Constitution VIII — unit tests default to trusted; tests that need to
+  // exercise the untrusted gate override this directly.
+  isTrusted: true as boolean,
 };
 
 export const commands = {

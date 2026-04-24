@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { LLMMessage, LLMOptions, LLMProvider } from './types.js';
+import type { Capability, LLMMessage, LLMOptions, LLMProvider } from './types.js';
 import { parseSSEStream } from './sse.js';
 import { AuthError, NetworkError, ProviderError, isAbortError } from '../errors.js';
 import { getSseTimeoutMs } from '../utils/settings.js';
@@ -124,6 +124,12 @@ export class OpenAICompatibleProvider implements LLMProvider {
         this.abortController = null;
       }
     }
+  }
+
+  capabilities(): Set<Capability> {
+    // Phase A: streaming-only. `tool-calling` joins this set when Phase B
+    // (OpenAICompatibleProvider.chatWithTools) ships.
+    return new Set<Capability>(['streaming']);
   }
 
   dispose(): void {

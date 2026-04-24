@@ -12,6 +12,16 @@ import { confirmApplyChoice, previewEdit } from './task-edits/diff-preview.js';
 import { TASK_SYSTEM_PROMPT } from './task-edits/prompt.js';
 import { AsyncMutex } from './task-edits/mutex.js';
 import { log } from '../utils/log.js';
+import { AgentRuntime } from '../agent/runtime.js';
+import { buildDefaultToolSet } from '../agent/tools/index.js';
+import { formatPrologue, pipeToOutputChannel } from '../agent/events.js';
+import {
+  autoAllAllPolicy,
+  perCallPolicy,
+  readOnlyAutoBatchedWritesPolicy,
+} from '../agent/approval.js';
+import { isToolCallingProvider } from '../agent/types.js';
+import type { ApprovalPolicy } from '../agent/types.js';
 
 let outputChannel: vscode.OutputChannel | undefined;
 
@@ -60,6 +70,62 @@ function isAutoApplyEnabled(): boolean {
   );
 }
 
+function isAgentLoopEnabled(): boolean {
+  return vscode.workspace.getConfiguration().get<boolean>('caramelo.useAgentLoop', true);
+}
+
+function isBashToolEnabled(): boolean {
+  return vscode.workspace.getConfiguration().get<boolean>('caramelo.enableBashTool', true);
+}
+
+function getAgentMaxIterations(): number {
+  const raw = vscode.workspace.getConfiguration().get<number>('caramelo.agent.maxIterations');
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return 15;
+  return Math.max(3, Math.min(50, Math.floor(raw)));
+}
+
+function getApprovalMode(): 'auto-reads-batched-writes' | 'per-call' | 'auto-all' {
+  const raw = vscode.workspace
+    .getConfiguration()
+    .get<string>('caramelo.agent.approval', 'auto-reads-batched-writes');
+  if (raw === 'per-call' || raw === 'auto-all') return raw;
+  return 'auto-reads-batched-writes';
+}
+
+function buildApprovalPolicy(): ApprovalPolicy {
+  const mode = getApprovalMode();
+  if (mode === 'auto-all') return autoAllAllPolicy();
+  if (mode === 'per-call') return perCallPolicy({});
+  return readOnlyAutoBatchedWritesPolicy({
+    isAutoApplyEnabled,
+    setSessionAutoApply: (v) => {
+      sessionAutoApply = v;
+    },
+  });
+}
+
+const AGENT_SYSTEM_PROMPT =
+  `You are Caramelo, a code-editing agent embedded in a VS Code extension. ` +
+  `You are executing ONE task from a spec-driven-development tasks.md list.\n\n` +
+  `You have tools:\n` +
+  `  - file_read(path, [start_line, end_line])  — read a workspace file\n` +
+  `  - list_dir(path?)                          — list a directory\n` +
+  `  - grep(pattern, [path], [case_sensitive])  — regex search\n` +
+  `  - glob(pattern)                            — file-path glob\n` +
+  `  - file_edit(path, search, replace)         — replace an exact, unique snippet\n` +
+  `  - file_write(path, content, [overwrite])   — create or overwrite a file\n` +
+  `  - bash(command, [cwd], [timeout_ms])       — run a shell command (user approval required)\n\n` +
+  `Rules:\n` +
+  `- Paths are workspace-relative; anything outside the workspace is refused.\n` +
+  `- Use grep/glob/list_dir/file_read to explore before editing — the context ` +
+  `you were given is a seed, not the whole picture.\n` +
+  `- Prefer file_edit with a precise, unique SEARCH over file_write. file_write ` +
+  `refuses to overwrite by default; use it for new files.\n` +
+  `- When you are done, reply with a one- or two-sentence summary of what changed ` +
+  `and emit NO tool calls — that is the signal that the task is complete.\n` +
+  `- If a tool returns an error, read the error message and recover; do NOT repeat ` +
+  `the same failing call verbatim.`;
+
 export async function startTask(
   lineNumber: number,
   taskText: string,
@@ -85,6 +151,20 @@ export async function startTask(
   channel.appendLine(`▶ Task: ${taskText}`);
   channel.appendLine(`  ${new Date().toLocaleTimeString()}`);
   channel.appendLine('─'.repeat(60));
+
+  // Constitution VIII (FR-018): untrusted workspaces block ALL LLM execution.
+  // Checked before the safety-stash + no-git modal so we don't ask the user
+  // to confirm "proceed without backup" and then refuse the task anyway.
+  if (vscode.workspace.isTrusted === false) {
+    channel.appendLine(
+      '\n✗ Task refused: workspace is not trusted. ' +
+      'Trust the workspace (Command Palette → "Manage Workspace Trust") and retry.',
+    );
+    vscode.window.showWarningMessage(
+      'Caramelo: LLM execution is blocked in untrusted workspaces. Trust the workspace to run tasks.',
+    );
+    return;
+  }
 
   // Phase A — safety stash + no-git confirmation. Must be serialized across
   // concurrent startTask invocations so two parallel [P] tasks don't race
@@ -134,6 +214,42 @@ export async function startTask(
 
   const abortController = new AbortController();
   showProgress(`Task: ${taskText.slice(0, 40)}...`, () => abortController.abort());
+
+  // Phase A: prefer agent loop when the active provider advertises the
+  // `tool-calling` capability and the user hasn't flipped the kill switch.
+  // Falls back to the legacy SEARCH/REPLACE text protocol otherwise.
+  const agentLoopRequested = isAgentLoopEnabled();
+  const canDoAgent = isToolCallingProvider(provider);
+  if (agentLoopRequested && canDoAgent) {
+    try {
+      await runTaskWithAgent({
+        provider,
+        workspaceRoot,
+        userPrompt,
+        taskText,
+        channel,
+        abortController,
+        docUri,
+        lineNumber,
+        safety,
+      });
+    } finally {
+      hideProgress();
+    }
+    return;
+  }
+
+  // Constitution VII: providers without native tool-calling MUST inform the
+  // user which execution mode is active — no silent drift between agent and
+  // legacy paths.
+  if (agentLoopRequested && !canDoAgent) {
+    channel.appendLine(
+      `↪ provider "${provider.displayName}" does not advertise the 'tool-calling' capability ` +
+      `(capabilities: [${Array.from(provider.capabilities()).join(',')}]). ` +
+      `Falling back to the legacy SEARCH/REPLACE protocol. To silence this message, ` +
+      `set caramelo.useAgentLoop=false, or switch to a tool-calling provider.`,
+    );
+  }
 
   try {
     let output = '';
@@ -398,4 +514,120 @@ function findSpecDir(filePath: string): string | null {
     dir = path.dirname(dir);
   }
   return null;
+}
+
+interface AgentRunArgs {
+  provider: unknown;
+  workspaceRoot: string;
+  userPrompt: string;
+  taskText: string;
+  channel: vscode.OutputChannel;
+  abortController: AbortController;
+  docUri: vscode.Uri;
+  lineNumber: number;
+  safety: { kind: 'no-git' | 'clean' | 'stashed'; message: string; stashName?: string };
+}
+
+async function runTaskWithAgent(args: AgentRunArgs): Promise<void> {
+  const {
+    provider,
+    workspaceRoot,
+    userPrompt,
+    taskText,
+    channel,
+    abortController,
+    docUri,
+    lineNumber,
+    safety,
+  } = args;
+
+  const tools = buildDefaultToolSet({ enableBash: isBashToolEnabled() });
+  const approval = buildApprovalPolicy();
+  const runtime = new AgentRuntime();
+
+  // Constitution IX — every LLM run logs provider, model, capability set,
+  // tool inventory, and approval mode. Redacted via events.ts.
+  const providerForPrologue = provider as {
+    id: string;
+    displayName: string;
+    capabilities(): Set<string>;
+  };
+  channel.appendLine(
+    formatPrologue({
+      providerId: providerForPrologue.id,
+      providerName: providerForPrologue.displayName,
+      model: undefined,
+      capabilities: Array.from(providerForPrologue.capabilities()),
+      toolNames: tools.map((t) => t.name),
+      approvalMode: getApprovalMode(),
+      bashEnabled: isBashToolEnabled(),
+      maxIterations: getAgentMaxIterations(),
+    }),
+  );
+
+  let result;
+  try {
+    result = await runtime.run(provider, {
+      system: AGENT_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: userPrompt }],
+      tools,
+      approval,
+      workspaceRoot,
+      signal: abortController.signal,
+      onEvent: pipeToOutputChannel(channel),
+      maxIterations: getAgentMaxIterations(),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    channel.appendLine(`\n✗ agent runtime error: ${msg}`);
+    vscode.window.showErrorMessage(`Task failed: ${msg}`);
+    return;
+  }
+
+  if (result.stopReason === 'stop' && result.toolErrors === 0 && result.executedToolCalls > 0) {
+    await interactiveLock.run(async () => {
+      await markTaskComplete(docUri, lineNumber, taskText);
+    });
+    channel.appendLine(
+      `✓ Task complete via agent loop. ` +
+      `${result.executedToolCalls} tool call(s), ${result.toolErrors} error(s).`,
+    );
+    vscode.window.showInformationMessage(`Task complete. ${result.executedToolCalls} tool call(s).`);
+    return;
+  }
+
+  // Non-success terminal states. Surface the reason and (if a stash exists)
+  // remind the user how to roll back.
+  if (result.stopReason === 'cancelled') {
+    channel.appendLine('\n⚠ Task cancelled.');
+    return;
+  }
+  if (result.stopReason === 'aborted_by_user') {
+    channel.appendLine('\n⚠ Task aborted during tool approval.');
+    return;
+  }
+  if (result.stopReason === 'max_iterations') {
+    channel.appendLine('\n⚠ Agent reached max iterations without finishing.');
+    vscode.window.showWarningMessage(
+      `Task stopped — max agent iterations reached. Inspect the Caramelo output channel. ` +
+      (safety.kind === 'stashed' ? `Revert with: git stash pop "${safety.stashName}".` : ''),
+    );
+    return;
+  }
+  if (result.stopReason === 'error') {
+    channel.appendLine(`\n✗ agent error: ${result.error ?? '(unknown)'}`);
+    vscode.window.showErrorMessage(`Task failed: ${result.error ?? 'unknown error'}`);
+    return;
+  }
+  if (result.executedToolCalls === 0) {
+    channel.appendLine('\n⚠ Agent finished without taking any action.');
+    vscode.window.showWarningMessage('Task ended with no changes. See the Caramelo output channel.');
+  } else if (result.toolErrors > 0) {
+    channel.appendLine(
+      `\n⚠ Agent finished with ${result.toolErrors} tool error(s). Task NOT marked complete.`,
+    );
+    vscode.window.showWarningMessage(
+      `Task finished with errors. ${result.toolErrors} tool call(s) failed. See the Caramelo output channel.`,
+    );
+  }
 }
