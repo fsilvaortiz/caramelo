@@ -1,5 +1,12 @@
 import * as vscode from 'vscode';
 import type { Capability, LLMMessage, LLMOptions, LLMProvider } from './types.js';
+import type {
+  AgentEvent,
+  AgentMessage,
+  ProviderToolCallRequest,
+  Tool,
+} from '../agent/types.js';
+import { AuthError } from '../errors.js';
 
 export class CopilotProvider implements LLMProvider {
   readonly id: string;
@@ -75,14 +82,189 @@ export class CopilotProvider implements LLMProvider {
   }
 
   capabilities(): Set<Capability> {
-    // Streaming-only for now. `tool-calling` joins this set once
-    // CopilotProvider.chatWithTools (vscode.lm tool API) ships.
-    return new Set<Capability>(['streaming']);
+    const caps = new Set<Capability>(['streaming']);
+    // We advertise tool-calling once we've selected a model. vscode.lm
+    // doesn't expose a per-model capability flag, and modern Copilot
+    // families (gpt-4o, gpt-4o-mini, claude-3.5-sonnet, …) all support
+    // tools; older gpt-3.5-turbo may not. If the specific model rejects
+    // a tool request, the error surfaces via the runtime's fallback-
+    // notification path (FR-009) rather than a silent downgrade.
+    if (this.model) caps.add('tool-calling');
+    return caps;
+  }
+
+  async *chatWithTools(req: ProviderToolCallRequest): AsyncIterable<AgentEvent> {
+    const family = req.model ?? this.modelFamily;
+    const models = await vscode.lm.selectChatModels({ vendor: 'copilot', family });
+    if (models.length === 0) {
+      throw new AuthError(
+        `No Copilot model available for family "${family}". Is GitHub Copilot installed and active?`,
+      );
+    }
+    const model = models[0];
+
+    const vsMessages = buildVscodeMessages(req.system, req.messages);
+    const vsTools = req.tools.map(toolToVscode);
+
+    // Bridge our AbortSignal onto vscode's CancellationToken API.
+    const cts = new vscode.CancellationTokenSource();
+    if (req.signal) {
+      if (req.signal.aborted) cts.cancel();
+      else req.signal.addEventListener('abort', () => cts.cancel(), { once: true });
+    }
+
+    let response: vscode.LanguageModelChatResponse;
+    try {
+      response = await model.sendRequest(
+        vsMessages,
+        {
+          justification: 'Caramelo agent loop: tool-calling code-editing assistant.',
+          tools: vsTools,
+          toolMode: vscode.LanguageModelChatToolMode.Auto,
+          modelOptions: {
+            ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
+          },
+        },
+        cts.token,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      yield {
+        kind: 'done',
+        reason: 'error',
+        error: `${this.displayName}: ${msg}`,
+      };
+      return;
+    }
+
+    try {
+      for await (const part of response.stream) {
+        // Duck-type on discriminating fields instead of `instanceof`. The
+        // runtime `vscode` module is swapped for a mock in unit tests, so
+        // instanceof would see two different class identities for the
+        // same logical type. `value` on TextPart vs `callId`/`name` on
+        // ToolCallPart is reliable and matches the stable public API.
+        if (
+          typeof (part as { value?: unknown }).value === 'string' &&
+          (part as { callId?: unknown }).callId === undefined
+        ) {
+          yield {
+            kind: 'text',
+            delta: (part as { value: string }).value,
+          };
+          continue;
+        }
+        if (
+          typeof (part as { callId?: unknown }).callId === 'string' &&
+          typeof (part as { name?: unknown }).name === 'string'
+        ) {
+          const tc = part as { callId: string; name: string; input: unknown };
+          // vscode.lm delivers `input` as a fully-parsed object (it does
+          // the JSON.parse on our behalf). Still validate the shape —
+          // a non-object input would break tool dispatch downstream.
+          if (!tc.input || typeof tc.input !== 'object' || Array.isArray(tc.input)) {
+            yield {
+              kind: 'done',
+              reason: 'error',
+              error:
+                `${this.displayName}: tool_call "${tc.name}" input was not an object ` +
+                `(got ${Array.isArray(tc.input) ? 'array' : typeof tc.input}).`,
+            };
+            return;
+          }
+          yield {
+            kind: 'tool_call',
+            call: {
+              id: tc.callId,
+              name: tc.name,
+              arguments: tc.input as Record<string, unknown>,
+            },
+          };
+        }
+        // Other part shapes (future Copilot additions) are ignored —
+        // forward compatibility without blind dispatch.
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      yield {
+        kind: 'done',
+        reason: 'error',
+        error: `${this.displayName}: stream failed — ${msg}`,
+      };
+    }
   }
 
   dispose(): void {
     this.model = undefined;
   }
+}
+
+function toolToVscode(tool: Tool): vscode.LanguageModelChatTool {
+  return {
+    name: tool.name,
+    description: tool.description,
+    // vscode.lm accepts JSON Schema verbatim under `inputSchema`.
+    inputSchema: tool.inputSchema,
+  };
+}
+
+/**
+ * Translate AgentMessage history → vscode.LanguageModelChatMessage[].
+ *
+ * vscode.lm only exposes User and Assistant roles — no `system` and no
+ * `tool`. We encode:
+ *   - system: one prefixed User message `[Instructions]\n{system}` on the
+ *     first turn (matches the existing chat() convention).
+ *   - assistant without tool calls: Assistant(text).
+ *   - assistant WITH tool calls: Assistant with a content array mixing
+ *     LanguageModelTextPart + LanguageModelToolCallPart (same message,
+ *     multiple parts).
+ *   - role:'tool': User containing a LanguageModelToolResultPart linked
+ *     back to the call id. Consecutive tool results aren't merged (unlike
+ *     Anthropic) — vscode.lm accepts them as separate User turns.
+ */
+function buildVscodeMessages(
+  system: string | undefined,
+  messages: AgentMessage[],
+): vscode.LanguageModelChatMessage[] {
+  const out: vscode.LanguageModelChatMessage[] = [];
+  if (system) {
+    out.push(vscode.LanguageModelChatMessage.User(`[Instructions]\n${system}`));
+  }
+  for (const msg of messages) {
+    if (msg.role === 'system') {
+      out.push(vscode.LanguageModelChatMessage.User(`[Instructions]\n${msg.content}`));
+      continue;
+    }
+    if (msg.role === 'user') {
+      out.push(vscode.LanguageModelChatMessage.User(msg.content));
+      continue;
+    }
+    if (msg.role === 'tool') {
+      out.push(
+        vscode.LanguageModelChatMessage.User([
+          new vscode.LanguageModelToolResultPart(msg.toolCallId, [
+            new vscode.LanguageModelTextPart(msg.content),
+          ]),
+        ]),
+      );
+      continue;
+    }
+    // assistant
+    if (msg.toolCalls && msg.toolCalls.length > 0) {
+      const parts: Array<vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart> = [];
+      if (msg.content) parts.push(new vscode.LanguageModelTextPart(msg.content));
+      for (const call of msg.toolCalls) {
+        parts.push(
+          new vscode.LanguageModelToolCallPart(call.id, call.name, call.arguments),
+        );
+      }
+      out.push(vscode.LanguageModelChatMessage.Assistant(parts));
+    } else {
+      out.push(vscode.LanguageModelChatMessage.Assistant(msg.content));
+    }
+  }
+  return out;
 }
 
 /**
