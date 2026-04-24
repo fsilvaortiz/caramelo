@@ -251,13 +251,37 @@ export class ClaudeProvider implements LLMProvider {
           const idx = obj.index as number;
           const block = blocks.get(idx);
           if (block?.kind === 'tool_use') {
-            let args: Record<string, unknown> = {};
-            if (block.json) {
+            // Tools with no required fields (e.g. list_dir) would accept
+            // {} and run with wrong semantics if we silently swallowed a
+            // JSON parse error. Surface it as a terminal error so the
+            // runtime stops and the user sees it.
+            let args: Record<string, unknown>;
+            if (!block.json || block.json.length === 0) {
+              args = {};
+            } else {
               try {
                 const parsed = JSON.parse(block.json);
-                if (parsed && typeof parsed === 'object') args = parsed;
-              } catch {
-                // Leave args empty; the tool will reject via schema validation.
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                  args = parsed as Record<string, unknown>;
+                } else {
+                  yield {
+                    kind: 'done',
+                    reason: 'error',
+                    error:
+                      `${this.displayName}: tool_use block for "${block.name}" produced non-object input ` +
+                      `(got ${typeof parsed}). Cannot dispatch.`,
+                  };
+                  return;
+                }
+              } catch (err) {
+                yield {
+                  kind: 'done',
+                  reason: 'error',
+                  error:
+                    `${this.displayName}: tool_use block for "${block.name}" had malformed input JSON: ` +
+                    `${(err as Error).message}. Raw fragment (first 200 B): ${block.json.slice(0, 200)}`,
+                };
+                return;
               }
             }
             yield {
@@ -304,19 +328,20 @@ function toolToAnthropic(tool: Tool): Record<string, unknown> {
 
 /**
  * Translate the provider-neutral AgentMessage history into Anthropic's
- * content-block format. Specifically:
- *  - assistant messages with toolCalls become content arrays mixing
- *    {type:'text'} and {type:'tool_use'} blocks
- *  - role:'tool' messages become user messages containing a
- *    {type:'tool_result'} block
- *  - system messages are dropped here (Anthropic takes `system` at top level
- *    via the request.system field — the runtime sends that separately).
+ * content-block format.
+ *
+ * Invariant: interleaving a role:'tool' message without the matching
+ * assistant turn's tool_use block earlier in the array produces an
+ * Anthropic 400 "tool_use_id references a tool_use block that does not
+ * exist". Consecutive role:'tool' messages MUST be merged into a single
+ * user turn whose content is a tool_result array — that's the shape the
+ * API accepts.
+ *
+ * System messages are dropped here (Anthropic takes `system` at the
+ * top-level request field; the runtime passes it via request.system).
  */
 function buildAnthropicMessages(messages: AgentMessage[]): Array<Record<string, unknown>> {
   const out: Array<Record<string, unknown>> = [];
-  // Merge consecutive tool-result messages into a single user message because
-  // Anthropic requires tool_results to be grouped with the preceding assistant
-  // turn's tool_use blocks.
   let pendingToolResults: Array<Record<string, unknown>> = [];
   const flushToolResults = (): void => {
     if (pendingToolResults.length === 0) return;

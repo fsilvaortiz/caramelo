@@ -188,4 +188,191 @@ describe('ClaudeProvider.chatWithTools', () => {
       { type: 'tool_result', tool_use_id: 'c1', content: 'file contents' },
     ]);
   });
+
+  it('merges consecutive role:tool messages into a single user turn', async () => {
+    // Anthropic requires tool_result blocks to be grouped after the
+    // matching assistant turn; emitting them as separate user messages
+    // would trigger a 400. The runtime produces one role:'tool' message
+    // per tool call — the provider MUST merge them.
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      body: streamOf([
+        `event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`,
+      ]),
+    } as unknown as Response);
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const provider = new ClaudeProvider(
+      { id: 'c', name: 'Claude', endpoint: 'https://api.anthropic.com', model: 'x', apiKeyId: 'k' },
+      secrets,
+    );
+    await provider.authenticate();
+
+    await collect(
+      provider.chatWithTools({
+        messages: [
+          { role: 'user', content: 'u' },
+          {
+            role: 'assistant',
+            content: '',
+            toolCalls: [
+              { id: 'c1', name: 'file_read', arguments: { path: 'a' } },
+              { id: 'c2', name: 'file_read', arguments: { path: 'b' } },
+            ],
+          },
+          { role: 'tool', toolCallId: 'c1', toolName: 'file_read', content: 'body-a' },
+          { role: 'tool', toolCallId: 'c2', toolName: 'file_read', content: 'body-b', isError: true },
+        ],
+        tools: [readTool],
+      }),
+    );
+    const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+    // Expected shape: user(u) → assistant(tool_use ×2) → user(tool_result ×2)
+    expect(body.messages).toHaveLength(3);
+    expect(body.messages[2].role).toBe('user');
+    expect(body.messages[2].content).toEqual([
+      { type: 'tool_result', tool_use_id: 'c1', content: 'body-a' },
+      { type: 'tool_result', tool_use_id: 'c2', content: 'body-b', is_error: true },
+    ]);
+  });
+
+  it('dispatches 401 as AuthError with provider-name prefix', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      text: async () => 'invalid key',
+    } as unknown as Response);
+
+    const provider = new ClaudeProvider(
+      { id: 'c', name: 'Claude', endpoint: 'https://api.anthropic.com', model: 'x', apiKeyId: 'k' },
+      secrets,
+    );
+    await provider.authenticate();
+    await expect(
+      collect(
+        provider.chatWithTools({ messages: [{ role: 'user', content: 'hi' }], tools: [readTool] }),
+      ),
+    ).rejects.toThrow(/401 Unauthorized/);
+  });
+
+  it('dispatches 500 as ProviderError', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      text: async () => 'overloaded',
+    } as unknown as Response);
+
+    const provider = new ClaudeProvider(
+      { id: 'c', name: 'Claude', endpoint: 'https://api.anthropic.com', model: 'x', apiKeyId: 'k' },
+      secrets,
+    );
+    await provider.authenticate();
+    await expect(
+      collect(
+        provider.chatWithTools({ messages: [{ role: 'user', content: 'hi' }], tools: [readTool] }),
+      ),
+    ).rejects.toThrow(/500 Internal Server Error/);
+  });
+
+  it('handles two concurrent tool_use blocks in a single turn', async () => {
+    // Claude streams two tool_use blocks interleaved by index (not always
+    // 0 then 1 serially). We reassemble by index.
+    const transcript = [
+      `event: content_block_start\ndata: ${JSON.stringify({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'call-0', name: 'file_read', input: {} } })}\n\n`,
+      `event: content_block_start\ndata: ${JSON.stringify({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'call-1', name: 'file_read', input: {} } })}\n\n`,
+      // Interleaved deltas for both blocks.
+      `event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"path":"a"}' } })}\n\n`,
+      `event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"path":"b"}' } })}\n\n`,
+      `event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: 0 })}\n\n`,
+      `event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: 1 })}\n\n`,
+      `event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`,
+    ];
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      body: streamOf(transcript),
+    } as unknown as Response);
+
+    const provider = new ClaudeProvider(
+      { id: 'c', name: 'Claude', endpoint: 'https://api.anthropic.com', model: 'x', apiKeyId: 'k' },
+      secrets,
+    );
+    await provider.authenticate();
+    const events = await collect(
+      provider.chatWithTools({ messages: [{ role: 'user', content: 'dual' }], tools: [readTool] }),
+    );
+    const toolCalls = events.filter((e): e is Extract<AgentEvent, { kind: 'tool_call' }> => e.kind === 'tool_call');
+    expect(toolCalls).toHaveLength(2);
+    expect(toolCalls[0].call.arguments).toEqual({ path: 'a' });
+    expect(toolCalls[1].call.arguments).toEqual({ path: 'b' });
+  });
+
+  it('emits done:error on malformed tool input JSON instead of silently using {}', async () => {
+    // list_dir has no required fields; a silent `{}` would happily list
+    // the workspace root. Regression guard for CR5.
+    const transcript = [
+      `event: content_block_start\ndata: ${JSON.stringify({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'toolu_x', name: 'list_dir', input: {} } })}\n\n`,
+      `event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"path":"src' } })}\n\n`,
+      `event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: 0 })}\n\n`,
+      `event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`,
+    ];
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      body: streamOf(transcript),
+    } as unknown as Response);
+
+    const provider = new ClaudeProvider(
+      { id: 'c', name: 'Claude', endpoint: 'https://api.anthropic.com', model: 'x', apiKeyId: 'k' },
+      secrets,
+    );
+    await provider.authenticate();
+    const events = await collect(
+      provider.chatWithTools({ messages: [{ role: 'user', content: 'x' }], tools: [readTool] }),
+    );
+    const done = events.find((e) => e.kind === 'done');
+    expect(done?.kind).toBe('done');
+    if (done?.kind === 'done') {
+      expect(done.reason).toBe('error');
+      expect(done.error).toMatch(/malformed input JSON/);
+    }
+    // And crucially: no tool_call event was emitted.
+    expect(events.some((e) => e.kind === 'tool_call')).toBe(false);
+  });
+
+  it('aborts the in-flight request when a second chatWithTools call starts', async () => {
+    // First call: never finishes (stream stays open).
+    const firstStream = new ReadableStream<Uint8Array>({ start() { /* never enqueue */ } });
+    const secondStream = streamOf([
+      `event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`,
+    ]);
+    let firstSignal: AbortSignal | undefined;
+    globalThis.fetch = vi.fn().mockImplementation((_url, init) => {
+      if (firstSignal === undefined) {
+        firstSignal = (init as RequestInit).signal as AbortSignal;
+        return Promise.resolve({ ok: true, body: firstStream } as unknown as Response);
+      }
+      return Promise.resolve({ ok: true, body: secondStream } as unknown as Response);
+    });
+
+    const provider = new ClaudeProvider(
+      { id: 'c', name: 'Claude', endpoint: 'https://api.anthropic.com', model: 'x', apiKeyId: 'k' },
+      secrets,
+    );
+    await provider.authenticate();
+
+    // Kick off the first call but do NOT await it — we just need it to
+    // register as in-flight.
+    void collect(
+      provider.chatWithTools({ messages: [{ role: 'user', content: '1' }], tools: [readTool] }),
+    ).catch(() => { /* expected abort */ });
+    // Let the fetch fire.
+    await new Promise((r) => setImmediate(r));
+
+    // Second call — the provider aborts the first in-flight.
+    await collect(
+      provider.chatWithTools({ messages: [{ role: 'user', content: '2' }], tools: [readTool] }),
+    );
+    expect(firstSignal?.aborted).toBe(true);
+  });
 });

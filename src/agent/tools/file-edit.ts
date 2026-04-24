@@ -21,7 +21,7 @@ export const fileEditTool: Tool<{
     'and must be unique in the file — include enough surrounding context to ' +
     'disambiguate. Returns an error (and makes no change) if the search did not ' +
     'match, or matched more than once. Line endings are normalised and the ' +
-    'file\'s dominant EOL is preserved.',
+    "file's dominant EOL is preserved.",
   readOnly: false,
   inputSchema: {
     type: 'object',
@@ -46,16 +46,17 @@ export const fileEditTool: Tool<{
       };
     }
     const current = ctx.io.read(abs);
-    if (current === null) {
+    if (!current.ok) {
       return {
-        summary: `file_edit failed: file missing — ${input.path}`,
+        summary: `file_edit failed: ${current.code} — ${input.path}`,
         content:
-          `error: "${input.path}" does not exist. Use file_write to create a new ` +
-          `file, or file_read first to inspect an existing path.`,
+          current.code === 'ENOENT'
+            ? `error: "${input.path}" does not exist. Use file_write to create a new file.`
+            : `error: could not read "${input.path}" (${current.code}): ${current.message}`,
         isError: true,
       };
     }
-    const currentLF = toLF(current);
+    const currentLF = toLF(current.value);
     const searchLF = toLF(input.search);
     const count = countOccurrences(currentLF, searchLF);
     if (count === 0) {
@@ -65,7 +66,7 @@ export const fileEditTool: Tool<{
           `error: the search block did not match "${input.path}". ` +
           `Read the file again with file_read and copy the existing text byte-for-byte.\n` +
           `expected search (${input.search.length} B):\n${truncate(input.search, 400)}\n` +
-          `first 400 B of file:\n${truncate(current, 400)}`,
+          `first 400 B of file:\n${truncate(current.value, 400)}`,
         isError: true,
       };
     }
@@ -80,14 +81,12 @@ export const fileEditTool: Tool<{
       };
     }
     const replacedLF = replaceFirst(currentLF, searchLF, toLF(input.replace));
-    const finalContent = fromLF(replacedLF, detectDominantEol(current));
-    try {
-      ctx.io.write(abs, finalContent);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+    const finalContent = fromLF(replacedLF, detectDominantEol(current.value));
+    const write = ctx.io.write(abs, finalContent);
+    if (!write.ok) {
       return {
-        summary: `file_edit write failed — ${input.path}`,
-        content: `error: could not write "${input.path}": ${msg}`,
+        summary: `file_edit write failed: ${write.code} — ${input.path}`,
+        content: `error: could not write "${input.path}" (${write.code}): ${write.message}`,
         isError: true,
       };
     }

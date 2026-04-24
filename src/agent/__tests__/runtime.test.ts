@@ -12,6 +12,7 @@ import type {
   ProviderToolCallRequest,
   Tool,
 } from '../types.js';
+import type { Capability } from '../../providers/types.js';
 
 let tmp: string;
 
@@ -33,7 +34,7 @@ function makeScriptedProvider(
 ): unknown {
   let turnIndex = 0;
   return {
-    capabilities: () => new Set<string>(['streaming', 'tool-calling']),
+    capabilities: () => new Set<Capability>(['streaming', 'tool-calling']),
     async *chatWithTools(req: ProviderToolCallRequest) {
       if (turnIndex >= turns.length) {
         throw new Error(`scripted provider ran out of turns (turn ${turnIndex})`);
@@ -253,7 +254,7 @@ describe('AgentRuntime', () => {
     const runtime = new AgentRuntime();
     // Streaming-only provider: has chatWithTools shape but NOT the capability flag.
     const brokenProvider = {
-      capabilities: () => new Set<string>(['streaming']),
+      capabilities: () => new Set<Capability>(['streaming']),
       chatWithTools: async function* () { /* unreachable */ },
     } as unknown;
     await expect(

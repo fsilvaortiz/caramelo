@@ -1,4 +1,5 @@
 import { TimeoutError } from '../errors.js';
+import { log } from '../utils/log.js';
 
 const DEFAULT_SSE_TIMEOUT_MS = 300_000; // 5 minutes
 
@@ -72,8 +73,14 @@ function parseJSONDataLine(part: string): { value?: unknown; done: boolean } {
     if (!data) continue;
     try {
       value = JSON.parse(data);
-    } catch {
-      // Skip malformed JSON
+    } catch (err) {
+      // Malformed JSON is rare but silent drops have hidden real protocol
+      // mismatches in the past. Log at debug — the redacting logger
+      // strips any credentials that may have sneaked into the payload.
+      log.debug(
+        `[sse] dropped malformed JSON data line (${data.length} B): ` +
+        `${data.slice(0, 200)}${data.length > 200 ? '…' : ''} — ${(err as Error).message}`,
+      );
     }
   }
   return { value, done: false };

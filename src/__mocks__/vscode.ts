@@ -39,6 +39,8 @@ export const window = {
   showInformationMessage: () => Promise.resolve(undefined),
   showWarningMessage: () => Promise.resolve(undefined),
   showErrorMessage: () => Promise.resolve(undefined),
+  showQuickPick: () => Promise.resolve(undefined),
+  showInputBox: () => Promise.resolve(undefined),
   withProgress: <T>(_options: unknown, task: () => Promise<T>) => task(),
 };
 

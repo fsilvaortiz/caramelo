@@ -56,7 +56,6 @@ export const grepTool: Tool<{
 
     const cap = Math.min(Math.max(1, input.max_matches ?? MAX_MATCHES), 500);
 
-    // Index the workspace (cached-free, fast enough for <5k files).
     const index = buildWorkspaceIndex(ctx.workspaceRoot);
     let pool = index;
     if (input.path) {
@@ -73,16 +72,26 @@ export const grepTool: Tool<{
     }
 
     const results: string[] = [];
+    const errors: string[] = [];
     let scanned = 0;
     for (const rel of pool) {
       if (ctx.signal.aborted) break;
       scanned++;
       const abs = path.resolve(ctx.workspaceRoot, rel);
       const stat = ctx.io.stat(abs);
-      if (!stat || !stat.isFile || stat.size > MAX_FILE_BYTES) continue;
+      if (!stat.ok) {
+        // A permission error on a workspace file is worth surfacing so
+        // the user knows why a grep is incomplete.
+        errors.push(`${rel}: ${stat.code}`);
+        continue;
+      }
+      if (!stat.value.isFile || stat.value.size > MAX_FILE_BYTES) continue;
       const body = ctx.io.read(abs);
-      if (body === null) continue;
-      const lines = body.split('\n');
+      if (!body.ok) {
+        errors.push(`${rel}: ${body.code}`);
+        continue;
+      }
+      const lines = body.value.split('\n');
       for (let i = 0; i < lines.length; i++) {
         if (re.test(lines[i])) {
           results.push(`${rel}:${i + 1}:${lines[i].slice(0, 300)}`);
@@ -93,11 +102,14 @@ export const grepTool: Tool<{
     }
 
     const truncated = results.length >= cap;
+    const errorBlock = errors.length > 0
+      ? `\nunreadable (${errors.length}): ${errors.slice(0, 10).join(', ')}${errors.length > 10 ? ', …' : ''}`
+      : '';
     return {
-      summary: `grep /${input.pattern}/ → ${results.length} match${results.length === 1 ? '' : 'es'}${truncated ? ' (capped)' : ''}`,
+      summary: `grep /${input.pattern}/ → ${results.length} match${results.length === 1 ? '' : 'es'}${truncated ? ' (capped)' : ''}${errors.length ? ` (${errors.length} unreadable)` : ''}`,
       content:
         `pattern: ${input.pattern}\ncase_sensitive: ${Boolean(input.case_sensitive)}\n` +
-        `scanned_files: ${scanned}\nmatches: ${results.length}${truncated ? ' (capped)' : ''}\n---\n` +
+        `scanned_files: ${scanned}\nmatches: ${results.length}${truncated ? ' (capped)' : ''}${errorBlock}\n---\n` +
         (results.length === 0 ? '(no matches)' : results.join('\n')),
     };
   },

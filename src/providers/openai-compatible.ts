@@ -127,8 +127,8 @@ export class OpenAICompatibleProvider implements LLMProvider {
   }
 
   capabilities(): Set<Capability> {
-    // Phase A: streaming-only. `tool-calling` joins this set when Phase B
-    // (OpenAICompatibleProvider.chatWithTools) ships.
+    // Streaming-only for now. `tool-calling` joins this set once
+    // OpenAICompatibleProvider.chatWithTools ships.
     return new Set<Capability>(['streaming']);
   }
 

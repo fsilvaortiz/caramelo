@@ -72,18 +72,34 @@ interface ValidationResult {
 }
 
 /**
- * Hand-rolled JSON Schema draft-07 validator. We deliberately support only
- * the small subset the built-in tools use (type, required, properties,
- * additionalProperties, enum, minimum/maximum, array items). Enough to
- * refuse bad input from the model but short enough to read in one sitting.
+ * Hand-rolled JSON Schema draft-07 validator. Supports only the subset the
+ * built-in tools use: `type`, `required`, `properties`,
+ * `additionalProperties`, `enum`, `minimum`/`maximum`, `array items`.
+ * Short enough to read in one sitting; wide enough to refuse bad input
+ * from the model.
+ *
+ * Also enforces a schema-author invariant: every name in `required` MUST
+ * appear in `properties`. A typo in the tool schema (a required field
+ * that doesn't exist in properties) would silently accept missing data
+ * at runtime — raise it as a validation error so the author sees it.
  */
 export function validateAgainstSchema(
   value: unknown,
   schema: JSONSchema,
 ): ValidationResult {
   const errors: string[] = [];
+
+  // Schema-author check: required ⊆ properties.
+  for (const req of schema.required ?? []) {
+    if (!(req in schema.properties)) {
+      errors.push(
+        `schema author error: "${req}" is listed in required but is not declared in properties`,
+      );
+    }
+  }
+
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return { ok: false, errors: ['arguments must be a JSON object'] };
+    return { ok: false, errors: [...errors, 'arguments must be a JSON object'] };
   }
   const obj = value as Record<string, unknown>;
 
@@ -122,7 +138,7 @@ function validateProperty(
       if (prop.enum && !prop.enum.includes(value)) {
         errors.push(`"${path}" must be one of ${prop.enum.join(', ')}`);
       }
-      break;
+      return;
     case 'number':
       if (typeof value !== 'number' || !Number.isFinite(value)) {
         errors.push(`"${path}" must be a finite number`);
@@ -134,7 +150,7 @@ function validateProperty(
       if (prop.maximum !== undefined && value > prop.maximum) {
         errors.push(`"${path}" must be <= ${prop.maximum}`);
       }
-      break;
+      return;
     case 'integer':
       if (typeof value !== 'number' || !Number.isInteger(value)) {
         errors.push(`"${path}" must be an integer`);
@@ -146,25 +162,23 @@ function validateProperty(
       if (prop.maximum !== undefined && value > prop.maximum) {
         errors.push(`"${path}" must be <= ${prop.maximum}`);
       }
-      break;
+      return;
     case 'boolean':
       if (typeof value !== 'boolean') errors.push(`"${path}" must be a boolean`);
-      break;
+      return;
     case 'array':
       if (!Array.isArray(value)) {
         errors.push(`"${path}" must be an array`);
         return;
       }
-      if (prop.items) {
-        for (let i = 0; i < value.length; i++) {
-          validateProperty(value[i], prop.items, `${path}[${i}]`, errors);
-        }
+      for (let i = 0; i < value.length; i++) {
+        validateProperty(value[i], prop.items, `${path}[${i}]`, errors);
       }
-      break;
+      return;
     case 'object':
       if (typeof value !== 'object' || value === null || Array.isArray(value)) {
         errors.push(`"${path}" must be an object`);
       }
-      break;
+      return;
   }
 }

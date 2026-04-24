@@ -100,6 +100,22 @@ describe('validateAgainstSchema', () => {
     expect(validateAgainstSchema(null, schema).ok).toBe(false);
     expect(validateAgainstSchema([1, 2], schema).ok).toBe(false);
   });
+
+  it('catches schema-author typos where required names a field not in properties', () => {
+    // If the validator silently accepted this, a tool author could write
+    // `required: ['paht']` (typo) and receive no argument validation for
+    // the real `path` field.
+    const result = validateAgainstSchema(
+      { path: 'a.ts' },
+      {
+        type: 'object',
+        properties: { path: { type: 'string' } },
+        required: ['paht'], // typo
+      },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.errors.some((e) => e.includes('schema author error'))).toBe(true);
+  });
 });
 
 describe('ToolRegistry.execute', () => {

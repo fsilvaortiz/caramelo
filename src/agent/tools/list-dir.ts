@@ -26,21 +26,35 @@ export const listDirTool: Tool<{ path?: string }> = {
       };
     }
     const stat = ctx.io.stat(abs);
-    if (!stat || !stat.isDirectory) {
+    if (!stat.ok) {
+      return {
+        summary: `list_dir: ${stat.code} — ${rel}`,
+        content: `error: could not stat "${rel}" (${stat.code}): ${stat.message}`,
+        isError: true,
+      };
+    }
+    if (!stat.value.isDirectory) {
       return {
         summary: `list_dir: not a directory — ${rel}`,
-        content: `error: "${rel}" does not exist or is not a directory.`,
+        content: `error: "${rel}" exists but is not a directory (isFile=${stat.value.isFile}).`,
         isError: true,
       };
     }
     const entries = ctx.io.readdir(abs);
-    entries.sort((a, b) => {
+    if (!entries.ok) {
+      return {
+        summary: `list_dir: ${entries.code} — ${rel}`,
+        content: `error: could not read directory "${rel}" (${entries.code}): ${entries.message}`,
+        isError: true,
+      };
+    }
+    const sorted = entries.value.slice().sort((a, b) => {
       if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
-    const rendered = entries.map((e) => (e.isDirectory ? `${e.name}/` : e.name)).join('\n');
+    const rendered = sorted.map((e) => (e.isDirectory ? `${e.name}/` : e.name)).join('\n');
     return {
-      summary: `list_dir ${rel} (${entries.length} entries)`,
+      summary: `list_dir ${rel} (${sorted.length} entries)`,
       content: `dir: ${rel}\nentries:\n${rendered || '(empty)'}`,
     };
   },

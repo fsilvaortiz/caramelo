@@ -1,4 +1,5 @@
 import type { FileIO } from './tools/io.js';
+import type { Capability } from '../providers/types.js';
 
 /**
  * JSON Schema subset understood by all three providers (Claude's `input_schema`,
@@ -13,15 +14,48 @@ export interface JSONSchema {
   additionalProperties?: boolean;
 }
 
-export interface JSONSchemaProperty {
-  type: 'string' | 'number' | 'integer' | 'boolean' | 'array' | 'object';
-  description?: string;
-  enum?: readonly (string | number)[];
-  items?: JSONSchemaProperty;
-  minimum?: number;
-  maximum?: number;
-  default?: unknown;
-}
+/**
+ * Type-discriminated property — `items` only valid on arrays,
+ * `minimum`/`maximum` only on numbers/integers, etc. Prevents authors
+ * from writing `{ type: 'string', minimum: 1 }` and expecting the
+ * validator to honour it.
+ */
+export type JSONSchemaProperty =
+  | {
+      type: 'string';
+      description?: string;
+      enum?: readonly string[];
+      default?: string;
+    }
+  | {
+      type: 'number';
+      description?: string;
+      minimum?: number;
+      maximum?: number;
+      default?: number;
+    }
+  | {
+      type: 'integer';
+      description?: string;
+      minimum?: number;
+      maximum?: number;
+      default?: number;
+    }
+  | {
+      type: 'boolean';
+      description?: string;
+      default?: boolean;
+    }
+  | {
+      type: 'array';
+      description?: string;
+      items: JSONSchemaProperty;
+      default?: readonly unknown[];
+    }
+  | {
+      type: 'object';
+      description?: string;
+    };
 
 export interface ToolContext {
   workspaceRoot: string;
@@ -63,21 +97,32 @@ export interface AgentToolCall {
   arguments: Record<string, unknown>;
 }
 
-export interface AgentMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool';
-  /**
-   * Text for system/user/assistant messages; serialised tool_result payload for
-   * role='tool'. May be empty on an assistant turn whose only content is
-   * tool calls.
-   */
-  content: string;
-  /** Present only on role='assistant' when the turn produced tool calls. */
-  toolCalls?: AgentToolCall[];
-  /** Present only on role='tool'. Links the result back to the call. */
-  toolCallId?: string;
-  toolName?: string;
-  isError?: boolean;
-}
+/**
+ * Role-discriminated union: illegal combinations (e.g. `toolCalls` on a
+ * user message, `toolCallId` missing on a tool message) are now
+ * unrepresentable rather than caught by JSDoc alone.
+ */
+export type AgentMessage =
+  | { role: 'system'; content: string }
+  | { role: 'user'; content: string }
+  | {
+      role: 'assistant';
+      /**
+       * May be empty when the turn's only output is tool calls. Assistant
+       * turns WITHOUT tool calls and empty content are still valid; the
+       * loop treats them as terminal messages.
+       */
+      content: string;
+      toolCalls?: AgentToolCall[];
+    }
+  | {
+      role: 'tool';
+      toolCallId: string;
+      toolName: string;
+      /** Serialised tool_result payload. */
+      content: string;
+      isError?: boolean;
+    };
 
 export type AgentEvent =
   | { kind: 'iteration'; index: number; reason: 'start' | 'continue' }
@@ -133,7 +178,7 @@ export interface ProviderToolCallRequest {
  */
 export interface ToolCallingProvider {
   chatWithTools(req: ProviderToolCallRequest): AsyncIterable<AgentEvent>;
-  capabilities(): Set<string>;
+  capabilities(): Set<Capability>;
 }
 
 /**
@@ -145,7 +190,7 @@ export interface ToolCallingProvider {
 export function isToolCallingProvider(p: unknown): p is ToolCallingProvider {
   if (typeof p !== 'object' || p === null) return false;
   const provider = p as {
-    capabilities?: () => Set<string>;
+    capabilities?: () => Set<Capability>;
     chatWithTools?: unknown;
   };
   if (typeof provider.capabilities !== 'function') return false;
@@ -178,7 +223,7 @@ export interface AgentRequest {
 export interface AgentResult {
   /**
    * The full message history after the run, including every assistant turn
-   * and every tool_result. Useful for logging + Phase B resume flows.
+   * and every tool_result. Useful for logging + future resume-run flows.
    */
   messages: AgentMessage[];
   stopReason:

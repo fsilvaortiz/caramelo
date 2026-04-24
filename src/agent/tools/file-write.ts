@@ -6,7 +6,6 @@ import { detectDominantEol, fromLF, toLF } from './edit-core.js';
 export const fileWriteTool: Tool<{
   path: string;
   content: string;
-  /** When true, overwrites an existing file; default false (refuses overwrite). */
   overwrite?: boolean;
 }> = {
   name: 'file_write',
@@ -47,28 +46,44 @@ export const fileWriteTool: Tool<{
         isError: true,
       };
     }
-    try {
-      ctx.io.mkdirp(path.dirname(abs));
-      let body = input.content;
-      if (existed) {
-        const current = ctx.io.read(abs) ?? '';
-        const eol = detectDominantEol(current);
-        body = fromLF(toLF(body), eol);
-      }
-      ctx.io.write(abs, body);
+
+    const mkdir = ctx.io.mkdirp(path.dirname(abs));
+    if (!mkdir.ok) {
       return {
-        summary: existed
-          ? `file_write overwrote ${input.path} (${body.length} B)`
-          : `file_write created ${input.path} (${body.length} B)`,
-        content: `ok: ${existed ? 'overwrote' : 'created'} "${input.path}" (${body.length} bytes).`,
-      };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return {
-        summary: `file_write failed — ${input.path}`,
-        content: `error: write failed for "${input.path}": ${msg}`,
+        summary: `file_write failed: ${mkdir.code} — ${input.path}`,
+        content: `error: mkdirp failed for "${input.path}" (${mkdir.code}): ${mkdir.message}`,
         isError: true,
       };
     }
+
+    // When overwriting, preserve the file's dominant EOL so we don't flip
+    // a CRLF file to LF under the LLM's feet.
+    let body = input.content;
+    if (existed) {
+      const current = ctx.io.read(abs);
+      if (!current.ok) {
+        return {
+          summary: `file_write failed: ${current.code} reading existing — ${input.path}`,
+          content: `error: could not read existing "${input.path}" for EOL detection (${current.code}): ${current.message}`,
+          isError: true,
+        };
+      }
+      body = fromLF(toLF(body), detectDominantEol(current.value));
+    }
+
+    const write = ctx.io.write(abs, body);
+    if (!write.ok) {
+      return {
+        summary: `file_write failed: ${write.code} — ${input.path}`,
+        content: `error: write failed for "${input.path}" (${write.code}): ${write.message}`,
+        isError: true,
+      };
+    }
+    return {
+      summary: existed
+        ? `file_write overwrote ${input.path} (${body.length} B)`
+        : `file_write created ${input.path} (${body.length} B)`,
+      content: `ok: ${existed ? 'overwrote' : 'created'} "${input.path}" (${body.length} bytes).`,
+    };
   },
 };

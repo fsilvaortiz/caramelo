@@ -36,23 +36,30 @@ export const fileReadTool: Tool<{
       };
     }
     const stat = ctx.io.stat(abs);
-    if (!stat || !stat.isFile) {
+    if (!stat.ok) {
+      return {
+        summary: `file_read: ${stat.code} — ${input.path}`,
+        content: `error: could not stat "${input.path}" (${stat.code}): ${stat.message}`,
+        isError: true,
+      };
+    }
+    if (!stat.value.isFile) {
       return {
         summary: `file_read: not a file — ${input.path}`,
-        content: `error: "${input.path}" does not exist or is not a regular file.`,
+        content: `error: "${input.path}" exists but is not a regular file (isDirectory=${stat.value.isDirectory}).`,
         isError: true,
       };
     }
     const raw = ctx.io.read(abs);
-    if (raw === null) {
+    if (!raw.ok) {
       return {
-        summary: `file_read failed — ${input.path}`,
-        content: `error: could not read "${input.path}" (non-UTF-8 or IO failure).`,
+        summary: `file_read failed: ${raw.code} — ${input.path}`,
+        content: `error: could not read "${input.path}" (${raw.code}): ${raw.message}`,
         isError: true,
       };
     }
 
-    let body = raw;
+    let body = raw.value;
     const totalLines = body.split('\n').length;
     if (input.start_line || input.end_line) {
       const lines = body.split('\n');
@@ -67,9 +74,9 @@ export const fileReadTool: Tool<{
       truncated = true;
     }
 
-    const header = `path: ${input.path}\nbytes: ${raw.length}\nlines: ${totalLines}${truncated ? '\ntruncated: true (first 50KB shown)' : ''}\n---\n`;
+    const header = `path: ${input.path}\nbytes: ${raw.value.length}\nlines: ${totalLines}${truncated ? '\ntruncated: true (first 50KB shown)' : ''}\n---\n`;
     return {
-      summary: `file_read ${input.path} (${raw.length} B, ${totalLines} lines${truncated ? ', truncated' : ''})`,
+      summary: `file_read ${input.path} (${raw.value.length} B, ${totalLines} lines${truncated ? ', truncated' : ''})`,
       content: header + body,
     };
   },

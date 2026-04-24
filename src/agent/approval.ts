@@ -3,13 +3,14 @@ import type {
   ApprovalContext,
   ApprovalDecision,
   ApprovalPolicy,
-  Tool,
   ToolCallApproval,
 } from './types.js';
 
 /**
- * Lets every tool run without prompting. Intended for unit tests. Never
- * install this in production.
+ * Allow everything without prompting. **Tests only** — install this in
+ * production and the bash tool will auto-execute arbitrary commands. The
+ * `autoAllAllPolicy` below is the user-facing counterpart that still
+ * honours bash's always-prompt invariant.
  */
 export const autoAllowPolicy: ApprovalPolicy = {
   async decide(calls): Promise<Record<string, ApprovalDecision>> {
@@ -17,19 +18,23 @@ export const autoAllowPolicy: ApprovalPolicy = {
   },
 };
 
-export interface WriteApprovalHooks {
-  /**
-   * Default batched-write prompt: one QuickPick covers every write in the
-   * turn. Returns a map from each call.id to a decision.
-   */
+export interface ApprovalHooks {
+  /** Batched-write prompt (auto-reads-batched-writes default policy). */
   confirmWrites(
     writes: ToolCallApproval[],
     ctx: ApprovalContext,
   ): Promise<Record<string, ApprovalDecision>>;
+  /** Per-call write prompt (per-call policy). */
+  confirmWrite(
+    call: ToolCallApproval,
+    ctx: ApprovalContext,
+  ): Promise<ApprovalDecision>;
   /**
-   * Default per-call prompt for bash (shows the literal command) — bash is
-   * ALWAYS prompted, regardless of the surrounding policy, because it is
-   * the only tool that can run arbitrary code.
+   * Per-call bash prompt. Bash is ALWAYS routed through this regardless
+   * of which policy is in force — it's the only tool that can run
+   * arbitrary code, so the user MUST confirm every invocation. See
+   * Constitution VII ("No code path may silently auto-execute bash") and
+   * FR-006.
    */
   confirmBash(
     call: ToolCallApproval,
@@ -39,90 +44,71 @@ export interface WriteApprovalHooks {
 
 /**
  * Default production policy:
- *  - reads (readOnly=true) auto-allowed
- *  - bash ALWAYS per-call, showing the literal command
+ *  - reads (`readOnly=true`) auto-allowed
+ *  - bash ALWAYS per-call, showing the literal command (hard-coded)
  *  - other writes batched into a single per-turn approval
  *
- * Honours `caramelo.autoApplyEdits` (treated as "allow all writes this run"
- * without a prompt) and a session-scoped override set by the "don't ask
- * again this session" QuickPick option.
+ * Honours `caramelo.autoApplyEdits` (treated as "allow all writes this
+ * run" without a prompt) and a session-scoped override set by the
+ * "don't ask again this session" QuickPick option. Auto-apply NEVER
+ * upgrades bash approvals — bash always prompts.
  */
 export function readOnlyAutoBatchedWritesPolicy(opts: {
   isAutoApplyEnabled(): boolean;
-  /** Set when the user picks "apply all — don't ask again this session". */
   setSessionAutoApply(v: boolean): void;
-  hooks?: Partial<WriteApprovalHooks>;
+  hooks?: Partial<ApprovalHooks>;
   /** Override to include non-bash tools in the always-prompt set. */
   alwaysPromptTools?: Set<string>;
 }): ApprovalPolicy {
-  const hooks: WriteApprovalHooks = {
-    confirmWrites: opts.hooks?.confirmWrites ?? defaultConfirmWrites(opts),
-    confirmBash: opts.hooks?.confirmBash ?? defaultConfirmBash(),
-  };
+  const hooks = resolveHooks(opts.hooks, opts);
   const alwaysPrompt = opts.alwaysPromptTools ?? new Set(['bash']);
 
   return {
     async decide(calls, ctx) {
       const out: Record<string, ApprovalDecision> = {};
-
-      // 1. Reads auto-allow.
       const writes: ToolCallApproval[] = [];
-      const bashLike: ToolCallApproval[] = [];
+      const alwaysPromptCalls: ToolCallApproval[] = [];
+
       for (const c of calls) {
-        if (c.tool.readOnly) {
-          out[c.call.id] = 'allow';
-        } else if (alwaysPrompt.has(c.tool.name)) {
-          bashLike.push(c);
-        } else {
-          writes.push(c);
-        }
+        if (c.tool.readOnly) out[c.call.id] = 'allow';
+        else if (alwaysPrompt.has(c.tool.name)) alwaysPromptCalls.push(c);
+        else writes.push(c);
       }
 
-      // 2. Bash-like: per-call prompt. `abort` from any one stops the run.
-      for (const c of bashLike) {
+      // Bash (and any other tool in alwaysPrompt): per-call prompt.
+      for (const c of alwaysPromptCalls) {
         const d = await hooks.confirmBash(c, ctx);
         out[c.call.id] = d;
         if (d === 'abort') return out;
       }
 
-      // 3. Writes: batched approval (skipped when auto-apply is on).
-      if (writes.length > 0) {
-        if (opts.isAutoApplyEnabled()) {
-          for (const w of writes) out[w.call.id] = 'allow';
-        } else {
-          const decisions = await hooks.confirmWrites(writes, ctx);
-          for (const w of writes) out[w.call.id] = decisions[w.call.id] ?? 'deny';
-        }
+      if (writes.length === 0) return out;
+
+      if (opts.isAutoApplyEnabled()) {
+        for (const w of writes) out[w.call.id] = 'allow';
+        return out;
       }
+
+      const decisions = await hooks.confirmWrites(writes, ctx);
+      // Missing entries from a custom hook default to 'deny' — safer than
+      // 'allow' when the hook is incomplete. An 'abort' from the hook on
+      // any one call aborts the whole run (runtime handles the cascade).
+      for (const w of writes) out[w.call.id] = decisions[w.call.id] ?? 'deny';
       return out;
     },
   };
 }
 
 /**
- * Per-call policy (alternative): every non-read call gets its own prompt.
- * Used when `caramelo.agent.approval` is set to "per-call".
+ * Per-call policy — every non-read call gets its own modal. Used when
+ * `caramelo.agent.approval === "per-call"`. Bash still goes through
+ * `confirmBash`; other writes use `confirmWrite` (NOT the bash hook —
+ * those have different argument shapes).
  */
 export function perCallPolicy(opts: {
-  hooks?: Partial<WriteApprovalHooks>;
+  hooks?: Partial<ApprovalHooks>;
 }): ApprovalPolicy {
-  const hooks: WriteApprovalHooks = {
-    confirmBash: opts.hooks?.confirmBash ?? defaultConfirmBash(),
-    confirmWrites:
-      opts.hooks?.confirmWrites ??
-      (async (writes) => {
-        const out: Record<string, ApprovalDecision> = {};
-        for (const w of writes) {
-          const d = await defaultConfirmBash()(w, {
-            workspaceRoot: '',
-            turnIndex: 0,
-          });
-          out[w.call.id] = d;
-          if (d === 'abort') return out;
-        }
-        return out;
-      }),
-  };
+  const hooks = resolveHooks(opts.hooks);
   return {
     async decide(calls, ctx) {
       const out: Record<string, ApprovalDecision> = {};
@@ -131,39 +117,65 @@ export function perCallPolicy(opts: {
           out[c.call.id] = 'allow';
           continue;
         }
-        if (c.tool.name === 'bash') {
-          const d = await hooks.confirmBash(c, ctx);
-          out[c.call.id] = d;
-          if (d === 'abort') return out;
-        } else {
-          const d = await defaultConfirmSingleWrite()(c, ctx);
-          out[c.call.id] = d;
-          if (d === 'abort') return out;
-        }
+        const ask = c.tool.name === 'bash' ? hooks.confirmBash : hooks.confirmWrite;
+        const d = await ask(c, ctx);
+        out[c.call.id] = d;
+        if (d === 'abort') return out;
       }
       return out;
     },
   };
 }
 
-/** Auto-allow everything (reads + writes + bash). Rely on the git stash. */
-export function autoAllAllPolicy(): ApprovalPolicy {
+/**
+ * "Auto-all" — auto-allow reads and writes. **bash still prompts
+ * per-call** (Constitution VII: no silent auto-execute). Users opt in
+ * via `caramelo.agent.approval === "auto-all"` and accept that
+ * recoverability relies on the git safety stash.
+ */
+export function autoAllAllPolicy(opts?: {
+  hooks?: Partial<Pick<ApprovalHooks, 'confirmBash'>>;
+}): ApprovalPolicy {
+  const confirmBash = opts?.hooks?.confirmBash ?? defaultConfirmBash();
   return {
-    async decide(calls) {
-      return Object.fromEntries(calls.map((c) => [c.call.id, 'allow'] as const));
+    async decide(calls, ctx) {
+      const out: Record<string, ApprovalDecision> = {};
+      for (const c of calls) {
+        if (c.tool.name === 'bash') {
+          const d = await confirmBash(c, ctx);
+          out[c.call.id] = d;
+          if (d === 'abort') return out;
+          continue;
+        }
+        out[c.call.id] = 'allow';
+      }
+      return out;
     },
   };
 }
 
-// --- Default vscode-backed prompts ---
+// --- Hook resolution + defaults -----------------------------------------
+
+function resolveHooks(
+  hooks: Partial<ApprovalHooks> | undefined,
+  writeBatchOpts?: { setSessionAutoApply(v: boolean): void },
+): ApprovalHooks {
+  return {
+    confirmWrites:
+      hooks?.confirmWrites ??
+      defaultConfirmWrites(
+        writeBatchOpts ?? { setSessionAutoApply: () => { /* noop */ } },
+      ),
+    confirmWrite: hooks?.confirmWrite ?? defaultConfirmSingleWrite(),
+    confirmBash: hooks?.confirmBash ?? defaultConfirmBash(),
+  };
+}
 
 function defaultConfirmWrites(opts: {
   setSessionAutoApply(v: boolean): void;
-}): WriteApprovalHooks['confirmWrites'] {
+}): ApprovalHooks['confirmWrites'] {
   return async (writes) => {
-    const paths = writes
-      .map((w) => describeWrite(w))
-      .join('\n');
+    const paths = writes.map((w) => describeWrite(w)).join('\n');
     const pick = await vscode.window.showQuickPick(
       [
         { label: '$(check) Apply all', description: `${writes.length} change(s)`, value: 'apply-all' as const },
@@ -181,14 +193,12 @@ function defaultConfirmWrites(opts: {
     if (!pick || pick.value === 'cancel') {
       return Object.fromEntries(writes.map((w) => [w.call.id, 'abort'] as const));
     }
-    if (pick.value === 'apply-all-session') {
-      opts.setSessionAutoApply(true);
-    }
+    if (pick.value === 'apply-all-session') opts.setSessionAutoApply(true);
     return Object.fromEntries(writes.map((w) => [w.call.id, 'allow'] as const));
   };
 }
 
-function defaultConfirmBash(): WriteApprovalHooks['confirmBash'] {
+function defaultConfirmBash(): ApprovalHooks['confirmBash'] {
   return async (c) => {
     const cmd = String(c.call.arguments.command ?? '(missing)');
     const cwd = c.call.arguments.cwd ? `  cwd: ${String(c.call.arguments.cwd)}` : '';
@@ -205,10 +215,7 @@ function defaultConfirmBash(): WriteApprovalHooks['confirmBash'] {
   };
 }
 
-function defaultConfirmSingleWrite(): (
-  c: ToolCallApproval,
-  ctx: ApprovalContext,
-) => Promise<ApprovalDecision> {
+function defaultConfirmSingleWrite(): ApprovalHooks['confirmWrite'] {
   return async (c) => {
     const choice = await vscode.window.showWarningMessage(
       `Caramelo agent: ${describeWrite(c)}`,
@@ -241,6 +248,3 @@ function describeWrite(c: ToolCallApproval): string {
 function truncate(s: string, n: number): string {
   return s.length <= n ? s : `${s.slice(0, n)}…`;
 }
-
-// Re-export Tool so downstream importers don't need two imports for typing.
-export type { Tool };

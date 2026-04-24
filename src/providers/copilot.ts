@@ -75,8 +75,8 @@ export class CopilotProvider implements LLMProvider {
   }
 
   capabilities(): Set<Capability> {
-    // Phase A: streaming-only. `tool-calling` joins this set when Phase C
-    // (CopilotProvider.chatWithTools via vscode.lm tool support) ships.
+    // Streaming-only for now. `tool-calling` joins this set once
+    // CopilotProvider.chatWithTools (vscode.lm tool API) ships.
     return new Set<Capability>(['streaming']);
   }
 

@@ -61,6 +61,9 @@ export const bashTool: Tool<{
       let stderr = '';
       let stdoutTruncated = false;
       let stderrTruncated = false;
+      // `settled` dedups the four competing termination paths (child exit,
+      // child error, timeout, external abort). The first one to fire wins;
+      // later ones short-circuit so the Promise never resolves twice.
       let settled = false;
 
       const finish = (result: { exitCode: number | null; reason: 'exit' | 'timeout' | 'aborted' | 'error'; error?: string }) => {
@@ -116,18 +119,28 @@ export const bashTool: Tool<{
         finish({ exitCode: code, reason: 'exit' });
       });
 
-      const timer = setTimeout(() => {
+      // SIGKILL on timeout/abort. If kill itself fails (EPERM on a
+      // process we no longer own, ESRCH if the child has already died)
+      // surface the error in the result rather than silently resolving
+      // — an orphaned child process is a real concern.
+      const killChild = (): string | undefined => {
         try {
           child.kill('SIGKILL');
-        } catch { /* noop */ }
-        finish({ exitCode: null, reason: 'timeout' });
+          return undefined;
+        } catch (err) {
+          const e = err as NodeJS.ErrnoException;
+          return `kill failed: ${e.code ?? 'EUNKNOWN'} ${e.message ?? String(err)}`;
+        }
+      };
+
+      const timer = setTimeout(() => {
+        const killErr = killChild();
+        finish({ exitCode: null, reason: 'timeout', error: killErr });
       }, timeoutMs);
 
       const onAbort = () => {
-        try {
-          child.kill('SIGKILL');
-        } catch { /* noop */ }
-        finish({ exitCode: null, reason: 'aborted' });
+        const killErr = killChild();
+        finish({ exitCode: null, reason: 'aborted', error: killErr });
       };
       ctx.signal.addEventListener('abort', onAbort, { once: true });
     });

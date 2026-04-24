@@ -17,33 +17,12 @@ import { nodeFs } from './tools/io.js';
 const DEFAULT_MAX_ITERATIONS = 15;
 const HARD_MAX_ITERATIONS = 50;
 
-/**
- * Drives a multi-turn agent conversation:
- *
- *   loop:
- *     provider.chatWithTools(messages, tools) → stream of events
- *       ├─ text deltas → forward to caller
- *       └─ tool_call   → collect
- *     when stream ends:
- *       if no tool calls → done (reason: 'stop')
- *       else:
- *         approval.decide(all calls)
- *         execute allowed calls (sequentially; reads in parallel is a future optimisation)
- *         append tool_result messages
- *         continue loop
- *
- * The loop yields control via `onEvent` so the output channel stays alive
- * during long runs. Cancellation: `signal.aborted` aborts immediately
- * between tool calls; provider streams also receive the signal so they abort
- * in-flight HTTP requests.
- */
 export class AgentRuntime {
   async run(provider: unknown, request: AgentRequest): Promise<AgentResult> {
     if (!isToolCallingProvider(provider)) {
       throw new Error(
         "Active provider does not advertise the 'tool-calling' capability. " +
-        'Switch to a provider whose capabilities() includes tool-calling ' +
-        '(Claude in Phase A; OpenAI + Copilot in later phases).',
+        'Switch to a provider whose capabilities() includes tool-calling.',
       );
     }
 
@@ -123,8 +102,9 @@ export class AgentRuntime {
         return buildResult();
       }
 
-      // Persist the assistant turn so the next provider call sees the same
-      // history the model produced.
+      // The full history is re-sent to the provider on the next turn —
+      // Anthropic, OpenAI, and vscode.lm are all stateless at the HTTP
+      // layer, so this `messages` array IS the conversation memory.
       messages.push({
         role: 'assistant',
         content: assistantText,
@@ -137,17 +117,12 @@ export class AgentRuntime {
         return buildResult();
       }
 
-      // Approval for this turn's calls.
       const approvalInput: ToolCallApproval[] = assistantCalls
         .map((call) => {
           const tool = toolByName.get(call.name);
           return tool ? ({ call, tool } as ToolCallApproval) : null;
         })
         .filter((v): v is ToolCallApproval => v !== null);
-
-      // Calls to unknown tools short-circuit with is_error results so the
-      // model gets informed and can retry with a real tool name.
-      const unknownCalls = assistantCalls.filter((c) => !toolByName.has(c.name));
 
       let decisions: Record<string, 'allow' | 'deny' | 'abort'> = {};
       if (approvalInput.length > 0) {
@@ -165,8 +140,11 @@ export class AgentRuntime {
       }
 
       if (Object.values(decisions).some((d) => d === 'abort')) {
-        // Feed back an aborted tool_result for each call so the history stays
-        // balanced, but stop the loop afterwards.
+        // Anthropic rejects a follow-up request with an orphan tool_use
+        // block (no matching tool_result in the next user turn with a
+        // 400). Even though we're about to stop, we MUST emit a synthetic
+        // is_error result for each call so the saved message history
+        // stays resumable — future "continue run" features depend on it.
         for (const call of assistantCalls) {
           const reason = 'user aborted the agent run during approval.';
           messages.push(buildToolResultMessage(call, {
@@ -226,10 +204,6 @@ export class AgentRuntime {
         executedToolCalls++;
         if (result.isError) toolErrors++;
       }
-
-      // Referencing this silences the `unknown-calls array unused` lint without
-      // letting it drift: if we ever need to branch on it, the variable is here.
-      void unknownCalls;
     }
 
     // Ran off the iteration budget.
@@ -243,7 +217,6 @@ export class AgentRuntime {
   }
 }
 
-/** Convert a ToolResult into the `role:'tool'` message format the agent loop records. */
 function buildToolResultMessage(call: AgentToolCall, result: ToolResult): AgentMessage {
   return {
     role: 'tool',
@@ -264,5 +237,4 @@ const neverAbort: AbortSignal = (() => {
   return controller.signal;
 })();
 
-// Re-export so callers can import the public surface from one module.
 export type { Tool, ToolCallingProvider };
