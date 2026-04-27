@@ -108,9 +108,9 @@ export function activate(context: vscode.ExtensionContext): void {
     log.warn('template sync failed:', err);
   });
 
-  // Status bar. Click focuses the Providers sidebar webview — never opens
-  // a top-bar QuickPick. Provider selection / editing lives inline in
-  // the sidebar (see feedback_no_quickpick).
+  // Status bar. Click focuses the Providers sidebar webview — never
+  // opens a top-bar QuickPick. Provider selection / editing lives
+  // inline in the sidebar.
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBar.command = 'caramelo.providers.focus';
   const updateStatusBar = () => {

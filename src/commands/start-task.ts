@@ -636,12 +636,22 @@ async function runTaskWithAgent(args: AgentRunArgs): Promise<void> {
     });
   }
   if (outcome.toast) {
-    if (outcome.toast.severity === 'info') {
-      vscode.window.showInformationMessage(outcome.toast.message);
-    } else if (outcome.toast.severity === 'warning') {
-      vscode.window.showWarningMessage(outcome.toast.message);
-    } else {
-      vscode.window.showErrorMessage(outcome.toast.message);
+    // Exhaustive switch — adding a new severity tag fails the build at
+    // the `_exh: never` line until this dispatch is updated.
+    switch (outcome.toast.severity) {
+      case 'info':
+        vscode.window.showInformationMessage(outcome.toast.message);
+        break;
+      case 'warning':
+        vscode.window.showWarningMessage(outcome.toast.message);
+        break;
+      case 'error':
+        vscode.window.showErrorMessage(outcome.toast.message);
+        break;
+      default: {
+        const _exh: never = outcome.toast.severity;
+        void _exh;
+      }
     }
   }
 }

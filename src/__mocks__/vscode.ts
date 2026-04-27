@@ -41,8 +41,23 @@ export const window = {
   showErrorMessage: () => Promise.resolve(undefined),
   showQuickPick: () => Promise.resolve(undefined),
   showInputBox: () => Promise.resolve(undefined),
-  withProgress: <T>(_options: unknown, task: () => Promise<T>) => task(),
+  showTextDocument: () => Promise.resolve(undefined),
+  // The real withProgress invokes the task with (progress, token); the
+  // task's cancellation handler subscribes via token.onCancellationRequested.
+  // Tests that don't care about cancellation get a no-op token.
+  withProgress: <T>(
+    _options: unknown,
+    task: (progress: { report: () => void }, token: { isCancellationRequested: boolean; onCancellationRequested: () => { dispose(): void } }) => Promise<T>,
+  ) =>
+    task(
+      { report: () => { /* noop */ } },
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: () => ({ dispose: () => { /* noop */ } }),
+      },
+    ),
 };
+
 
 export const workspace = {
   getConfiguration: () => ({
@@ -53,7 +68,29 @@ export const workspace = {
   // Tests default to a trusted workspace; the handful that exercise
   // the untrusted-workspace gate override this value directly.
   isTrusted: true as boolean,
+  workspaceFolders: undefined as ReadonlyArray<{ uri: { fsPath: string } }> | undefined,
+  createFileSystemWatcher: () => ({
+    onDidChange: () => ({ dispose: () => { /* noop */ } }),
+    onDidCreate: () => ({ dispose: () => { /* noop */ } }),
+    onDidDelete: () => ({ dispose: () => { /* noop */ } }),
+    dispose: () => { /* noop */ },
+  }),
+  onDidSaveTextDocument: () => ({ dispose: () => { /* noop */ } }),
+  openTextDocument: () => Promise.resolve({}),
 };
+
+export const env = {
+  openExternal: () => Promise.resolve(true),
+};
+
+export class Uri {
+  static file(p: string): { fsPath: string; toString: () => string } {
+    return { fsPath: p, toString: () => p };
+  }
+  static parse(s: string): { toString: () => string } {
+    return { toString: () => s };
+  }
+}
 
 export const commands = {
   executeCommand: () => Promise.resolve(undefined),
