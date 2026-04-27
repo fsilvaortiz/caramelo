@@ -3,6 +3,15 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { SPECS_DIR_NAME, PHASE_FILES, COMMAND_IDS } from '../../constants.js';
 import { isObject, safeJsonParse } from '../../utils/safe-json.js';
+import { writeAnswersToSpec, type ClarificationQuestion } from '../../commands/clarify.js';
+
+interface ClarifySession {
+  specName: string;
+  specPath: string;
+  questions: ClarificationQuestion[];
+  /** Map from question index → option index. -1 means "skipped". */
+  answers: Map<number, number>;
+}
 
 export class WorkflowViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'caramelo.workflow';
@@ -10,6 +19,7 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider {
   private workspaceUri: vscode.Uri | undefined;
   private onSpecCreatedCallback?: (name: string) => void;
   private collapsedSpecs = new Set<string>();
+  private clarifySession: ClarifySession | null = null;
 
   constructor(private readonly extensionUri: vscode.Uri) {
     this.workspaceUri = vscode.workspace.workspaceFolders?.[0]?.uri;
@@ -83,9 +93,67 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider {
         case 'openDag':
           vscode.commands.executeCommand('caramelo.openDag');
           break;
+        case 'clarifyAnswer':
+          this.handleClarifyAnswer(msg.questionIndex, msg.optionIndex);
+          break;
+        case 'clarifySubmit':
+          this.handleClarifySubmit();
+          break;
+        case 'clarifyCancel':
+          this.handleClarifyCancel();
+          break;
       }
     });
 
+    this.refresh();
+  }
+
+  /**
+   * Open the inline clarification Q&A panel. Replaces the regular spec
+   * list while a session is active so the user is focused on the task.
+   * Cancel/Submit actions in the panel return them to the normal view.
+   */
+  startClarify(specName: string, specPath: string, questions: ClarificationQuestion[]): void {
+    this.clarifySession = { specName, specPath, questions, answers: new Map() };
+    if (this.view) this.view.show?.(true);
+    this.refresh();
+  }
+
+  private handleClarifyAnswer(questionIndex: number, optionIndex: number): void {
+    if (!this.clarifySession) return;
+    const q = this.clarifySession.questions[questionIndex];
+    if (!q) return;
+    // optionIndex === -1 is the "skip" marker.
+    if (optionIndex !== -1 && (optionIndex < 0 || optionIndex >= q.options.length)) return;
+    this.clarifySession.answers.set(questionIndex, optionIndex);
+    this.refresh();
+  }
+
+  private handleClarifyCancel(): void {
+    this.clarifySession = null;
+    this.refresh();
+  }
+
+  private handleClarifySubmit(): void {
+    if (!this.clarifySession) return;
+    const { specName, specPath, questions, answers } = this.clarifySession;
+    const collected: Array<{ question: string; answer: string }> = [];
+    for (let i = 0; i < questions.length; i++) {
+      const idx = answers.get(i);
+      if (idx === undefined || idx === -1) continue;
+      collected.push({ question: questions[i].question, answer: questions[i].options[idx] });
+    }
+    if (collected.length > 0) {
+      writeAnswersToSpec(specPath, collected);
+      vscode.window.showInformationMessage(`${collected.length} clarification(s) recorded in spec.`);
+      // Open the updated spec so the user sees the new section.
+      vscode.workspace.openTextDocument(specPath).then((doc) => {
+        vscode.window.showTextDocument(doc);
+      });
+    } else {
+      vscode.window.showInformationMessage(`No clarifications recorded — ${specName} unchanged.`);
+    }
+    this.clarifySession = null;
     this.refresh();
   }
 
@@ -137,6 +205,16 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider {
 
   private getHtml(): string {
     const hasCon = this.hasConstitution();
+
+    // Inline clarification Q&A takes over the full panel while active.
+    // Cancel/Submit returns the user to the normal spec list view.
+    if (this.clarifySession) {
+      return `<!DOCTYPE html><html><head>${STYLES}</head><body>
+      ${this.renderClarifyPanel(this.clarifySession)}
+      ${SCRIPT}
+      </body></html>`;
+    }
+
     const specs = this.getSpecs();
 
     return `<!DOCTYPE html><html><head>${STYLES}</head><body>
@@ -148,6 +226,64 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider {
 
     ${SCRIPT}
     </body></html>`;
+  }
+
+  private renderClarifyPanel(session: ClarifySession): string {
+    const total = session.questions.length;
+    const answered = session.questions.filter((_, i) => {
+      const a = session.answers.get(i);
+      return a !== undefined && a !== -1;
+    }).length;
+
+    const questionsHtml = session.questions
+      .map((q, i) => this.renderClarifyQuestion(q, i, session.answers.get(i)))
+      .join('');
+
+    return `<div class="clarify-root">
+      <div class="clarify-header">
+        <div class="clarify-title">Clarify · ${escHtml(session.specName)}</div>
+        <div class="clarify-progress">${answered}/${total} answered</div>
+      </div>
+      <div class="clarify-hint">Pick an option for each ambiguity. Skipped questions are not written to the spec. Submit when done.</div>
+      ${questionsHtml}
+      <div class="clarify-actions">
+        <button class="btn-primary" onclick="msg('clarifySubmit')" ${answered === 0 ? 'disabled' : ''}>
+          Submit ${answered} answer${answered === 1 ? '' : 's'}
+        </button>
+        <button class="btn-secondary" onclick="msg('clarifyCancel')">Cancel</button>
+      </div>
+    </div>`;
+  }
+
+  private renderClarifyQuestion(
+    q: ClarificationQuestion,
+    qIdx: number,
+    selected: number | undefined,
+  ): string {
+    const optionsHtml = q.options
+      .map((opt, optIdx) => {
+        const isSelected = selected === optIdx;
+        const isRecommended = optIdx === q.recommended;
+        const cls = `clarify-option ${isSelected ? 'selected' : ''} ${isRecommended ? 'recommended' : ''}`;
+        const star = isRecommended ? '<span class="clarify-star">★</span>' : '';
+        return `<button class="${cls}" onclick="msg('clarifyAnswer',{questionIndex:${qIdx},optionIndex:${optIdx}})">
+          ${star}<span>${escHtml(opt)}</span>
+        </button>`;
+      })
+      .join('');
+
+    const isSkipped = selected === -1;
+    const isAnswered = selected !== undefined && selected >= 0;
+    const skipFooter = isSkipped
+      ? `<div class="clarify-skip-state">⊘ Skipped — pick an option above to record an answer.</div>`
+      : isAnswered
+        ? ''
+        : `<button class="clarify-skip" onclick="msg('clarifyAnswer',{questionIndex:${qIdx},optionIndex:-1})">⊘ Skip this question</button>`;
+    return `<div class="clarify-question ${selected !== undefined ? 'answered' : ''}">
+      <div class="clarify-q-text">Q${qIdx + 1}. ${escHtml(q.question)}</div>
+      <div class="clarify-options">${optionsHtml}</div>
+      ${skipFooter}
+    </div>`;
   }
 
   private renderConstitution(has: boolean): string {
@@ -560,4 +696,66 @@ body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); 
   background: transparent; color: #0052CC; cursor: pointer; font-size: 0.9em; font-weight: 600;
 }
 .btn-jira:hover { background: rgba(0,82,204,0.1); }
+
+/* Clarify Q&A panel */
+.clarify-root { display: flex; flex-direction: column; gap: 10px; }
+.clarify-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-bottom: 6px; border-bottom: 1px solid var(--vscode-widget-border, rgba(255,255,255,0.1));
+}
+.clarify-title { font-weight: 700; font-size: 1em; }
+.clarify-progress { font-size: 0.8em; color: var(--vscode-descriptionForeground); }
+.clarify-hint {
+  font-size: 0.8em; color: var(--vscode-descriptionForeground);
+  background: rgba(33,150,243,0.05); border-left: 2px solid #2196F3;
+  padding: 6px 8px; border-radius: 3px;
+}
+.clarify-question {
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-widget-border, rgba(255,255,255,0.1));
+  border-radius: 6px; padding: 10px; display: flex; flex-direction: column; gap: 6px;
+}
+.clarify-question.answered { border-color: rgba(76,175,80,0.4); }
+.clarify-q-text { font-weight: 600; font-size: 0.9em; line-height: 1.35; }
+.clarify-options { display: flex; flex-direction: column; gap: 4px; }
+.clarify-option {
+  display: flex; align-items: flex-start; gap: 6px;
+  padding: 6px 8px; border-radius: 4px;
+  background: transparent;
+  border: 1px solid var(--vscode-widget-border, rgba(255,255,255,0.15));
+  color: var(--vscode-foreground);
+  cursor: pointer; font-size: 0.85em; font-family: inherit; text-align: left;
+  line-height: 1.3;
+}
+.clarify-option:hover {
+  border-color: var(--vscode-focusBorder);
+  background: var(--vscode-list-hoverBackground, rgba(255,255,255,0.04));
+}
+.clarify-option.selected {
+  border-color: #4CAF50;
+  background: rgba(76,175,80,0.12);
+}
+.clarify-option.recommended { border-color: rgba(33,150,243,0.5); }
+.clarify-option.recommended.selected { border-color: #4CAF50; }
+.clarify-star { color: #FFC107; flex-shrink: 0; }
+.clarify-skip {
+  align-self: flex-start; background: transparent;
+  border: 1px dashed var(--vscode-widget-border, rgba(255,255,255,0.2));
+  color: var(--vscode-descriptionForeground);
+  padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 0.75em; font-family: inherit;
+}
+.clarify-skip:hover { color: var(--vscode-foreground); border-color: var(--vscode-focusBorder); }
+.clarify-skip-state {
+  font-size: 0.75em; color: var(--vscode-descriptionForeground); font-style: italic;
+}
+.clarify-actions { display: flex; gap: 6px; margin-top: 4px; }
+.clarify-actions .btn-primary { flex: 1; }
+.clarify-actions .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-secondary {
+  padding: 6px 10px; border-radius: 4px; cursor: pointer;
+  background: transparent; color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-widget-border, rgba(255,255,255,0.2));
+  font-family: inherit; font-size: 0.9em;
+}
+.btn-secondary:hover { border-color: var(--vscode-focusBorder); }
 </style>`;

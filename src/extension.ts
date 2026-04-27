@@ -14,7 +14,6 @@ import { SpecWorkspace } from './specs/workspace.js';
 import { TemplateManager } from './speckit/templates.js';
 import { WorkflowEngine } from './specs/workflow.js';
 import { selectProvider } from './commands/select-provider.js';
-import { newSpec } from './commands/new-spec.js';
 import { runPhase } from './commands/run-phase.js';
 import { approvePhase } from './commands/approve-phase.js';
 import { startTask } from './commands/start-task.js';
@@ -200,7 +199,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(COMMAND_IDS.syncTemplates, () => syncTemplates(templateSync)),
     vscode.commands.registerCommand('caramelo.clarify', () => {
       if (editorContext.currentSpecName && specWorkspace) {
-        clarifySpec(editorContext.currentSpecName, specWorkspace, registry);
+        clarifySpec(editorContext.currentSpecName, specWorkspace, registry, workflowView);
       }
     }),
     vscode.commands.registerCommand('caramelo.analyze', () => {
