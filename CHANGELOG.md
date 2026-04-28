@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.1.0] - 2026-04-28
+
+### Added (major)
+
+- **Agentic tool-calling loop for `/start-task`, `/plan`, and `/tasks`**. Replaces the legacy single-shot SEARCH/REPLACE protocol with a multi-turn agent that calls `file_read` / `file_edit` / `file_write` / `grep` / `glob` / `list_dir` / `bash` until it terminates with no tool calls. Each tool is workspace-sandboxed; bounded iteration count protects against runaway loops; cancellation propagates from the status-bar abort all the way down to in-flight HTTP / `vscode.lm` requests.
+- **Tool-calling capability across all three providers**: Anthropic Claude (`tool_use` content blocks + `tool_result`), OpenAI-compatible (function-calling with index-keyed tool_call delta reassembly — works for OpenAI, Ollama, LM Studio, Groq, Gemini OpenAI shim, custom endpoints), and GitHub Copilot (`vscode.lm` `LanguageModelChatTool` + `LanguageModelToolCallPart`).
+- **Capability registry on `LLMProvider`**: typed `capabilities()` set (`'streaming' | 'tool-calling' | 'reasoning' | 'prompt-caching' | 'citations' | 'multimodal' | 'vision'`). Runtime code branches on capabilities, never on provider type strings — adding a new vendor no longer requires teaching every call site about it. Type-string dispatch in business logic is now a build break.
+- **Inline clarify panel** in the Workflow sidebar replaces the prior sequential top-bar QuickPicks. Each ambiguity renders as a card with selectable option buttons (★ marks the LLM's recommendation), per-question Skip, batch Submit / Cancel. Submit writes a dated session under `## Clarifications` (HH:MM differentiator avoids duplicate same-day blocks); cancel discards without touching the file.
+- **Centered modal for batched write approval** (replaces the prior top-bar QuickPick). Lists every proposed write in the modal's detail field; same shape as the existing bash-approval modal so the three approval surfaces are visually consistent.
+
+### Security
+
+- **Workspace-trust gate**: `/start-task` and phase generation refuse in untrusted workspaces — both the agent path AND the legacy fallback. The check sits before the safety stash so the user is never asked to "proceed without backup" only to be refused after.
+- **Output Channel redaction**: every tool argument, tool-result summary, text delta, denial reason, and error string passes through `redactString` before reaching the channel. Bearer / Authorization / URL-embedded credentials are stripped — even when a tool result or file read echoes them back.
+- **`bash` is always per-call**: regardless of the approval policy. The `auto-all` mode exists for read+write convenience but bash is hard-coded to always prompt with the literal command and a 30s default / 120s hard-max timeout. SIGKILL on timeout/abort.
+- **Workspace-root sandbox via `fs.realpathSync`**: every filesystem tool resolves the existing path prefix through realpath and re-checks containment, so a symlink inside the workspace pointing at `~/.ssh` is refused even though the lexical path passes.
+- **Webview Content-Security-Policy** + `escHtml` hardened to also escape `'` so attribute-context interpolation is safe in single-quoted attrs.
+
+### Changed
+
+- **Status bar click + `caramelo.addProvider` route to the Providers sidebar** instead of opening top-bar wizards.
+- **Phase generation** for `design` and `tasks` runs through the agent loop when the active provider supports tool-calling — the LLM inspects the codebase while writing the artifact, so proposed file paths and module references are real, not hallucinated.
+- **Run prologue**: every agent run starts with a one-line summary in the Output Channel — `▶ agent start  provider=…  model=…  capabilities=[…]  tools=N  approval=…  bash=on/off  maxIter=…` — so "what did the LLM see?" is answerable from the channel alone, no debugger required.
+- **`AgentMessage` is a role-discriminated union**: illegal combinations (e.g. `toolCalls` on a user message) are unrepresentable rather than caught by JSDoc.
+- **`TaskOutcome` is a discriminated union**: `markComplete: true` is only representable on `kind: 'success'` — a regression that marks `max_iterations` or `error` as complete now fails at the type level.
+
+### Settings
+
+- `caramelo.useAgentLoop` (boolean, default `true`) — kill switch to fall back to legacy SEARCH/REPLACE path while dogfooding.
+- `caramelo.enableBashTool` (boolean, default `true`) — exposes bash to the agent. When `false`, bash isn't even in the tool list sent to the LLM.
+- `caramelo.agent.maxIterations` (number, default 15, range [3,50]) — cap per agent run; runaway loops terminate cleanly with a summary.
+- `caramelo.agent.approval` (enum: `"auto-reads-batched-writes"` | `"per-call"` | `"auto-all"`, default `"auto-reads-batched-writes"`) — reads auto-allow, bash always prompts, writes batched into a single per-turn modal.
+
+### Tests
+
+286 passing across 28 files (140 new since 0.0.10). Replay-style transcripts cover Claude / OpenAI / Copilot tool-calling translation, fragmented argument JSON, malformed-JSON regression guards, and provider abort classification. Multi-turn agent runtime tests cover cancellation, approval denial, abort propagation, max-iterations clamping, and the synthetic-tool_result invariant. Sandbox tests prove path-escape refusal, file-edit ambiguity rejection, and `bash` timeout/abort SIGKILL semantics. Webview tests cover the typed `WebviewMsg` protocol, every postMessage rejection path, and the clarify session lifecycle (start, skip, cancel, submit, write-failure toast, re-entry prompt with picks vs no prompt with skips-only).
+
+### Internal / refactors
+
+- New subsystem at `src/agent/` (types, runtime, tool-registry with hand-rolled JSON Schema draft-07 validator, approval policies, OutputChannel formatter, 7 tools sharing a `FileIO` abstraction lifted from `task-edits/apply.ts`).
+- `src/providers/sse.ts` gains `parseSSEEvents` (yields parsed JSON events; sibling to the existing `parseSSEStream` text extractor).
+- Dead code removal: `src/commands/new-spec.ts` (orphaned since the workflow webview gained its inline form).
+- `redactString` exported from `utils/log.ts` so the agent's events formatter can apply the same redactor that protects `log.info`/`log.warn`.
+
+### Notes
+
+- The legacy SEARCH/REPLACE path is preserved as a fallback (`caramelo.useAgentLoop=false`) for the duration of a dogfooding window. Removal is targeted for a later release once two consecutive weeks of A+B+C deployment show zero regressions vs the legacy path.
+- Bundle size: 230 KB compiled JS (Constitution ceiling 250 KB). 60 KB headroom remains for the next feature drop.
+
 ## [0.0.10] - 2026-04-18
 
 ### Fixed (critical)
