@@ -1,0 +1,57 @@
+name: Release
+
+# Builds the .vsix on every `v*.*.*` tag push, verifies tag ↔ package.json
+# parity, runs lint/tests/type-check, and attaches the packaged extension
+# to the GitHub Release for the tag. Publishing to the Visual Studio
+# Marketplace remains a manual step (upload the attached .vsix at
+# https://marketplace.visualstudio.com/manage/publishers/fsilvaortiz).
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to attach the .vsix to the GitHub Release
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Verify tag matches package.json version
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME ($TAG_VERSION) does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+          echo "VSIX_NAME=caramelo-${PKG_VERSION}.vsix" >> "$GITHUB_ENV"
+
+      - run: npm run lint
+      - run: npm test
+      - run: npx tsc --noEmit
+
+      - name: Package extension
+        run: npx vsce package --out "$VSIX_NAME"
+
+      - name: Attach .vsix to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Create the release if it doesn't exist yet (idempotent), then
+          # (re)upload the packaged .vsix.
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --notes "See CHANGELOG.md for release notes."
+          fi
+          gh release upload "$GITHUB_REF_NAME" "$VSIX_NAME" --clobber
