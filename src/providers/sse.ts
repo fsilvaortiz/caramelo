@@ -1,6 +1,90 @@
 import { TimeoutError } from '../errors.js';
+import { log } from '../utils/log.js';
 
 const DEFAULT_SSE_TIMEOUT_MS = 300_000; // 5 minutes
+
+/**
+ * Yields parsed JSON event objects from an SSE stream. Unlike
+ * `parseSSEStream`, this does not extract a substring from each event —
+ * callers receive the full parsed JSON so they can branch on `type`, etc.
+ * Used by providers that need to see every event (tool-calling).
+ */
+export async function* parseSSEEvents(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  options: { timeoutMs?: number } = {},
+): AsyncIterable<unknown> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_SSE_TIMEOUT_MS;
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    while (true) {
+      const readPromise = reader.read();
+      const timeoutPromise = new Promise<{ done: true; value: undefined }>((_, reject) => {
+        timeoutHandle = setTimeout(
+          () =>
+            reject(
+              new TimeoutError(
+                `LLM response timeout — no data received for ${Math.round(timeoutMs / 1000)}s`,
+              ),
+            ),
+          timeoutMs,
+        );
+      });
+
+      let result: { done: boolean; value?: Uint8Array };
+      try {
+        result = await Promise.race([readPromise, timeoutPromise]);
+      } finally {
+        if (timeoutHandle !== undefined) {
+          clearTimeout(timeoutHandle);
+          timeoutHandle = undefined;
+        }
+      }
+
+      if (result.done) break;
+      buffer += decoder.decode(result.value, { stream: true });
+
+      const parts = buffer.split(/\n\n/);
+      buffer = parts.pop() ?? '';
+      for (const part of parts) {
+        const event = parseJSONDataLine(part);
+        if (event.done) return;
+        if (event.value !== undefined) yield event.value;
+      }
+    }
+    if (buffer.trim()) {
+      const event = parseJSONDataLine(buffer);
+      if (event.value !== undefined) yield event.value;
+    }
+  } finally {
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+    reader.releaseLock();
+  }
+}
+
+function parseJSONDataLine(part: string): { value?: unknown; done: boolean } {
+  let value: unknown | undefined;
+  for (const line of part.split('\n')) {
+    if (!line.startsWith('data: ')) continue;
+    const data = line.slice(6).trim();
+    if (data === '[DONE]') return { value, done: true };
+    if (!data) continue;
+    try {
+      value = JSON.parse(data);
+    } catch (err) {
+      // Malformed JSON is rare but silent drops have hidden real protocol
+      // mismatches in the past. Log at debug — the redacting logger
+      // strips any credentials that may have sneaked into the payload.
+      log.debug(
+        `[sse] dropped malformed JSON data line (${data.length} B): ` +
+        `${data.slice(0, 200)}${data.length > 200 ? '…' : ''} — ${(err as Error).message}`,
+      );
+    }
+  }
+  return { value, done: false };
+}
 
 export async function* parseSSEStream(
   reader: ReadableStreamDefaultReader<Uint8Array>,

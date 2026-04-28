@@ -3,6 +3,49 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { SPECS_DIR_NAME, PHASE_FILES, COMMAND_IDS } from '../../constants.js';
 import { isObject, safeJsonParse } from '../../utils/safe-json.js';
+import { writeAnswersToSpec, type ClarificationQuestion } from '../../commands/clarify.js';
+import { log } from '../../utils/log.js';
+
+/**
+ * The sidebar tracks clarify state as a discriminated `Answer` rather
+ * than the prior `number` with a -1 magic value: TS narrows on `kind`,
+ * "what does -1 mean?" stops being a comment, and the wire protocol
+ * splits into `clarifyAnswer` (pick) and `clarifySkip` (skip) commands
+ * so each carries only the fields it needs.
+ */
+type Answer =
+  | { kind: 'pick'; optionIndex: number }
+  | { kind: 'skip' };
+
+interface ClarifySession {
+  specName: string;
+  specPath: string;
+  questions: ClarificationQuestion[];
+  answers: Map<number, Answer>;
+}
+
+/**
+ * Wire protocol between the sidebar webview and the extension host.
+ * Every postMessage payload validates against this union before
+ * dispatch — a malformed message logs and is silently dropped instead
+ * of casting to `any` and propagating undefined fields.
+ */
+export type WebviewMsg =
+  | { command: 'openConstitution' }
+  | { command: 'createSpec'; name: string; description: string }
+  | { command: 'runPhase'; specName: string; phaseType: string }
+  | { command: 'approvePhase'; specName: string; phaseType: string }
+  | { command: 'openFile'; path: string }
+  | { command: 'toggleTask'; filePath: string; line: number; done: boolean }
+  | { command: 'toggleSpec'; name: string }
+  | { command: 'runAllTasks'; path: string }
+  | { command: 'createSpecFromJira' }
+  | { command: 'openExternal'; url: string }
+  | { command: 'openDag' }
+  | { command: 'clarifyAnswer'; questionIndex: number; optionIndex: number }
+  | { command: 'clarifySkip'; questionIndex: number }
+  | { command: 'clarifySubmit' }
+  | { command: 'clarifyCancel' };
 
 export class WorkflowViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'caramelo.workflow';
@@ -10,6 +53,7 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider {
   private workspaceUri: vscode.Uri | undefined;
   private onSpecCreatedCallback?: (name: string) => void;
   private collapsedSpecs = new Set<string>();
+  private clarifySession: ClarifySession | null = null;
 
   constructor(private readonly extensionUri: vscode.Uri) {
     this.workspaceUri = vscode.workspace.workspaceFolders?.[0]?.uri;
@@ -37,55 +81,172 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider {
     this.view = webviewView;
     webviewView.webview.options = { enableScripts: true };
 
-    webviewView.webview.onDidReceiveMessage((msg) => {
-      switch (msg.command) {
-        case 'openConstitution':
-          vscode.commands.executeCommand(COMMAND_IDS.editConstitution);
-          break;
-        case 'createSpec':
-          this.handleCreateSpec(msg.name, msg.description);
-          break;
-        case 'runPhase':
-          vscode.commands.executeCommand(COMMAND_IDS.runPhase, msg.specName, msg.phaseType);
-          break;
-        case 'approvePhase':
-          vscode.commands.executeCommand(COMMAND_IDS.approvePhase, msg.specName, msg.phaseType);
-          setTimeout(() => this.refresh(), 300);
-          break;
-        case 'openFile':
-          vscode.commands.executeCommand('vscode.open', vscode.Uri.file(msg.path));
-          break;
-        case 'toggleTask':
-          this.toggleTask(msg.filePath, msg.line, msg.done);
-          break;
-        case 'toggleSpec':
-          if (this.collapsedSpecs.has(msg.name)) {
-            this.collapsedSpecs.delete(msg.name);
-          } else {
-            this.collapsedSpecs.add(msg.name);
-          }
-          this.refresh();
-          break;
-        case 'runAllTasks':
-          if (msg.path) {
-            vscode.commands.executeCommand('vscode.open', vscode.Uri.file(msg.path)).then(() => {
-              setTimeout(() => vscode.commands.executeCommand('caramelo.runAllTasks'), 500);
-            });
-          }
-          break;
-        case 'createSpecFromJira':
-          vscode.commands.executeCommand('caramelo.createSpecFromJira');
-          setTimeout(() => this.refresh(), 500);
-          break;
-        case 'openExternal':
-          if (msg.url) vscode.env.openExternal(vscode.Uri.parse(msg.url));
-          break;
-        case 'openDag':
-          vscode.commands.executeCommand('caramelo.openDag');
-          break;
+    webviewView.webview.onDidReceiveMessage((raw: unknown) => {
+      const msg = parseWebviewMsg(raw);
+      if (!msg) {
+        log.warn('[workflow-view] dropped malformed webview message:', raw);
+        return;
       }
+      this.dispatch(msg);
     });
 
+    // Drop our reference when the panel closes — a stale `this.view`
+    // makes `view.show?.(true)` throw on the next startClarify, and
+    // leaving a session attached to a destroyed webview wastes memory.
+    webviewView.onDidDispose(() => {
+      this.view = undefined;
+      this.clarifySession = null;
+    });
+
+    this.refresh();
+  }
+
+  /** Public so tests can drive the dispatcher without a webview. */
+  dispatch(msg: WebviewMsg): void {
+    switch (msg.command) {
+      case 'openConstitution':
+        vscode.commands.executeCommand(COMMAND_IDS.editConstitution);
+        return;
+      case 'createSpec':
+        this.handleCreateSpec(msg.name, msg.description);
+        return;
+      case 'runPhase':
+        vscode.commands.executeCommand(COMMAND_IDS.runPhase, msg.specName, msg.phaseType);
+        return;
+      case 'approvePhase':
+        vscode.commands.executeCommand(COMMAND_IDS.approvePhase, msg.specName, msg.phaseType);
+        setTimeout(() => this.refresh(), 300);
+        return;
+      case 'openFile':
+        vscode.commands.executeCommand('vscode.open', vscode.Uri.file(msg.path));
+        return;
+      case 'toggleTask':
+        this.toggleTask(msg.filePath, msg.line, msg.done);
+        return;
+      case 'toggleSpec':
+        if (this.collapsedSpecs.has(msg.name)) this.collapsedSpecs.delete(msg.name);
+        else this.collapsedSpecs.add(msg.name);
+        this.refresh();
+        return;
+      case 'runAllTasks':
+        vscode.commands.executeCommand('vscode.open', vscode.Uri.file(msg.path)).then(() => {
+          setTimeout(() => vscode.commands.executeCommand('caramelo.runAllTasks'), 500);
+        });
+        return;
+      case 'createSpecFromJira':
+        vscode.commands.executeCommand('caramelo.createSpecFromJira');
+        setTimeout(() => this.refresh(), 500);
+        return;
+      case 'openExternal':
+        vscode.env.openExternal(vscode.Uri.parse(msg.url));
+        return;
+      case 'openDag':
+        vscode.commands.executeCommand('caramelo.openDag');
+        return;
+      case 'clarifyAnswer':
+        this.handleClarifyAnswer(msg.questionIndex, msg.optionIndex);
+        return;
+      case 'clarifySkip':
+        this.handleClarifySkip(msg.questionIndex);
+        return;
+      case 'clarifySubmit':
+        this.handleClarifySubmit();
+        return;
+      case 'clarifyCancel':
+        this.handleClarifyCancel();
+        return;
+    }
+    // Exhaustiveness — TS errors if a new variant is added without a case.
+    const _exhaustive: never = msg;
+    void _exhaustive;
+  }
+
+  /**
+   * Open the inline clarification Q&A panel. If a previous session is
+   * still mid-flight with answers picked, prompt the user before
+   * discarding (modal — not a top-bar QuickPick).
+   */
+  async startClarify(
+    specName: string,
+    specPath: string,
+    questions: ClarificationQuestion[],
+  ): Promise<void> {
+    if (this.clarifySession && hasPickedAnswers(this.clarifySession)) {
+      const choice = await vscode.window.showWarningMessage(
+        `An active clarify session for "${this.clarifySession.specName}" has unsubmitted answers. ` +
+        `Discard them and start over with "${specName}"?`,
+        { modal: true },
+        'Discard and continue',
+        'Keep current',
+      );
+      if (choice !== 'Discard and continue') return;
+    }
+    this.clarifySession = { specName, specPath, questions, answers: new Map() };
+    if (this.view) this.view.show?.(true);
+    this.refresh();
+  }
+
+  handleClarifyAnswer(questionIndex: number, optionIndex: number): void {
+    if (!this.clarifySession) return;
+    if (!Number.isInteger(questionIndex) || !Number.isInteger(optionIndex)) return;
+    const q = this.clarifySession.questions[questionIndex];
+    if (!q) return;
+    if (optionIndex < 0 || optionIndex >= q.options.length) return;
+    this.clarifySession.answers.set(questionIndex, { kind: 'pick', optionIndex });
+    this.refresh();
+  }
+
+  handleClarifySkip(questionIndex: number): void {
+    if (!this.clarifySession) return;
+    if (!Number.isInteger(questionIndex)) return;
+    const q = this.clarifySession.questions[questionIndex];
+    if (!q) return;
+    this.clarifySession.answers.set(questionIndex, { kind: 'skip' });
+    this.refresh();
+  }
+
+  handleClarifyCancel(): void {
+    this.clarifySession = null;
+    this.refresh();
+  }
+
+  handleClarifySubmit(): void {
+    if (!this.clarifySession) return;
+    const { specName, specPath, questions, answers } = this.clarifySession;
+
+    // Unanswered questions and explicit skips both drop out — the
+    // product decision is "we only persist what the user chose to
+    // answer; everything else is left for the next clarify pass".
+    const collected: Array<{ question: string; answer: string }> = [];
+    for (let i = 0; i < questions.length; i++) {
+      const a = answers.get(i);
+      if (!a || a.kind !== 'pick') continue;
+      collected.push({ question: questions[i].question, answer: questions[i].options[a.optionIndex] });
+    }
+
+    if (collected.length === 0) {
+      vscode.window.showInformationMessage(`No clarifications recorded — ${specName} unchanged.`);
+      this.clarifySession = null;
+      this.refresh();
+      return;
+    }
+
+    const result = writeAnswersToSpec(specPath, collected);
+    if (result.ok) {
+      vscode.window.showInformationMessage(
+        `${collected.length} clarification(s) recorded in spec.`,
+      );
+      vscode.workspace.openTextDocument(specPath).then((doc) => {
+        vscode.window.showTextDocument(doc);
+      });
+    } else {
+      // Toast the actual failure instead of pretending we wrote.
+      const detail = result.error instanceof Error ? result.error.message : String(result.error ?? '');
+      vscode.window.showErrorMessage(
+        `Caramelo: failed to write clarifications (${result.reason}${detail ? `: ${detail}` : ''}).`,
+      );
+    }
+    this.clarifySession = null;
     this.refresh();
   }
 
@@ -137,9 +298,33 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider {
 
   private getHtml(): string {
     const hasCon = this.hasConstitution();
+    const cspSource = this.view?.webview.cspSource ?? '';
+    // Lock the webview down: scripts only from the host's cspSource (we
+    // ship inline scripts via nonce-less default-src 'self' isn't enough
+    // for inline; `'unsafe-inline'` is the minimum compatible setting
+    // until we move SCRIPT into a separate file). The point of the meta
+    // tag here is `default-src 'none'` — no remote fetch / no eval / no
+    // arbitrary frame.
+    const csp =
+      `<meta http-equiv="Content-Security-Policy" content="` +
+      `default-src 'none'; ` +
+      `style-src ${cspSource} 'unsafe-inline'; ` +
+      `script-src 'unsafe-inline'; ` +
+      `img-src ${cspSource} https: data:;">`;
+    const head = `${csp}${STYLES}`;
+
+    // Inline clarification Q&A takes over the full panel while active.
+    // Cancel/Submit returns the user to the normal spec list view.
+    if (this.clarifySession) {
+      return `<!DOCTYPE html><html><head>${head}</head><body>
+      ${this.renderClarifyPanel(this.clarifySession)}
+      ${SCRIPT}
+      </body></html>`;
+    }
+
     const specs = this.getSpecs();
 
-    return `<!DOCTYPE html><html><head>${STYLES}</head><body>
+    return `<!DOCTYPE html><html><head>${head}</head><body>
 
     ${this.renderConstitution(hasCon)}
     ${this.renderNewSpecForm(hasCon)}
@@ -148,6 +333,65 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider {
 
     ${SCRIPT}
     </body></html>`;
+  }
+
+  private renderClarifyPanel(session: ClarifySession): string {
+    const total = session.questions.length;
+    let pickedCount = 0;
+    for (const a of session.answers.values()) if (a.kind === 'pick') pickedCount++;
+
+    const questionsHtml = session.questions
+      .map((q, i) => this.renderClarifyQuestion(q, i, session.answers.get(i)))
+      .join('');
+
+    return `<div class="clarify-root">
+      <div class="clarify-header">
+        <div class="clarify-title">Clarify · ${escHtml(session.specName)}</div>
+        <div class="clarify-progress">${pickedCount}/${total} answered</div>
+      </div>
+      <div class="clarify-hint">Pick an option for each ambiguity. Skipped questions are not written to the spec. Submit when done.</div>
+      ${questionsHtml}
+      <div class="clarify-actions">
+        <button class="btn-primary" onclick="msg('clarifySubmit')" ${pickedCount === 0 ? 'disabled' : ''}>
+          Submit ${pickedCount} answer${pickedCount === 1 ? '' : 's'}
+        </button>
+        <button class="btn-secondary" onclick="msg('clarifyCancel')">Cancel</button>
+      </div>
+    </div>`;
+  }
+
+  private renderClarifyQuestion(
+    q: ClarificationQuestion,
+    qIdx: number,
+    answer: Answer | undefined,
+  ): string {
+    const isSkipped = answer?.kind === 'skip';
+    const isPicked = answer?.kind === 'pick';
+    const pickedIdx = isPicked ? answer.optionIndex : -1;
+
+    const optionsHtml = q.options
+      .map((opt, optIdx) => {
+        const isSelected = optIdx === pickedIdx;
+        const isRecommended = optIdx === q.recommended;
+        const cls = `clarify-option ${isSelected ? 'selected' : ''} ${isRecommended ? 'recommended' : ''}`;
+        const star = isRecommended ? '<span class="clarify-star">★</span>' : '';
+        return `<button class="${cls}" onclick="msg('clarifyAnswer',{questionIndex:${qIdx},optionIndex:${optIdx}})">
+          ${star}<span>${escHtml(opt)}</span>
+        </button>`;
+      })
+      .join('');
+
+    const skipFooter = isSkipped
+      ? `<div class="clarify-skip-state">⊘ Skipped — pick an option above to record an answer.</div>`
+      : isPicked
+        ? ''
+        : `<button class="clarify-skip" onclick="msg('clarifySkip',{questionIndex:${qIdx}})">⊘ Skip this question</button>`;
+
+    return `<div class="clarify-question ${answer ? 'answered' : ''}">
+      <div class="clarify-q-text">Q${qIdx + 1}. ${escHtml(q.question)}</div>
+      <div class="clarify-options">${optionsHtml}</div>
+      ${skipFooter}
+    </div>`;
   }
 
   private renderConstitution(has: boolean): string {
@@ -400,7 +644,83 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider {
 }
 
 function esc(s: string): string { return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
-function escHtml(s: string): string { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function escHtml(s: string): string {
+  // Includes ' so attribute interpolations (single or double quoted)
+  // are safe; raw model output should NEVER reach an attribute without
+  // this helper.
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function hasPickedAnswers(session: ClarifySession): boolean {
+  for (const a of session.answers.values()) if (a.kind === 'pick') return true;
+  return false;
+}
+
+/**
+ * Validate a postMessage payload from the webview against the
+ * `WebviewMsg` union. Returns null on any shape mismatch — invalid
+ * messages are dropped (logged at warn) rather than dispatched. Pure
+ * function, exported for direct testing.
+ */
+export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const m = raw as Record<string, unknown>;
+  const cmd = m.command;
+  const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
+  const isNonEmptyStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
+  switch (cmd) {
+    case 'openConstitution':
+    case 'createSpecFromJira':
+    case 'openDag':
+    case 'clarifySubmit':
+    case 'clarifyCancel':
+      return { command: cmd };
+    case 'createSpec':
+      if (!isNonEmptyStr(m.name)) return null;
+      if (typeof m.description !== 'string') return null;
+      return { command: 'createSpec', name: m.name, description: m.description };
+    case 'runPhase':
+    case 'approvePhase':
+      if (!isNonEmptyStr(m.specName)) return null;
+      if (!isNonEmptyStr(m.phaseType)) return null;
+      return { command: cmd, specName: m.specName, phaseType: m.phaseType };
+    case 'openFile':
+      if (!isNonEmptyStr(m.path)) return null;
+      return { command: 'openFile', path: m.path };
+    case 'toggleTask':
+      if (!isNonEmptyStr(m.filePath)) return null;
+      if (!isInt(m.line) || m.line < 0) return null;
+      if (typeof m.done !== 'boolean') return null;
+      return { command: 'toggleTask', filePath: m.filePath, line: m.line, done: m.done };
+    case 'toggleSpec':
+      if (!isNonEmptyStr(m.name)) return null;
+      return { command: 'toggleSpec', name: m.name };
+    case 'runAllTasks':
+      if (!isNonEmptyStr(m.path)) return null;
+      return { command: 'runAllTasks', path: m.path };
+    case 'openExternal':
+      if (!isNonEmptyStr(m.url)) return null;
+      return { command: 'openExternal', url: m.url };
+    case 'clarifyAnswer':
+      if (!isInt(m.questionIndex) || m.questionIndex < 0) return null;
+      if (!isInt(m.optionIndex) || m.optionIndex < 0) return null;
+      return {
+        command: 'clarifyAnswer',
+        questionIndex: m.questionIndex,
+        optionIndex: m.optionIndex,
+      };
+    case 'clarifySkip':
+      if (!isInt(m.questionIndex) || m.questionIndex < 0) return null;
+      return { command: 'clarifySkip', questionIndex: m.questionIndex };
+    default:
+      return null;
+  }
+}
 
 interface TaskItem { line: number; text: string; done: boolean; }
 interface PhaseData { type: string; status: string; filePath: string; unlocked: boolean; artifacts: { name: string; path: string }[]; }
@@ -560,4 +880,66 @@ body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); 
   background: transparent; color: #0052CC; cursor: pointer; font-size: 0.9em; font-weight: 600;
 }
 .btn-jira:hover { background: rgba(0,82,204,0.1); }
+
+/* Clarify Q&A panel */
+.clarify-root { display: flex; flex-direction: column; gap: 10px; }
+.clarify-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-bottom: 6px; border-bottom: 1px solid var(--vscode-widget-border, rgba(255,255,255,0.1));
+}
+.clarify-title { font-weight: 700; font-size: 1em; }
+.clarify-progress { font-size: 0.8em; color: var(--vscode-descriptionForeground); }
+.clarify-hint {
+  font-size: 0.8em; color: var(--vscode-descriptionForeground);
+  background: rgba(33,150,243,0.05); border-left: 2px solid #2196F3;
+  padding: 6px 8px; border-radius: 3px;
+}
+.clarify-question {
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-widget-border, rgba(255,255,255,0.1));
+  border-radius: 6px; padding: 10px; display: flex; flex-direction: column; gap: 6px;
+}
+.clarify-question.answered { border-color: rgba(76,175,80,0.4); }
+.clarify-q-text { font-weight: 600; font-size: 0.9em; line-height: 1.35; }
+.clarify-options { display: flex; flex-direction: column; gap: 4px; }
+.clarify-option {
+  display: flex; align-items: flex-start; gap: 6px;
+  padding: 6px 8px; border-radius: 4px;
+  background: transparent;
+  border: 1px solid var(--vscode-widget-border, rgba(255,255,255,0.15));
+  color: var(--vscode-foreground);
+  cursor: pointer; font-size: 0.85em; font-family: inherit; text-align: left;
+  line-height: 1.3;
+}
+.clarify-option:hover {
+  border-color: var(--vscode-focusBorder);
+  background: var(--vscode-list-hoverBackground, rgba(255,255,255,0.04));
+}
+.clarify-option.selected {
+  border-color: #4CAF50;
+  background: rgba(76,175,80,0.12);
+}
+.clarify-option.recommended { border-color: rgba(33,150,243,0.5); }
+.clarify-option.recommended.selected { border-color: #4CAF50; }
+.clarify-star { color: #FFC107; flex-shrink: 0; }
+.clarify-skip {
+  align-self: flex-start; background: transparent;
+  border: 1px dashed var(--vscode-widget-border, rgba(255,255,255,0.2));
+  color: var(--vscode-descriptionForeground);
+  padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 0.75em; font-family: inherit;
+}
+.clarify-skip:hover { color: var(--vscode-foreground); border-color: var(--vscode-focusBorder); }
+.clarify-skip-state {
+  font-size: 0.75em; color: var(--vscode-descriptionForeground); font-style: italic;
+}
+.clarify-actions { display: flex; gap: 6px; margin-top: 4px; }
+.clarify-actions .btn-primary { flex: 1; }
+.clarify-actions .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-secondary {
+  padding: 6px 10px; border-radius: 4px; cursor: pointer;
+  background: transparent; color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-widget-border, rgba(255,255,255,0.2));
+  font-family: inherit; font-size: 0.9em;
+}
+.btn-secondary:hover { border-color: var(--vscode-focusBorder); }
 </style>`;

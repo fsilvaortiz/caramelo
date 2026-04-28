@@ -12,6 +12,17 @@ import { confirmApplyChoice, previewEdit } from './task-edits/diff-preview.js';
 import { TASK_SYSTEM_PROMPT } from './task-edits/prompt.js';
 import { AsyncMutex } from './task-edits/mutex.js';
 import { log } from '../utils/log.js';
+import { AgentRuntime } from '../agent/runtime.js';
+import { buildDefaultToolSet } from '../agent/tools/index.js';
+import { formatPrologue, pipeToOutputChannel } from '../agent/events.js';
+import { decideTaskOutcome } from './task-outcome.js';
+import {
+  autoAllAllPolicy,
+  perCallPolicy,
+  readOnlyAutoBatchedWritesPolicy,
+} from '../agent/approval.js';
+import { isToolCallingProvider } from '../agent/types.js';
+import type { ApprovalPolicy } from '../agent/types.js';
 
 let outputChannel: vscode.OutputChannel | undefined;
 
@@ -60,6 +71,65 @@ function isAutoApplyEnabled(): boolean {
   );
 }
 
+function isAgentLoopEnabled(): boolean {
+  return vscode.workspace.getConfiguration().get<boolean>('caramelo.useAgentLoop', true);
+}
+
+function isBashToolEnabled(): boolean {
+  return vscode.workspace.getConfiguration().get<boolean>('caramelo.enableBashTool', true);
+}
+
+function getAgentMaxIterations(): number {
+  const raw = vscode.workspace.getConfiguration().get<number>('caramelo.agent.maxIterations');
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return 15;
+  return Math.max(3, Math.min(50, Math.floor(raw)));
+}
+
+function getApprovalMode(): 'auto-reads-batched-writes' | 'per-call' | 'auto-all' {
+  const raw = vscode.workspace
+    .getConfiguration()
+    .get<string>('caramelo.agent.approval', 'auto-reads-batched-writes');
+  if (raw === 'per-call' || raw === 'auto-all') return raw;
+  return 'auto-reads-batched-writes';
+}
+
+function buildApprovalPolicy(): ApprovalPolicy {
+  const mode = getApprovalMode();
+  if (mode === 'auto-all') return autoAllAllPolicy();
+  if (mode === 'per-call') return perCallPolicy({});
+  return readOnlyAutoBatchedWritesPolicy({
+    isAutoApplyEnabled,
+    // `session-auto-apply` mirrors the legacy path's
+    // `sessionAutoApply` flag so the user's "don't ask again this
+    // session" choice spans both paths within the same window.
+    setSessionAutoApply: (v) => {
+      sessionAutoApply = v;
+    },
+  });
+}
+
+const AGENT_SYSTEM_PROMPT =
+  `You are Caramelo, a code-editing agent embedded in a VS Code extension. ` +
+  `You are executing ONE task from a spec-driven-development tasks.md list.\n\n` +
+  `You have tools:\n` +
+  `  - file_read(path, [start_line, end_line])  — read a workspace file\n` +
+  `  - list_dir(path?)                          — list a directory\n` +
+  `  - grep(pattern, [path], [case_sensitive])  — regex search\n` +
+  `  - glob(pattern)                            — file-path glob\n` +
+  `  - file_edit(path, search, replace)         — replace an exact, unique snippet\n` +
+  `  - file_write(path, content, [overwrite])   — create or overwrite a file\n` +
+  `  - bash(command, [cwd], [timeout_ms])       — run a shell command (user approval required)\n\n` +
+  `Rules:\n` +
+  `- Paths are workspace-relative; anything outside the workspace is refused.\n` +
+  `- Use grep/glob/list_dir/file_read to explore before editing — the context ` +
+  `you were given is a seed, not the whole picture.\n` +
+  `- Prefer file_edit with a precise, unique SEARCH over file_write. file_write ` +
+  `refuses to overwrite by default; use it for new files.\n` +
+  `- When you are done, reply with a one- or two-sentence summary of what changed ` +
+  `and emit NO tool calls — that is the signal that the task is complete.\n` +
+  `- If a tool returns an error, read the error message and recover; do NOT repeat ` +
+  `the same failing call verbatim.`;
+
 export async function startTask(
   lineNumber: number,
   taskText: string,
@@ -86,12 +156,27 @@ export async function startTask(
   channel.appendLine(`  ${new Date().toLocaleTimeString()}`);
   channel.appendLine('─'.repeat(60));
 
-  // Phase A — safety stash + no-git confirmation. Must be serialized across
-  // concurrent startTask invocations so two parallel [P] tasks don't race
-  // on .git/index.lock or stack modal dialogs on top of each other. When a
+  // Untrusted workspaces block LLM execution — both the agent path and
+  // the legacy path. Checked before the safety-stash + no-git modal so
+  // we don't ask the user to confirm "proceed without backup" and then
+  // refuse the task anyway.
+  if (vscode.workspace.isTrusted === false) {
+    channel.appendLine(
+      '\n✗ Task refused: workspace is not trusted. ' +
+      'Trust the workspace (Command Palette → "Manage Workspace Trust") and retry.',
+    );
+    vscode.window.showWarningMessage(
+      'Caramelo: LLM execution is blocked in untrusted workspaces. Trust the workspace to run tasks.',
+    );
+    return;
+  }
+
+  // Safety stash + no-git confirmation. Serialized across concurrent
+  // startTask invocations so two parallel [P] tasks don't race on
+  // .git/index.lock or stack modal dialogs on top of each other. When a
   // prior task already took a stash the worktree is clean here, so this
-  // returns kind:'clean' and takes no second stash — one batch-wide stash
-  // is enough to revert everything.
+  // returns kind:'clean' and takes no second stash — one batch-wide
+  // stash is enough to revert everything.
   const phaseA = await interactiveLock.run(async () => {
     const safety = await createSafetyStash(workspaceRoot);
     channel.appendLine(`↪ [${taskText.slice(0, 40)}] ${safety.message}`);
@@ -134,6 +219,43 @@ export async function startTask(
 
   const abortController = new AbortController();
   showProgress(`Task: ${taskText.slice(0, 40)}...`, () => abortController.abort());
+
+  // Prefer the agent loop when the active provider advertises the
+  // 'tool-calling' capability and the user hasn't flipped the kill
+  // switch. Falls back to the legacy SEARCH/REPLACE text protocol
+  // otherwise (retained for providers not yet migrated, see FR-009).
+  const agentLoopRequested = isAgentLoopEnabled();
+  const canDoAgent = isToolCallingProvider(provider);
+  if (agentLoopRequested && canDoAgent) {
+    try {
+      await runTaskWithAgent({
+        provider,
+        workspaceRoot,
+        userPrompt,
+        taskText,
+        channel,
+        abortController,
+        docUri,
+        lineNumber,
+        safety,
+      });
+    } finally {
+      hideProgress();
+    }
+    return;
+  }
+
+  // Providers without native tool-calling inform the user which
+  // execution mode is active — no silent drift between agent and legacy
+  // paths.
+  if (agentLoopRequested && !canDoAgent) {
+    channel.appendLine(
+      `↪ provider "${provider.displayName}" does not advertise the 'tool-calling' capability ` +
+      `(capabilities: [${Array.from(provider.capabilities()).join(',')}]). ` +
+      `Falling back to the legacy SEARCH/REPLACE protocol. To silence this message, ` +
+      `set caramelo.useAgentLoop=false, or switch to a tool-calling provider.`,
+    );
+  }
 
   try {
     let output = '';
@@ -239,74 +361,111 @@ export async function startTask(
         channel.appendLine(
           `↻ ${conflicts.length} CREATE block(s) hit existing file(s); retrying as SEARCH/REPLACE…`,
         );
-        const retryCtx = conflicts
-          .map((c) => {
-            const abs = path.isAbsolute(c.filePath)
-              ? c.filePath
-              : path.join(workspaceRoot, c.filePath);
-            let current = '';
-            try { current = fs.readFileSync(abs, 'utf-8'); } catch { /* ignore */ }
-            return `--- EXISTING FILE: ${c.filePath} ---\n${current}\n--- END FILE ---`;
-          })
-          .join('\n\n');
-        const retryPrompt =
-          'Your previous response emitted CREATE blocks for paths that already exist on disk. ' +
-          'For each file below, emit a FILE block with SEARCH/REPLACE pairs that transform the current content into your intended content. ' +
-          'If the current content already matches your intent, emit no block for that file.\n\n' +
-          retryCtx;
-        let retryOutput = '';
-        try {
-          channel.appendLine('\n--- retry round ---');
-          for await (const chunk of provider.chat(
-            [
-              { role: 'system', content: TASK_SYSTEM_PROMPT },
-              { role: 'user', content: userPrompt },
-              { role: 'assistant', content: output },
-              { role: 'user', content: retryPrompt },
-            ],
-            { signal: abortController.signal },
-          )) {
-            retryOutput += chunk;
-            channel.append(chunk);
-          }
-          channel.appendLine('\n--- end retry ---');
-        } catch (err) {
-          channel.appendLine(`⚠ Retry LLM call failed: ${err instanceof Error ? err.message : String(err)}`);
-        }
-        if (retryOutput) {
-          let retryEdits: Edit[] = [];
+        // Read the existing content of each conflicted file. If ANY read
+        // fails we abort the retry round entirely — the model must never
+        // be asked to "update" a file whose content we couldn't load,
+        // because it will dutifully emit a SEARCH/REPLACE against an
+        // empty string and clobber the file on apply.
+        const retryCtxParts: string[] = [];
+        let retryReadFailure: { filePath: string; err: unknown } | null = null;
+        for (const c of conflicts) {
+          const abs = path.isAbsolute(c.filePath)
+            ? c.filePath
+            : path.join(workspaceRoot, c.filePath);
           try {
-            retryEdits = parseEdits(retryOutput);
+            const current = fs.readFileSync(abs, 'utf-8');
+            retryCtxParts.push(`--- EXISTING FILE: ${c.filePath} ---\n${current}\n--- END FILE ---`);
           } catch (err) {
-            channel.appendLine(`⚠ Retry output could not be parsed: ${err instanceof Error ? err.message : String(err)}`);
+            retryReadFailure = { filePath: c.filePath, err };
+            break;
           }
-          // Only accept retry edits that touch one of the conflicted files.
-          const conflictPaths = new Set(conflicts.map((c) => c.filePath));
-          const filteredRetry = retryEdits.filter(
-            (e) => e.kind === 'edit' && conflictPaths.has(e.filePath),
+        }
+
+        if (retryReadFailure) {
+          channel.appendLine(
+            `⚠ Retry round aborted — could not read "${retryReadFailure.filePath}" ` +
+            `(${retryReadFailure.err instanceof Error ? retryReadFailure.err.message : String(retryReadFailure.err)}). ` +
+            `The CREATE-vs-existing conflict is left as-is so nothing is clobbered.`,
           );
-          if (filteredRetry.length > 0) {
-            const retryOutcomes = applyEdits(filteredRetry, { workspaceRoot });
-            for (const ro of retryOutcomes) {
-              const idx = outcomes.findIndex(
-                (o) => o.filePath === ro.filePath && o.status === 'aborted-exists',
+        } else {
+          const retryCtx = retryCtxParts.join('\n\n');
+          const retryPrompt =
+            'Your previous response emitted CREATE blocks for paths that already exist on disk. ' +
+            'For each file below, emit a FILE block with SEARCH/REPLACE pairs that transform the current content into your intended content. ' +
+            'If the current content already matches your intent, emit no block for that file.\n\n' +
+            retryCtx;
+          let retryOutput = '';
+          let retryCallFailed = false;
+          try {
+            channel.appendLine('\n--- retry round ---');
+            for await (const chunk of provider.chat(
+              [
+                { role: 'system', content: TASK_SYSTEM_PROMPT },
+                { role: 'user', content: userPrompt },
+                { role: 'assistant', content: output },
+                { role: 'user', content: retryPrompt },
+              ],
+              { signal: abortController.signal },
+            )) {
+              retryOutput += chunk;
+              channel.append(chunk);
+            }
+            channel.appendLine('\n--- end retry ---');
+          } catch (err) {
+            retryCallFailed = true;
+            channel.appendLine(
+              `⚠ Retry LLM call failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+
+          // Only treat an EMPTY retryOutput after a SUCCESSFUL call as "no
+          // changes needed". If the retry call itself failed, leave the
+          // conflict-exists outcomes intact — do NOT relabel them as
+          // 'applied', which would hide a real failure.
+          if (retryCallFailed || retryOutput.length === 0) {
+            if (!retryCallFailed) {
+              channel.appendLine(
+                '⚠ Retry produced empty output — leaving the CREATE-vs-existing conflict as-is.',
               );
-              if (idx >= 0) outcomes[idx] = ro;
             }
           } else {
-            // LLM produced no applicable edits — either the current content
-            // already matches its intent (no-op) or it couldn't recover.
-            for (const c of conflicts) {
-              const idx = outcomes.findIndex(
-                (o) => o.filePath === c.filePath && o.status === 'aborted-exists',
+            let retryEdits: Edit[] = [];
+            try {
+              retryEdits = parseEdits(retryOutput);
+            } catch (err) {
+              channel.appendLine(
+                `⚠ Retry output could not be parsed: ${err instanceof Error ? err.message : String(err)}`,
               );
-              if (idx >= 0) {
-                outcomes[idx] = {
-                  filePath: c.filePath,
-                  status: 'applied',
-                  detail: `Retry produced no edits for "${c.filePath}" — treating the existing file as already up to date.`,
-                  wrote: false,
-                };
+            }
+            const conflictPaths = new Set(conflicts.map((c) => c.filePath));
+            const filteredRetry = retryEdits.filter(
+              (e) => e.kind === 'edit' && conflictPaths.has(e.filePath),
+            );
+            if (filteredRetry.length > 0) {
+              const retryOutcomes = applyEdits(filteredRetry, { workspaceRoot });
+              for (const ro of retryOutcomes) {
+                const idx = outcomes.findIndex(
+                  (o) => o.filePath === ro.filePath && o.status === 'aborted-exists',
+                );
+                if (idx >= 0) outcomes[idx] = ro;
+              }
+            } else {
+              // The retry call succeeded but produced no applicable edits.
+              // The model's explicit signal is "current content already
+              // matches my intent" — treat as a no-op success so we don't
+              // fail the task for files that don't need changing.
+              for (const c of conflicts) {
+                const idx = outcomes.findIndex(
+                  (o) => o.filePath === c.filePath && o.status === 'aborted-exists',
+                );
+                if (idx >= 0) {
+                  outcomes[idx] = {
+                    filePath: c.filePath,
+                    status: 'applied',
+                    detail: `Retry produced no edits for "${c.filePath}" — treating the existing file as already up to date.`,
+                    wrote: false,
+                  };
+                }
               }
             }
           }
@@ -398,4 +557,101 @@ function findSpecDir(filePath: string): string | null {
     dir = path.dirname(dir);
   }
   return null;
+}
+
+interface AgentRunArgs {
+  provider: unknown;
+  workspaceRoot: string;
+  userPrompt: string;
+  taskText: string;
+  channel: vscode.OutputChannel;
+  abortController: AbortController;
+  docUri: vscode.Uri;
+  lineNumber: number;
+  safety: { kind: 'no-git' | 'clean' | 'stashed'; message: string; stashName?: string };
+}
+
+async function runTaskWithAgent(args: AgentRunArgs): Promise<void> {
+  const {
+    provider,
+    workspaceRoot,
+    userPrompt,
+    taskText,
+    channel,
+    abortController,
+    docUri,
+    lineNumber,
+    safety,
+  } = args;
+
+  const tools = buildDefaultToolSet({ enableBash: isBashToolEnabled() });
+  const approval = buildApprovalPolicy();
+  const runtime = new AgentRuntime();
+
+  // Prologue logs provider, model, capability set, tool inventory, and
+  // approval mode — redacted via events.ts. So "what did the LLM see?"
+  // is answerable from the channel alone.
+  const providerForPrologue = provider as {
+    id: string;
+    displayName: string;
+    capabilities(): Set<string>;
+  };
+  channel.appendLine(
+    formatPrologue({
+      providerId: providerForPrologue.id,
+      providerName: providerForPrologue.displayName,
+      model: undefined,
+      capabilities: Array.from(providerForPrologue.capabilities()),
+      toolNames: tools.map((t) => t.name),
+      approvalMode: getApprovalMode(),
+      bashEnabled: isBashToolEnabled(),
+      maxIterations: getAgentMaxIterations(),
+    }),
+  );
+
+  let result;
+  try {
+    result = await runtime.run(provider, {
+      system: AGENT_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: userPrompt }],
+      tools,
+      approval,
+      workspaceRoot,
+      signal: abortController.signal,
+      onEvent: pipeToOutputChannel(channel),
+      maxIterations: getAgentMaxIterations(),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    channel.appendLine(`\n✗ agent runtime error: ${msg}`);
+    vscode.window.showErrorMessage(`Task failed: ${msg}`);
+    return;
+  }
+
+  const outcome = decideTaskOutcome(result, safety);
+  channel.appendLine(outcome.channelLine);
+  if (outcome.markComplete) {
+    await interactiveLock.run(async () => {
+      await markTaskComplete(docUri, lineNumber, taskText);
+    });
+  }
+  if (outcome.toast) {
+    // Exhaustive switch — adding a new severity tag fails the build at
+    // the `_exh: never` line until this dispatch is updated.
+    switch (outcome.toast.severity) {
+      case 'info':
+        vscode.window.showInformationMessage(outcome.toast.message);
+        break;
+      case 'warning':
+        vscode.window.showWarningMessage(outcome.toast.message);
+        break;
+      case 'error':
+        vscode.window.showErrorMessage(outcome.toast.message);
+        break;
+      default: {
+        const _exh: never = outcome.toast.severity;
+        void _exh;
+      }
+    }
+  }
 }

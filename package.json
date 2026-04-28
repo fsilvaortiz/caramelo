@@ -326,6 +326,33 @@
           "type": "boolean",
           "default": false,
           "description": "When true, task edits are written to disk without a diff preview or confirmation dialog. Leave this off unless you have a reliable git safety net — Caramelo creates one automatically when the workspace is a git repo."
+        },
+        "caramelo.useAgentLoop": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run tasks via a tool-calling agent loop (file_read / file_edit / grep / bash / …) when the active provider supports it. When false, Caramelo falls back to the legacy single-shot SEARCH/REPLACE text protocol. Leave this on unless you need to debug regressions against the legacy path."
+        },
+        "caramelo.enableBashTool": {
+          "type": "boolean",
+          "default": true,
+          "description": "Expose a bash/exec tool to the agent. Every bash call requires an explicit approval prompt that shows the literal command. Disable to remove bash entirely from the tool list advertised to the model."
+        },
+        "caramelo.agent.maxIterations": {
+          "type": "number",
+          "default": 15,
+          "minimum": 3,
+          "maximum": 50,
+          "description": "Maximum number of agent turns per task. The agent stops after this many tool-calling rounds to avoid runaway loops on ambiguous tasks."
+        },
+        "caramelo.agent.approval": {
+          "type": "string",
+          "enum": [
+            "auto-reads-batched-writes",
+            "per-call",
+            "auto-all"
+          ],
+          "default": "auto-reads-batched-writes",
+          "description": "How write/bash tool calls are approved. auto-reads-batched-writes: reads auto-run, bash always prompts, writes are batched per turn. per-call: every non-read prompts individually. auto-all: no prompts — relies on the git safety stash to recover."
         }
       }
     }
