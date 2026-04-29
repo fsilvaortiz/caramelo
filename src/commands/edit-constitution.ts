@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { ProviderRegistry } from '../providers/registry.js';
+import { log } from '../utils/log.js';
 
 interface Refreshable { refresh(): void }
 
@@ -55,24 +56,28 @@ async function generateWithAI(
     return;
   }
 
-  const systemPrompt = `You are helping define a project constitution for a software project. Based on the project description, generate a constitution with:
-
-1. A project name (short, 1-3 words)
-2. 3-5 core principles (each with a name and a 1-2 sentence description of what it enforces)
-3. Key constraints (technology, performance, compliance — if applicable)
-4. Development workflow rules (testing, review, deployment — if applicable)
-
-Return ONLY a JSON object with this structure:
-\`\`\`json
-{
-  "projectName": "...",
-  "principles": [
-    { "name": "...", "description": "..." }
-  ],
-  "constraints": "...",
-  "workflow": "..."
-}
-\`\`\``;
+  const systemPrompt =
+    'You are helping define a project constitution for a software project. Based on the project description, generate:\n' +
+    '\n' +
+    '1. A project name (short, 1-3 words)\n' +
+    '2. 3-5 core principles (each with a name and a 1-2 sentence description of what it enforces)\n' +
+    '3. Key constraints (technology, performance, compliance — if applicable)\n' +
+    '4. Development workflow rules (testing, review, deployment — if applicable)\n' +
+    '\n' +
+    'Output rules — these are NON-NEGOTIABLE and any deviation will fail downstream parsing:\n' +
+    '\n' +
+    '- Output a SINGLE JSON object. Nothing before it. Nothing after it. No greeting, no explanation, no closing remark.\n' +
+    '- The first character of your response MUST be `{`. The last character MUST be `}`.\n' +
+    '- Use double-quoted strings only. Inside string values, escape literal double quotes as `\\"` and apostrophes/contractions as plain `\'` (apostrophes do NOT need escaping in JSON).\n' +
+    '- No comments. No trailing commas. No markdown fences.\n' +
+    '\n' +
+    'Schema:\n' +
+    '{\n' +
+    '  "projectName": "string",\n' +
+    '  "principles": [ { "name": "string", "description": "string" } ],\n' +
+    '  "constraints": "string (multi-line OK; use \\n)",\n' +
+    '  "workflow": "string (multi-line OK; use \\n)"\n' +
+    '}';
 
   panel.webview.postMessage({ command: 'generating' });
 
@@ -88,7 +93,11 @@ Return ONLY a JSON object with this structure:
       [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: `Project description: ${projectDescription}` },
-      ]
+      ],
+      // temperature: 0 nudges the model toward deterministic JSON output.
+      // Constitution generation is a structured-output task — no creativity
+      // benefit, only parser-fragility risk.
+      { temperature: 0 },
     )) {
       response += chunk;
       channel.append(chunk);
@@ -103,68 +112,192 @@ Return ONLY a JSON object with this structure:
     return;
   }
 
-  // Parse JSON from response — try multiple strategies
+  // Parse JSON from response — try multiple strategies.
   const data = parseConstitutionResponse(response);
   if (data) {
     panel.webview.postMessage({ command: 'generateDone', data });
   } else {
-    vscode.window.showWarningMessage('Could not parse LLM response. Try a more capable model or fill in manually.');
+    // Surface the first 500 bytes of the raw response so the user (or
+    // log readers) can see what the model emitted — silent "couldn't
+    // parse" used to leave them guessing.
+    channel.appendLine('\n\n✗ Parser could not extract a constitution from the response.');
+    channel.appendLine(`Raw response (first 500 B): ${response.slice(0, 500)}`);
+    log.warn('[edit-constitution] parse failed; first 500 B:', response.slice(0, 500));
+    vscode.window.showWarningMessage(
+      'Caramelo: could not parse the constitution from the LLM response. ' +
+      'See the Caramelo output channel for the raw output. You can fill in the form manually or retry.',
+    );
     panel.webview.postMessage({ command: 'generateDone', data: null });
   }
 }
 
-function parseConstitutionResponse(response: string): ConstitutionData | null {
-  // Strategy 1: Extract JSON from ```json ``` block
+/**
+ * Try, in order:
+ *  1. JSON inside a `\`\`\`json … \`\`\`` fence.
+ *  2. The largest balanced `{ … }` substring (handles nested objects
+ *     correctly, unlike a greedy regex that would over-match across
+ *     unbalanced braces in adjacent prose).
+ *  3. Markdown-prose fallback: `### N. Name` headings + paragraphs.
+ *
+ * Returns `null` if none of the strategies recovers a constitution
+ * with at least one principle. Caller surfaces the raw response in the
+ * log so the failure isn't invisible.
+ */
+export function parseConstitutionResponse(response: string): ConstitutionData | null {
+  // Strategy 1: ```json … ``` fence.
   const jsonBlockMatch = response.match(/```json\s*([\s\S]*?)```/);
   if (jsonBlockMatch) {
     const parsed = tryParseJSON(jsonBlockMatch[1]);
     if (parsed) return normalizeConstitution(parsed);
   }
 
-  // Strategy 2: Find the outermost { ... } in the response
-  const braceMatch = response.match(/\{[\s\S]*\}/);
-  if (braceMatch) {
-    const parsed = tryParseJSON(braceMatch[0]);
+  // Strategy 2: balanced outermost JSON object. We can't use a greedy
+  // regex here — `/\{[\s\S]*\}/` matches from the first `{` to the LAST
+  // `}` in the document, so a stray `{}` in surrounding prose pulls in
+  // unrelated text. Walk the string, count brace depth, and slice the
+  // first complete object.
+  const balanced = extractBalancedJsonObject(response);
+  if (balanced) {
+    const parsed = tryParseJSON(balanced);
     if (parsed) return normalizeConstitution(parsed);
   }
 
-  // Strategy 3: Extract content from prose if JSON fails entirely
-  // Look for patterns like "Project Name: X" or "Principles:" in the text
-  const fallback: ConstitutionData = { projectName: '', principles: [], constraints: '', workflow: '' };
-  const nameMatch = response.match(/project\s*name[:\s]*["']?([^"'\n,]+)/i);
-  if (nameMatch) fallback.projectName = nameMatch[1].trim();
-
-  // Extract numbered principles from prose
-  const principleMatches = response.matchAll(/\d+\.\s*\*?\*?([^:*\n]+)\*?\*?[:\s]*([^\n]+)/g);
-  for (const m of principleMatches) {
-    const name = m[1].trim();
-    const desc = m[2].trim();
-    if (name.length > 2 && name.length < 60 && desc.length > 10) {
-      fallback.principles.push({ name, description: desc });
-    }
-  }
-
-  if (fallback.principles.length > 0) return fallback;
+  // Strategy 3: markdown-prose fallback.
+  const fromProse = parseMarkdownConstitution(response);
+  if (fromProse && fromProse.principles.length > 0) return fromProse;
 
   return null;
 }
 
+/**
+ * Extract the first balanced `{ … }` substring while respecting
+ * string-quoted braces and escape sequences. Returns null if no
+ * balanced object exists. This is deliberately stricter than the
+ * earlier `/\{[\s\S]*\}/` greedy regex which over-matched across
+ * adjacent prose with stray braces.
+ */
+function extractBalancedJsonObject(s: string): string | null {
+  const start = s.indexOf('{');
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < s.length; i++) {
+    const c = s[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (c === '\\' && inString) {
+      escape = true;
+      continue;
+    }
+    if (c === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (c === '{') depth++;
+    else if (c === '}') {
+      depth--;
+      if (depth === 0) return s.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
 function tryParseJSON(str: string): Record<string, unknown> | null {
-  // Clean common LLM JSON issues
+  // Clean common LLM-isms WITHOUT touching apostrophes inside string
+  // values. The prior implementation did `replace(/'/g, '"')` which
+  // butchered legitimate JSON like `{"description": "Don't break it"}`
+  // by turning the apostrophe into a closing quote. Real Opus / Claude
+  // output already uses double-quoted strings — we only need to handle
+  // optional trailing-comma and JS-style line-comment noise.
   let cleaned = str.trim();
-  // Remove JS comments
-  cleaned = cleaned.replace(/\/\/[^\n]*/g, '');
-  // Remove trailing commas before } or ]
+  // Strip line comments outside of strings. A naive global replace would
+  // also clobber `//` inside URLs in string values; keep it scoped to
+  // the start of a line where comment-style noise actually appears in
+  // LLM output.
+  cleaned = cleaned.replace(/^\s*\/\/[^\n]*$/gm, '');
+  // Remove trailing commas before } or ].
   cleaned = cleaned.replace(/,\s*([}\]])/g, '$1');
-  // Fix single quotes to double quotes (simple cases)
-  cleaned = cleaned.replace(/'/g, '"');
 
   try {
-    return JSON.parse(cleaned);
+    const parsed = JSON.parse(cleaned);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+    return parsed as Record<string, unknown>;
   } catch {
     return null;
   }
 }
+
+/**
+ * Last-resort prose extractor for models that ignore the "JSON only"
+ * instruction and emit Markdown directly. Recognises:
+ *
+ *   # <ProjectName> Constitution
+ *   ## Core Principles
+ *   ### 1. Principle Name
+ *   <description, possibly multi-line, until next heading or blank gap>
+ *
+ * Plus the older single-line shorthand (`1. **Name**: description`)
+ * that the prior fallback handled. Heading-based parsing yields
+ * multi-paragraph descriptions intact.
+ */
+function parseMarkdownConstitution(response: string): ConstitutionData {
+  const data: ConstitutionData = { projectName: '', principles: [], constraints: '', workflow: '' };
+
+  // Project name from heading or labelled prose.
+  const headingName = response.match(/^#\s+(.+?)\s+Constitution\s*$/im);
+  if (headingName) data.projectName = headingName[1].trim();
+  if (!data.projectName) {
+    const labelled = response.match(/project\s*name\s*[:\-]\s*["']?([^"'\n]+)/i);
+    if (labelled) data.projectName = labelled[1].trim();
+  }
+
+  // Principles via `### N. Name` headings, capturing the body until the
+  // next heading. JS regex has no `\Z` — we use `$(?![\s\S])` (end of
+  // input) as the terminating alternative.
+  const headingPrincipleRe = /^###\s+(?:\d+\.\s*)?(.+?)\s*$\n([\s\S]*?)(?=\n^###\s|\n^##\s|$(?![\s\S]))/gm;
+  for (const m of response.matchAll(headingPrincipleRe)) {
+    const name = m[1].trim().replace(/^\*+|\*+$/g, '');
+    const desc = m[2]
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .trim();
+    if (name.length >= 2 && name.length <= 80 && desc.length >= 1) {
+      data.principles.push({ name, description: desc });
+    }
+  }
+
+  // Fallback to the prior single-line shorthand when no headings match.
+  // Separator restricted to `:` (the original `[:\-]` class chewed
+  // hyphens inside names like "Test-First", capturing only "Test").
+  if (data.principles.length === 0) {
+    const inlineRe = /^\s*\d+\.\s*\*{0,2}([^:*\n]+?)\*{0,2}\s*:\s*([^\n]+)/gm;
+    for (const m of response.matchAll(inlineRe)) {
+      const name = m[1].trim();
+      const desc = m[2].trim();
+      if (name.length >= 2 && name.length <= 60 && desc.length >= 10) {
+        data.principles.push({ name, description: desc });
+      }
+    }
+  }
+
+  // Constraints / workflow sections, terminated at the next `## ` or EOI.
+  const constraintsMatch = response.match(
+    /^##\s*(?:Additional\s+)?Constraints?\s*$\n+([\s\S]*?)(?=\n^##\s|$(?![\s\S]))/im,
+  );
+  if (constraintsMatch) data.constraints = constraintsMatch[1].trim();
+  const workflowMatch = response.match(
+    /^##\s*(?:Development\s+)?Workflow[^\n]*$\n+([\s\S]*?)(?=\n^##\s|$(?![\s\S]))/im,
+  );
+  if (workflowMatch) data.workflow = workflowMatch[1].trim();
+
+  return data;
+}
+
+// Exported only for tests.
+export { tryParseJSON, extractBalancedJsonObject, parseMarkdownConstitution };
 
 function normalizeConstitution(raw: Record<string, unknown>): ConstitutionData {
   const data: ConstitutionData = {
