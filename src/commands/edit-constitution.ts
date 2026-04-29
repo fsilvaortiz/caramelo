@@ -4,6 +4,28 @@ import * as path from 'path';
 import type { ProviderRegistry } from '../providers/registry.js';
 import { log } from '../utils/log.js';
 
+/**
+ * Singleton — the prior implementation called
+ * `vscode.window.createOutputChannel('Caramelo')` on every generation,
+ * leaking a fresh channel each time. Reuse one for the whole extension
+ * host's lifetime.
+ */
+let constitutionChannel: vscode.OutputChannel | undefined;
+function getConstitutionChannel(): vscode.OutputChannel {
+  if (!constitutionChannel) {
+    constitutionChannel = vscode.window.createOutputChannel('Caramelo');
+  }
+  return constitutionChannel;
+}
+
+/**
+ * Module-scoped lock so a stalled generation can't be re-entered while
+ * still running. The button's `disabled` attribute already prevents
+ * double-clicks at the UI layer, but a second `editConstitution` window
+ * (or a programmatic `executeCommand`) would otherwise race.
+ */
+let generationInFlight = false;
+
 interface Refreshable { refresh(): void }
 
 export function editConstitution(
@@ -50,9 +72,58 @@ async function generateWithAI(
   registry: ProviderRegistry | undefined,
   panel: vscode.WebviewPanel
 ): Promise<void> {
+  // The webview's button is disabled during its in-flight phase, but
+  // re-entry can still happen via a second editConstitution panel or a
+  // programmatic command. If another run is active, refuse and reset
+  // the new caller's UI so it doesn't pulse forever.
+  if (generationInFlight) {
+    vscode.window.showInformationMessage(
+      'Caramelo: a constitution generation is already running. Wait for it to finish or close the other panel.',
+    );
+    panel.webview.postMessage({ command: 'generateDone', data: null });
+    return;
+  }
+
+  // Track whether the webview already received generateDone. Every
+  // return path below MUST end with it; the finally block at the
+  // bottom is the safety net so a UI bug (button stuck pulsing) is
+  // structurally impossible regardless of how this function exits.
+  let donePosted = false;
+  const postDone = (data: ConstitutionData | null): void => {
+    if (donePosted) return;
+    donePosted = true;
+    panel.webview.postMessage({ command: 'generateDone', data });
+  };
+
+  generationInFlight = true;
+  try {
+    await generateWithAIInner(projectDescription, registry, panel, postDone);
+  } catch (err) {
+    // Defensive: any unexpected throw (regex engine OOM, panel disposed
+    // mid-call, etc.) lands here and still resets the UI.
+    const msg = err instanceof Error ? err.message : String(err);
+    log.error('[edit-constitution] unexpected error:', err);
+    vscode.window.showErrorMessage(`Caramelo: constitution generation crashed — ${msg}`);
+    postDone(null);
+  } finally {
+    generationInFlight = false;
+    // Belt-and-suspenders: every code path above already calls postDone,
+    // but if a future refactor forgets one, this guarantees the webview
+    // button gets re-enabled.
+    postDone(null);
+  }
+}
+
+async function generateWithAIInner(
+  projectDescription: string,
+  registry: ProviderRegistry | undefined,
+  panel: vscode.WebviewPanel,
+  postDone: (data: ConstitutionData | null) => void,
+): Promise<void> {
   const provider = registry?.activeProvider;
   if (!provider) {
     vscode.window.showWarningMessage('No active LLM provider. Configure one first.');
+    postDone(null);
     return;
   }
 
@@ -81,7 +152,7 @@ async function generateWithAI(
 
   panel.webview.postMessage({ command: 'generating' });
 
-  const channel = vscode.window.createOutputChannel('Caramelo');
+  const channel = getConstitutionChannel();
   channel.show(true);
   channel.appendLine('─'.repeat(50));
   channel.appendLine('▶ Generating constitution...');
@@ -108,14 +179,14 @@ async function generateWithAI(
     const msg = err instanceof Error ? err.message : String(err);
     channel.appendLine(`\n\n✗ Error: ${msg}`);
     vscode.window.showErrorMessage(`Generation failed: ${msg}`);
-    panel.webview.postMessage({ command: 'generateDone', data: null });
+    postDone(null);
     return;
   }
 
   // Parse JSON from response — try multiple strategies.
   const data = parseConstitutionResponse(response);
   if (data) {
-    panel.webview.postMessage({ command: 'generateDone', data });
+    postDone(data);
   } else {
     // Surface the first 500 bytes of the raw response so the user (or
     // log readers) can see what the model emitted — silent "couldn't
@@ -127,7 +198,7 @@ async function generateWithAI(
       'Caramelo: could not parse the constitution from the LLM response. ' +
       'See the Caramelo output channel for the raw output. You can fill in the form manually or retry.',
     );
-    panel.webview.postMessage({ command: 'generateDone', data: null });
+    postDone(null);
   }
 }
 
