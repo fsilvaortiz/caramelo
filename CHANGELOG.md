@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.1.1] - 2026-04-28
+
+### Fixed (critical)
+
+- **AI-generated constitution failed for any provider whose JSON output contained an apostrophe**. The JSON cleanup in `tryParseJSON` did `replace(/'/g, '"')`, which turned `{"description": "Don't break things"}` into `{"description": "Don"t break things"}` — invalid JSON. The strategy 2 outermost-brace fallback failed against the same broken text, and the prose fallback regex was line-bound so multi-line markdown headings produced "Could not parse LLM response. Try a more capable model" toasts even when the model returned a perfectly valid response. Reported on Opus 4.7 with English prose containing contractions like `don't` / `users'`.
+- **Constitution generation UI got stuck pulsing after a retry**. When the user clicked Generate, hit a parse failure, switched models, and clicked Generate again, the second attempt's stream completed in the OutputChannel but the button kept pulsing forever. Root cause: `generateWithAI` had at least one return path (no active provider) that didn't post `generateDone` to the webview, plus any unexpected throw between "Generation complete" and the parse step would also skip the post. Every exit path now goes through a `postDone()` helper guarded by a `donePosted` flag, wrapped in `try/finally` so the webview button is structurally guaranteed to reset even if the inner code throws.
+
+### Changed
+
+- `tryParseJSON` no longer touches apostrophes inside string values. Line-comment removal is now anchored to the start of a line (was global) so `https://…` URLs inside string values are preserved.
+- Strategy 2 walks brace depth and respects string-quoted braces and escapes, returning the first balanced `{ … }` substring instead of greedily matching from the first `{` to the last `}` in the document.
+- The prose fallback now recognises Markdown-heading constitutions (`### N. Name` followed by multi-paragraph descriptions) and stops at the next heading, capturing entire sections — including `## Constraints` and `## Development Workflow`. The single-line shorthand still works for older models that emit `1. **Test-First**: …`; separator restricted to `:` so hyphenated names like `Test-First` are no longer truncated to `Test`.
+- LLM call uses `temperature: 0` for the constitution-generation request — structured-output task, no creativity benefit, only parser-fragility risk.
+- On parse failure, the OutputChannel now logs the first 500 B of the raw response (redacted) so the failure mode is no longer invisible.
+- The system prompt is more emphatic about output rules and includes an explicit reminder that apostrophes in JSON string values do NOT need escaping (so the model doesn't try to "help" by emitting them as `\'` and breaking the parser).
+- The constitution OutputChannel is a singleton — earlier code re-created the channel on every generation, leaking handles for the lifetime of the extension host.
+- A module-scoped `generationInFlight` lock refuses re-entry while a generation is running and resets the new caller's UI immediately, so a second `editConstitution` panel (or a programmatic command) can't race the first.
+
+### Tests
+
+- 21 new unit tests in `commands/__tests__/edit-constitution.test.ts` covering: the apostrophe regression, possessive apostrophes, URL preservation, trailing-comma cleanup, balanced-brace extraction with nested braces and string-quoted braces, escaped quotes inside strings, ```json fenced output, bare JSON with surrounding chat preamble, markdown-heading fallback with constraints/workflow sections, single-line shorthand fallback with hyphenated names, line-comment-prefixed JSON, multi-paragraph descriptions, and HTML-comment stripping.
+
+### Notes
+
+- This is a parser fix; no behaviour change for users whose model already emitted clean JSON. Upgrade is safe.
+
 ## [0.1.0] - 2026-04-28
 
 ### Added (major)
