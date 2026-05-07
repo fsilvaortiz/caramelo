@@ -1,0 +1,64 @@
+name: Pages
+
+# Builds the VitePress site under /website and publishes it to
+# GitHub Pages. Triggered on changes to /website or this workflow.
+# Repo Settings → Pages → Source must be set to "GitHub Actions"
+# (one-time manual step).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+# Default permissions are read-only; explicitly grant what Pages needs.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Cancel in-flight runs on the same ref so a rapid sequence of pushes
+# doesn't queue stale deploys.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # VitePress lastUpdated needs git history.
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install dependencies
+        working-directory: website
+        run: npm ci
+
+      - name: Build site
+        working-directory: website
+        run: npm run build
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: website/.vitepress/dist
+
+  deploy:
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
