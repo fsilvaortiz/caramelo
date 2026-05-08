@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.1.2] - 2026-05-08
+
+### Fixed
+
+- **Spec Kit template sync was silently broken since upstream `v0.7.5`**. The sync looked for `*generic*.zip` in `release.assets`, but Spec Kit stopped attaching release assets months ago — every release since `v0.7.5` ships with `assets: []`. The sync logged a single `console.warn` and silently no-op'd, leaving every Caramelo install on whatever bundled fallback templates shipped with the VSIX. Users never received upstream template updates. Rewrote `TemplateSync` to fetch individual template files directly from `https://raw.githubusercontent.com/github/spec-kit/<tag>/templates/` — fetches `spec-template.md`, `plan-template.md`, `tasks-template.md`, `constitution-template.md`, and `checklist-template.md` per release tag.
+
+### Added
+
+- **`__SPECKIT_COMMAND_*__` placeholder substitution**. Upstream `templates/plan-template.md` and `templates/tasks-template.md` now embed tokens like `__SPECKIT_COMMAND_PLAN__` and `__SPECKIT_COMMAND_TASKS__` that the Spec Kit CLI rewrites at install time. Caramelo substitutes them with the canonical `/speckit.<command>` names (eight tokens covered: `specify`, `plan`, `tasks`, `implement`, `clarify`, `analyze`, `constitution`, `checklist`). Unknown placeholders are left verbatim — conservative and visible — so a future upstream addition reaches the user instead of being silently dropped.
+- **`TemplateSync` accepts a `TemplateSyncPaths` constructor argument**. Production callers use the default cache paths under `~/.caramelo/spec-kit`; tests inject a temp directory for hermetic runs.
+
+### Changed
+
+- **Partial-success semantics**: a 404 on one template (e.g. `checklist-template.md` missing on older tags) no longer aborts the whole sync. The other files still land. Only when EVERY template fetch fails does the version stamp stay unwritten so the next run retries.
+- **Network failures fall back silently**: the release lookup or any template download failing falls back to whatever was cached before, preserving the offline-first guarantee.
+- `TemplateSync.checkForUpdates` no longer depends on `unzip` being on `$PATH`. The previous flow downloaded a zip and shelled out to `unzip` — fine on macOS/Linux, brittle on Windows.
+
+### Tests
+
+15 new tests in `src/speckit/__tests__/sync.test.ts` cover: every placeholder substitution, unknown-token preservation, multi-occurrence substitution, no-op when no placeholders, cache hit (no template fetch), release-API failure fallback, network-throw fallback, full happy-path tag advance with substitution end-to-end, partial-failure (one 404), all-fail (no version bump so we retry), `force=true` re-fetch, `getCurrentVersion`, and rejection of malformed release JSON.
+
+### Notes
+
+- Bundled fallback templates were verified against upstream `v0.8.6`: `spec-template.md` and `constitution-template.md` are byte-identical; `plan-template.md` and `tasks-template.md` differ only in placeholder substitution (the bundled versions already have `/speckit.plan` / `/speckit.tasks` substituted, which matches what the new sync would produce). No fallback regeneration needed in this release; the live sync will keep them current going forward.
+
 ## [0.1.1] - 2026-04-28
 
 ### Fixed (critical)
