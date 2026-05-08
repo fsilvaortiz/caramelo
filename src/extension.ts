@@ -102,11 +102,27 @@ export function activate(context: vscode.ExtensionContext): void {
   const editorContext = new EditorContextTracker(workspaceFolder?.uri);
   context.subscriptions.push(editorContext);
 
-  // Template Sync (background, fire-and-forget)
+  // Template Sync (background, fire-and-forget). On a successful
+  // refresh we invalidate `templateManager.cache` so the next phase
+  // generation reads the new disk content instead of stale in-memory
+  // copies left over from a prior session. On a first-install failure
+  // (no prior cache AND network/all-files failed) we surface a one-shot
+  // toast — the alternative is silent breakage where the user has no
+  // templates at all and gets opaque downstream errors.
   const templateSync = new TemplateSync();
-  templateSync.checkForUpdates().catch((err) => {
-    log.warn('template sync failed:', err);
-  });
+  templateSync
+    .checkForUpdates()
+    .then((result) => {
+      if (result.updated) {
+        templateManager.clearCache();
+      } else if (result.reason !== 'up-to-date' && result.version === undefined) {
+        vscode.window.showWarningMessage(
+          'Caramelo: could not download Spec Kit templates. Using bundled fallback. ' +
+          'Try "Caramelo: Sync Spec Kit Templates" once you\'re online.',
+        );
+      }
+    })
+    .catch((err) => log.warn('template sync failed:', err));
 
   // Status bar. Click focuses the Providers sidebar webview — never
   // opens a top-bar QuickPick. Provider selection / editing lives
