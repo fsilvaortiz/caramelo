@@ -8,7 +8,8 @@ export default defineConfig({
     timeout: 30000,
     color: true,
   },
-  // Match the engine declared in package.json so we exercise the same API
-  // surface in CI as our users have at minimum.
+  // Pin to current stable VS Code. This intentionally exceeds the
+  // engines.vscode minimum — a separate floor-check would be needed to
+  // guarantee we don't accidentally rely on post-1.95 API.
   version: 'stable',
 });

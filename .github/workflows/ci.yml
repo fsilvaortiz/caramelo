@@ -67,11 +67,21 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Headless display required by Electron on Linux runners; macOS / Windows
-      # ship with a windowing system available to the runner.
+      # Electron needs an X display on Linux runners; macOS / Windows ship
+      # one. --error-file surfaces Xvfb's own startup failures instead of
+      # letting them masquerade as opaque Electron crashes.
       - name: Run extension-host smoke tests (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run -a npm run test:smoke
+        run: |
+          xvfb-run -a --error-file=/tmp/xvfb.err --server-args="-screen 0 1280x1024x24" npm run test:smoke
+
+      - name: Upload Xvfb error log on failure
+        if: failure() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: xvfb-error-log
+          path: /tmp/xvfb.err
+          if-no-files-found: ignore
 
       - name: Run extension-host smoke tests
         if: runner.os != 'Linux'

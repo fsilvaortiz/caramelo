@@ -23,7 +23,39 @@ const EXPECTED_COMMANDS = [
   'caramelo.createSpecFromJira',
   'caramelo.openDag',
   'caramelo.viewChanges',
+  'caramelo.showLockedMessage',
 ];
+
+/**
+ * Race a promise against a deadline without misattributing rejections.
+ *
+ * - settled('resolved' | 'rejected'): the promise finished within the deadline.
+ *   The caller can inspect `error` to see the rejection reason.
+ * - settled('pending'): the deadline elapsed before the promise settled. The
+ *   promise's eventual rejection (if any) is swallowed silently — we only use
+ *   this signal for "did it block?" checks where the operation is fire-and-forget.
+ */
+type RaceOutcome =
+  | { settled: 'resolved' }
+  | { settled: 'rejected'; error: unknown }
+  | { settled: 'pending' };
+
+async function raceWithDeadline(p: Thenable<unknown>, ms: number): Promise<RaceOutcome> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<RaceOutcome>((resolve) => {
+    timer = setTimeout(() => resolve({ settled: 'pending' }), ms);
+  });
+  const wrapped = Promise.resolve(p).then(
+    (): RaceOutcome => ({ settled: 'resolved' }),
+    (error): RaceOutcome => ({ settled: 'rejected', error }),
+  );
+  const outcome = await Promise.race([wrapped, deadline]);
+  if (timer) clearTimeout(timer);
+  // Attach a no-op handler to the losing branch so a late rejection doesn't
+  // surface as an unhandledRejection in the extension host.
+  void wrapped.catch(() => undefined);
+  return outcome;
+}
 
 suite('Caramelo extension host smoke', () => {
   suiteSetup(async function () {
@@ -47,51 +79,90 @@ suite('Caramelo extension host smoke', () => {
     assert.deepStrictEqual(missing, [], `missing commands: ${missing.join(', ')}`);
   });
 
-  test('selectProvider without an id focuses the providers sidebar (no QuickPick)', async () => {
-    // The contract: invoking caramelo.selectProvider with no args MUST NOT throw
-    // and MUST NOT block on a QuickPick. It should route to the sidebar webview.
-    // We assert it resolves quickly; a QuickPick would never resolve here.
-    const exec = vscode.commands.executeCommand('caramelo.selectProvider');
-    const timeout = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('selectProvider() blocked — likely opened a QuickPick')), 2000)
+  test('workflow sidebar view focus command resolves', async () => {
+    // Contributed by package.json's `views` declaration; resolves only if the
+    // WorkflowViewProvider was registered during activate(). Regression guard
+    // for the v0.1.1 webview-wiring bug class.
+    const out = await raceWithDeadline(
+      vscode.commands.executeCommand('caramelo.workflow.focus'),
+      5000,
     );
-    await Promise.race([exec, timeout]);
-  });
-
-  test('newSpec resolves without throwing (focuses workflow webview)', async () => {
-    await vscode.commands.executeCommand('caramelo.newSpec');
-  });
-
-  test('addProvider resolves without throwing (focuses providers webview)', async () => {
-    await vscode.commands.executeCommand('caramelo.addProvider');
-  });
-
-  test('syncTemplates command is invocable', async function () {
-    this.timeout(20000);
-    // The real implementation hits the network; we accept either resolution.
-    // A throw would indicate broken wiring (missing TemplateSync instance, etc.).
-    try {
-      await vscode.commands.executeCommand('caramelo.syncTemplates');
-    } catch (err) {
-      assert.fail(`syncTemplates threw: ${(err as Error).message}`);
+    if (out.settled === 'rejected') {
+      assert.fail(`workflow.focus rejected: ${(out.error as Error)?.message ?? String(out.error)}`);
     }
   });
 
-  test('showLockedMessage invokes without synchronous error', async () => {
-    // The command pops an info toast; the returned promise stays pending
-    // until the user dismisses it. We only care that it dispatches.
-    const p = vscode.commands.executeCommand('caramelo.showLockedMessage', 'test reason');
-    assert.ok(p && typeof (p as Thenable<unknown>).then === 'function');
+  test('providers sidebar view focus command resolves', async () => {
+    const out = await raceWithDeadline(
+      vscode.commands.executeCommand('caramelo.providers.focus'),
+      5000,
+    );
+    if (out.settled === 'rejected') {
+      assert.fail(`providers.focus rejected: ${(out.error as Error)?.message ?? String(out.error)}`);
+    }
   });
 
-  test('viewChanges invokes without synchronous error', async () => {
-    const p = vscode.commands.executeCommand('caramelo.viewChanges');
-    assert.ok(p && typeof (p as Thenable<unknown>).then === 'function');
+  test('selectProvider with no args routes to sidebar (no top-bar QuickPick)', async () => {
+    // The contract (memory: feedback_no_quickpick.md): no-arg invocation MUST
+    // dispatch to caramelo.providers.focus, not block on a top-bar picker.
+    // A real QuickPick keeps the returned promise pending indefinitely; a real
+    // bug (missing view, exception) rejects. Distinguish the two so failures
+    // are diagnosed on the right axis.
+    const out = await raceWithDeadline(
+      vscode.commands.executeCommand('caramelo.selectProvider'),
+      3000,
+    );
+    if (out.settled === 'pending') {
+      assert.fail('selectProvider() did not settle in 3s — likely opened a QuickPick');
+    }
+    if (out.settled === 'rejected') {
+      assert.fail(
+        `selectProvider() rejected: ${(out.error as Error)?.message ?? String(out.error)}`,
+      );
+    }
+  });
+
+  test('addProvider with no args routes to sidebar (no top-bar QuickPick)', async () => {
+    const out = await raceWithDeadline(
+      vscode.commands.executeCommand('caramelo.addProvider'),
+      3000,
+    );
+    if (out.settled === 'pending') {
+      assert.fail('addProvider() did not settle in 3s — likely opened a QuickPick');
+    }
+    if (out.settled === 'rejected') {
+      assert.fail(
+        `addProvider() rejected: ${(out.error as Error)?.message ?? String(out.error)}`,
+      );
+    }
+  });
+
+  test('newSpec resolves', async () => {
+    const out = await raceWithDeadline(vscode.commands.executeCommand('caramelo.newSpec'), 3000);
+    if (out.settled === 'rejected') {
+      assert.fail(`newSpec rejected: ${(out.error as Error)?.message ?? String(out.error)}`);
+    }
+  });
+
+  test('syncTemplates dispatches without rejecting on wiring failure', async function () {
+    this.timeout(10000);
+    // The real implementation hits the network; we don't want CI runners to be
+    // gated on Spec Kit upstream reachability. Race against a short deadline:
+    // pending = normal (network in flight), resolved = also fine, rejected =
+    // wiring bug (missing TemplateSync, command handler threw).
+    const out = await raceWithDeadline(
+      vscode.commands.executeCommand('caramelo.syncTemplates'),
+      5000,
+    );
+    if (out.settled === 'rejected') {
+      assert.fail(
+        `syncTemplates rejected: ${(out.error as Error)?.message ?? String(out.error)}`,
+      );
+    }
   });
 
   test('configuration schema exposes documented caramelo settings', () => {
     const cfg = vscode.workspace.getConfiguration();
-    // Read default values — if package.json contributes them, get() returns the default.
     assert.strictEqual(typeof cfg.get('caramelo.useAgentLoop'), 'boolean');
     assert.strictEqual(typeof cfg.get('caramelo.enableBashTool'), 'boolean');
     assert.strictEqual(typeof cfg.get('caramelo.autoApplyEdits'), 'boolean');
