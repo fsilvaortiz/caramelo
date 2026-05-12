@@ -1,6 +1,9 @@
 .vscode/**
+.vscode-test/**
+.vscode-test.mjs
 src/**
 test/**
+out/**
 node_modules/**
 specs/**
 marketing/**
@@ -9,6 +12,7 @@ marketing/**
 .github/**
 .gitignore
 tsconfig.json
+tsconfig.test.json
 esbuild.js
 eslint.config.js
 CLAUDE.md

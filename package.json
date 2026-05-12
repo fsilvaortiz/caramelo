@@ -370,15 +370,22 @@
     "watch": "node esbuild.js --watch",
     "lint": "eslint src/",
     "test": "vitest run",
+    "compile-tests": "tsc -p tsconfig.test.json",
+    "pretest:smoke": "npm run compile-tests && npm run build",
+    "test:smoke": "vscode-test",
     "package": "vsce package"
   },
   "devDependencies": {
+    "@types/mocha": "^10.0.10",
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.95.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
     "esbuild": "^0.24.0",
     "eslint": "^9.0.0",
+    "mocha": "^11.7.5",
     "typescript": "^5.6.0",
     "vitest": "^2.0.0"
   }
