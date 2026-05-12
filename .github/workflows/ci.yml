@@ -7,12 +7,19 @@ on:
     branches: [main]
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  unit:
+    name: Unit (${{ matrix.os }}, Node ${{ matrix.node-version }})
+    runs-on: ${{ matrix.os }}
 
     strategy:
+      fail-fast: false
       matrix:
-        node-version: [20, 22]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node-version: [20]
+        include:
+          # Sanity-check Node 22 only on Linux to keep CI minutes reasonable.
+          - os: ubuntu-latest
+            node-version: 22
 
     steps:
       - uses: actions/checkout@v4
@@ -35,5 +42,37 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Test
+      - name: Unit tests
         run: npm test
+
+  smoke:
+    name: Smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: unit
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Headless display required by Electron on Linux runners; macOS / Windows
+      # ship with a windowing system available to the runner.
+      - name: Run extension-host smoke tests (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:smoke
+
+      - name: Run extension-host smoke tests
+        if: runner.os != 'Linux'
+        run: npm run test:smoke

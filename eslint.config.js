@@ -21,6 +21,6 @@ module.exports = [
     },
   },
   {
-    ignores: ['dist/', 'node_modules/', 'esbuild.js'],
+    ignores: ['dist/', 'out/', 'node_modules/', 'esbuild.js'],
   },
 ];
