@@ -2,8 +2,8 @@ name: Pages
 
 # Builds the VitePress site under /website and publishes it to
 # GitHub Pages. Triggered on changes to /website or this workflow.
-# Repo Settings → Pages → Source must be set to "GitHub Actions"
-# (one-time manual step).
+# configure-pages auto-enables Pages on first run (enablement: true) so
+# a fresh clone doesn't need the manual Repo Settings → Pages step.
 
 on:
   push:
@@ -48,6 +48,8 @@ jobs:
         run: npm run build
 
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
