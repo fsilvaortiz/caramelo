@@ -17,7 +17,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
         node-version: [20]
         include:
-          # Sanity-check Node 22 only on Linux to keep CI minutes reasonable.
+          # Extra Node version probed only on Linux to bound CI cost.
           - os: ubuntu-latest
             node-version: 22
 
