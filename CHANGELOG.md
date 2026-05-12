@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.1.2] - 2026-05-08
+
+### Fixed (critical — discovered in pr-review-toolkit pass)
+
+- **Empty body silently corrupted the cache**. A 200 OK with a zero-byte response — a real failure mode with captive portals and CDN faults — used to write a 0-byte template file, increment the success counter, and stamp the version. The next sync skipped retry and the user was on a blank template forever. Bodies under 50 bytes are now treated as failures.
+- **Partial fetch was treated as full success**. If 4 of 5 templates landed and one transient 5xx silently skipped, the version stamp got written and the missing file was permanently absent until upstream changed. Required templates (spec/plan/tasks) now follow an all-or-nothing rule: any required failure aborts the batch and keeps the prior cache. Optional templates (constitution, checklist) can partial-fail and surface in a `missingOptional` array.
+
+### Fixed (sync rewrite — original PR scope)
+
+- **Spec Kit template sync was silently broken since upstream `v0.7.5`**. The sync looked for `*generic*.zip` in `release.assets`, but Spec Kit stopped attaching release assets months ago — every release since `v0.7.5` ships with `assets: []`. The sync logged a single `console.warn` and silently no-op'd, leaving every Caramelo install on whatever bundled fallback templates shipped with the VSIX. Rewrote `TemplateSync` to fetch individual template files directly from `https://raw.githubusercontent.com/github/spec-kit/<tag>/templates/` — fetches `spec-template.md`, `plan-template.md`, `tasks-template.md`, `constitution-template.md`, and `checklist-template.md` per release tag.
+
+### Added
+
+- **`__SPECKIT_COMMAND_*__` placeholder substitution**. Upstream `templates/plan-template.md` and `templates/tasks-template.md` now embed tokens like `__SPECKIT_COMMAND_PLAN__` that the Spec Kit CLI rewrites at install time. Caramelo substitutes them with the canonical `/speckit.<command>` names (eight tokens covered). Tokens are processed longest-first so a future addition like `__SPECKIT_COMMAND_SPECIFY_FOO__` cannot be partially eaten by the shorter `__SPECKIT_COMMAND_SPECIFY__` substitution. Unknown placeholders are left verbatim — conservative and visible.
+- **Discriminated `UpdateResult`**. `checkForUpdates` now returns `{updated:true, version, missingOptional}` OR `{updated:false, version, reason: 'up-to-date' | 'network-error' | 'all-failed'}`. The "Sync Templates" command no longer claims "already up to date" when the network actually failed — each non-success branch shows a distinct, accurate toast.
+- **First-install failure surface**. If activation runs the sync, no prior cache exists, AND the network fails, the user now sees a one-shot warning toast pointing them at the manual sync command — instead of the prior silent breakage where `/speckit.specify` would mysteriously fail downstream.
+- **`TemplateSync` accepts a `TemplateSyncPaths` constructor argument**. Production callers use the default cache paths under `~/.caramelo/spec-kit`; tests inject a temp directory for hermetic runs.
+- **In-flight mutex on `checkForUpdates`**. The fire-and-forget activation sync and the manual `Sync Templates` command can no longer race each other — the second call awaits the first's result.
+- **`TemplateManager.clearCache()` invalidation**. After a successful sync, the in-memory cache is cleared so the next phase generation reads the new disk content. Without this, users had to reload the window to see updated templates.
+- **Atomic writes via `tmp + renameSync`**. Crash mid-write or simultaneous writers no longer leave a torn `.md` on disk.
+
+### Changed
+
+- **5xx / 429 / 404 differentiated**: the previous code logged all non-OK responses at `debug` and treated them identically. Transient errors (5xx, 429) now log at `warn` so an operator can see retry candidates; 404s stay at `debug` (expected for older tags missing newer optional files).
+- **`readVersionInfo` distinguishes ENOENT from EACCES/EISDIR/EIO**: a permission-broken cache file now logs at `warn` with the path. The prior bare `catch` made permission issues invisible.
+- `TemplateSync.checkForUpdates` no longer depends on `unzip` being on `$PATH`. The previous flow downloaded a zip and shelled out to `unzip` — fine on macOS/Linux, brittle on Windows.
+
+### Tests
+
+31 new tests in `src/speckit/__tests__/sync.test.ts` cover: every placeholder substitution, longest-first token ordering, the four `UpdateResult` outcomes (updated / up-to-date / network-error / all-failed), required-vs-optional template handling, empty-body rejection, sub-MIN-bytes guard, `res.json()` throw fallback, per-file network rejection, prior-cache preservation when downloads fail, force-mode timestamp refresh, two-call mutex sharing one in-flight result, mutex reset between calls, corrupt `version.json` resyncs, outbound headers (User-Agent, Accept) and AbortSignal, tag-in-URL regression guard, content-passes-through-substitution on the partial path, and zero leftover `.tmp-*` files after a successful run.
+
+### Notes
+
+- Bundled fallback templates remain byte-identical to upstream `v0.8.6` after substitution; no fallback regeneration needed. The live sync keeps them current going forward.
+- `VersionInfo.etag` reserved field removed — when per-file ETag caching lands it'll need a `Record<filename, string>` shape, not a single field on the version stamp.
+
 ## [0.1.1] - 2026-04-28
 
 ### Fixed (critical)
