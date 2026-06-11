@@ -144,9 +144,11 @@ export function getPhaseLabel(type: PhaseType): string {
 
 export function isPhaseUnlocked(spec: Spec, phaseType: PhaseType): boolean {
   const phaseIndex = PHASE_ORDER.indexOf(phaseType);
+  if (phaseIndex < 0) return false;
   if (phaseIndex === 0) return true;
-  const prevPhase = spec.phases[phaseIndex - 1];
-  return prevPhase.status === 'approved';
+  const prevType = PHASE_ORDER[phaseIndex - 1];
+  const prev = spec.phases.find((p) => p.type === prevType);
+  return prev?.status === 'approved';
 }
 
 export function findSpecForFile(filePath: string, specsRoot: string): { specName: string; phaseType: PhaseType } | null {

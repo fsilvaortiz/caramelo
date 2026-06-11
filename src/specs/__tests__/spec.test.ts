@@ -186,6 +186,31 @@ describe('isPhaseUnlocked', () => {
     spec = buildSpec('feature-a', tmpDir);
     expect(isPhaseUnlocked(spec, 'design')).toBe(true);
   });
+
+  it('returns false (does not crash) for an unknown phaseType', () => {
+    const spec = buildSpec('feature-a', tmpDir);
+    // The previous behaviour read spec.phases[-2].status and threw TypeError.
+    expect(() => isPhaseUnlocked(spec, 'bogus' as unknown as 'tasks')).not.toThrow();
+    expect(isPhaseUnlocked(spec, 'bogus' as unknown as 'tasks')).toBe(false);
+  });
+
+  it('locates the previous phase by type even if phases array is reordered', () => {
+    writeMetadata(path.join(tmpDir, META_FILE_NAME), {
+      requirements: 'approved',
+      design: 'pending',
+      tasks: 'pending',
+    });
+    const spec = buildSpec('feature-a', tmpDir);
+    // Force a non-canonical order to verify we do not rely on positional index.
+    spec.phases.reverse();
+    expect(isPhaseUnlocked(spec, 'design')).toBe(true);
+  });
+
+  it('returns false when the previous phase is missing from spec.phases', () => {
+    const spec = buildSpec('feature-a', tmpDir);
+    spec.phases = spec.phases.filter((p) => p.type !== 'requirements');
+    expect(isPhaseUnlocked(spec, 'design')).toBe(false);
+  });
 });
 
 describe('findSpecForFile', () => {
