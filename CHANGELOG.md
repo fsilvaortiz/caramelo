@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.1.3] - 2026-06-10
+
+### Fixed (critical)
+
+- **`isPhaseUnlocked` crashed on unknown phaseType and silently returned the wrong answer when `spec.phases` was reordered**. `indexOf(phaseType)` returns `-1` for any value not in `PHASE_ORDER`, which the guard `phaseIndex === 0` did not catch — execution continued with `spec.phases[-2].status` and threw `TypeError: Cannot read properties of undefined`. The whole sidebar render path was brittle to a single bad value. Additionally, the function assumed `spec.phases` was ordered identically to `PHASE_ORDER` without any invariant enforcing that. The previous phase is now looked up by `type` instead of positional index, so unknown phaseTypes return `false` and reordered arrays still resolve correctly. (#11, #21)
+
+### Fixed (high — resource leaks)
+
+- **Four VS Code providers leaked `FileSystemWatcher` and event-listener disposables on every extension reload**. `ProgressViewProvider`, `WorkflowViewProvider`, and `PhaseActionsCodeLensProvider` all created watchers + `onDid*` listeners in their constructors without retaining the returned `Disposable`. `DagView` did the same on every panel open. Symptom: after N reloads, `refresh()` fired N+1 times per file save. All four providers now implement `vscode.Disposable`, track their resources, and (for the two with owners) are pushed into `context.subscriptions`. `DagView` disposes per-panel resources inside `panel.onDidDispose`. (#12, #13, #14, #20, #22)
+- **`JiraClient.searchIssues` silently swallowed every fetch / parse error**. The user saw "0 issues" with no log line, no toast, and no way to distinguish "empty board" from "all three endpoints failed (auth/proxy/network)". Each failing endpoint now logs with its URL and reason; if every endpoint fails the final error lists all of them. The "silent fallback" pattern is fine for redundant endpoints — silently failing on all of them was not. (#15, #23)
+
+### Fixed (medium — robustness)
+
+- **`JiraClient.getBoards` crashed on non-JSON responses**. Atlassian, corporate proxies, and SSO interstitials regularly return HTML with HTTP 200 — the unprotected `await res.json()` threw a bare `SyntaxError: Unexpected token <` with zero diagnostic context. A new `safeJson` helper wraps every parse call and surfaces a clear, source-attributed error: "Jira returned non-JSON response in getBoards (HTTP 200). Likely a proxy / SSO interstitial." (#17, #23)
+- **`JiraClient.getBoards` crashed when Jira returned an unexpected shape**. The `as { values: ... }` cast is purely compile-time; `{ values: null }` (observed on older Jira Server and on permission-denied) made `data.values.map` throw `TypeError`. Shape is now validated at runtime and malformed entries are silently dropped instead of crashing the whole call. (#18, #23)
+- **`JiraClient.mapIssue` acceptance-criteria regex was vulnerable to catastrophic backtracking**. The pattern `/(?:acceptance criteria|AC|given.*when.*then)[\s:]*(.+?)(?=\n\n|\n#|$)/is` with the `s` flag (dotall) and unbounded `.*` could backtrack exponentially on adversarial tickets containing "given" and "when" but no "then" — a very common shape. Replaced with two narrow regexes (heading-anchored and bounded-Gherkin), with the input truncated to 16 KB before scanning. A regression test using an adversarial payload caps at 200 ms. (#16, #23)
+- **Parallel-task batch aborted entirely on a single task failure**. `runAllTasks` used `Promise.all` inside the parallel-batch branch, so one rejected promise short-circuited the batch, left siblings' partial disk writes orphaned, and de-synced `completed` from `pendingTasks.length`. Switched to `Promise.allSettled` with per-failure logging and a single user-facing warning before continuing with the next batch. (#19, #24)
+- **`buildTaskContext` emitted backslash paths on Windows**, producing LLM context labels like `--- SPEC: specs\feature-a\spec.md ---` and a backslash-laced `includedFiles` summary. This was also the sole cause of the `Unit (windows-latest, Node 20)` failure that had been red on `main` since the multi-OS CI matrix landed in #9. Fixed at the single chokepoint inside the `append` closure with a small `toPosix` helper; a regression test asserts no emitted path contains a backslash on any platform. (#25, #26)
+
+### Tests
+
+10 new unit tests added: 4 in `src/specs/__tests__/spec.test.ts` (unknown phaseType, reversed phases array, missing prev phase), 9 in `src/jira/__tests__/jira-client.test.ts` (HTML SSO interstitial, malformed shape, silent-catch fix, ReDoS hardening), 1 regression in `src/commands/task-edits/__tests__/context.test.ts` (POSIX separators on every platform). Suite at 347/347 on Linux/macOS, Windows leg now green for the first time since 2026-05-12.
+
+### Notes
+
+- All 10 issues filed (#11–#20) closed by their respective PRs (#21, #22, #23, #24). Issue #25 was discovered while reviewing CI on the prior PRs and closed by #26.
+- No source-level changes in the four areas the parallel `start-task` rewrite is touching (`src/commands/start-task.ts`, `src/commands/task-edits/{apply,parser,prompt,git-safety,mutex}.ts`, `src/agent/**`, `src/providers/claude.ts`). The Windows path-separator fix is confined to `src/commands/task-edits/context.ts:append` and was the smallest possible change at a single chokepoint.
+
 ## [0.1.2] - 2026-05-08
 
 ### Fixed (critical — discovered in pr-review-toolkit pass)
