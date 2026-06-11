@@ -6,6 +6,7 @@ import { isObject, safeJsonParse } from '../../utils/safe-json.js';
 
 export class DagView {
   private panel: vscode.WebviewPanel | undefined;
+  private panelDisposables: vscode.Disposable[] = [];
 
   constructor(private readonly workspaceUri: vscode.Uri | undefined) {}
 
@@ -23,12 +24,19 @@ export class DagView {
       { enableScripts: true, retainContextWhenHidden: true }
     );
 
-    this.panel.onDidDispose(() => { this.panel = undefined; });
-    this.panel.webview.onDidReceiveMessage((msg) => {
-      if (msg.command === 'openFile' && msg.path) {
-        vscode.commands.executeCommand('vscode.open', vscode.Uri.file(msg.path));
+    this.panel.onDidDispose(() => {
+      this.panel = undefined;
+      while (this.panelDisposables.length) {
+        this.panelDisposables.pop()?.dispose();
       }
     });
+    this.panelDisposables.push(
+      this.panel.webview.onDidReceiveMessage((msg) => {
+        if (msg.command === 'openFile' && msg.path) {
+          vscode.commands.executeCommand('vscode.open', vscode.Uri.file(msg.path));
+        }
+      }),
+    );
 
     this.refresh();
 
@@ -37,9 +45,12 @@ export class DagView {
       const watcher = vscode.workspace.createFileSystemWatcher(
         new vscode.RelativePattern(this.workspaceUri, `${SPECS_DIR_NAME}/**`)
       );
-      watcher.onDidChange(() => this.refresh());
-      watcher.onDidCreate(() => this.refresh());
-      watcher.onDidDelete(() => this.refresh());
+      this.panelDisposables.push(
+        watcher,
+        watcher.onDidChange(() => this.refresh()),
+        watcher.onDidCreate(() => this.refresh()),
+        watcher.onDidDelete(() => this.refresh()),
+      );
     }
   }
 

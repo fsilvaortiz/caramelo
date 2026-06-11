@@ -47,13 +47,14 @@ export type WebviewMsg =
   | { command: 'clarifySubmit' }
   | { command: 'clarifyCancel' };
 
-export class WorkflowViewProvider implements vscode.WebviewViewProvider {
+export class WorkflowViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   public static readonly viewType = 'caramelo.workflow';
   private view?: vscode.WebviewView;
   private workspaceUri: vscode.Uri | undefined;
   private onSpecCreatedCallback?: (name: string) => void;
   private collapsedSpecs = new Set<string>();
   private clarifySession: ClarifySession | null = null;
+  private readonly disposables: vscode.Disposable[] = [];
 
   constructor(private readonly extensionUri: vscode.Uri) {
     this.workspaceUri = vscode.workspace.workspaceFolders?.[0]?.uri;
@@ -64,13 +65,24 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider {
         const watcher = vscode.workspace.createFileSystemWatcher(
           new vscode.RelativePattern(this.workspaceUri, glob)
         );
-        watcher.onDidChange(() => this.refresh());
-        watcher.onDidCreate(() => this.refresh());
-        watcher.onDidDelete(() => this.refresh());
+        this.disposables.push(
+          watcher,
+          watcher.onDidChange(() => this.refresh()),
+          watcher.onDidCreate(() => this.refresh()),
+          watcher.onDidDelete(() => this.refresh()),
+        );
       }
     }
 
-    vscode.workspace.onDidSaveTextDocument(() => this.refresh());
+    this.disposables.push(
+      vscode.workspace.onDidSaveTextDocument(() => this.refresh()),
+    );
+  }
+
+  dispose(): void {
+    while (this.disposables.length) {
+      this.disposables.pop()?.dispose();
+    }
   }
 
   onSpecCreated(cb: (name: string) => void): void {

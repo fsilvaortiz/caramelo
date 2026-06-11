@@ -4,10 +4,11 @@ import * as path from 'path';
 import { SPECS_DIR_NAME, PHASE_FILES } from '../../constants.js';
 import { isObject, safeJsonParse } from '../../utils/safe-json.js';
 
-export class ProgressViewProvider implements vscode.WebviewViewProvider {
+export class ProgressViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   public static readonly viewType = 'caramelo.progress';
   private view?: vscode.WebviewView;
   private workspaceUri: vscode.Uri | undefined;
+  private readonly disposables: vscode.Disposable[] = [];
 
   constructor(private readonly extensionUri: vscode.Uri) {
     this.workspaceUri = vscode.workspace.workspaceFolders?.[0]?.uri;
@@ -16,13 +17,24 @@ export class ProgressViewProvider implements vscode.WebviewViewProvider {
     if (this.workspaceUri) {
       const pattern = new vscode.RelativePattern(this.workspaceUri, `${SPECS_DIR_NAME}/**`);
       const watcher = vscode.workspace.createFileSystemWatcher(pattern);
-      watcher.onDidChange(() => this.refresh());
-      watcher.onDidCreate(() => this.refresh());
-      watcher.onDidDelete(() => this.refresh());
+      this.disposables.push(
+        watcher,
+        watcher.onDidChange(() => this.refresh()),
+        watcher.onDidCreate(() => this.refresh()),
+        watcher.onDidDelete(() => this.refresh()),
+      );
     }
 
-    vscode.window.onDidChangeActiveTextEditor(() => this.refresh());
-    vscode.workspace.onDidSaveTextDocument(() => this.refresh());
+    this.disposables.push(
+      vscode.window.onDidChangeActiveTextEditor(() => this.refresh()),
+      vscode.workspace.onDidSaveTextDocument(() => this.refresh()),
+    );
+  }
+
+  dispose(): void {
+    while (this.disposables.length) {
+      this.disposables.pop()?.dispose();
+    }
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {

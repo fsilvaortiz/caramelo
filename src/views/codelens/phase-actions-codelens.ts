@@ -11,27 +11,40 @@ import {
   type Spec,
 } from '../../specs/spec.js';
 
-export class PhaseActionsCodeLensProvider implements vscode.CodeLensProvider {
+export class PhaseActionsCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposable {
   private readonly _onDidChangeCodeLenses = new vscode.EventEmitter<void>();
   readonly onDidChangeCodeLenses = this._onDidChangeCodeLenses.event;
 
   private readonly watcher: vscode.FileSystemWatcher | undefined;
+  private readonly disposables: vscode.Disposable[] = [];
 
   constructor(private readonly workspaceUri: vscode.Uri | undefined) {
     if (workspaceUri) {
       const pattern = new vscode.RelativePattern(workspaceUri, `${SPECS_DIR_NAME}/**/.caramelo-meta.json`);
       this.watcher = vscode.workspace.createFileSystemWatcher(pattern);
-      this.watcher.onDidChange(() => this._onDidChangeCodeLenses.fire());
-      this.watcher.onDidCreate(() => this._onDidChangeCodeLenses.fire());
-      this.watcher.onDidDelete(() => this._onDidChangeCodeLenses.fire());
+      this.disposables.push(
+        this.watcher,
+        this.watcher.onDidChange(() => this._onDidChangeCodeLenses.fire()),
+        this.watcher.onDidCreate(() => this._onDidChangeCodeLenses.fire()),
+        this.watcher.onDidDelete(() => this._onDidChangeCodeLenses.fire()),
+      );
     }
 
     // Also refresh when documents are saved
-    vscode.workspace.onDidSaveTextDocument(() => this._onDidChangeCodeLenses.fire());
+    this.disposables.push(
+      vscode.workspace.onDidSaveTextDocument(() => this._onDidChangeCodeLenses.fire()),
+    );
   }
 
   fireRefresh(): void {
     this._onDidChangeCodeLenses.fire();
+  }
+
+  dispose(): void {
+    while (this.disposables.length) {
+      this.disposables.pop()?.dispose();
+    }
+    this._onDidChangeCodeLenses.dispose();
   }
 
   provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
