@@ -80,15 +80,19 @@ export function buildTaskContext(args: BuildContextArgs): BuiltContext {
   let total = 0;
 
   const append = (label: string, relPath: string, content: string): boolean => {
-    const header = `--- ${label}: ${relPath} ---\n`;
+    // Always emit POSIX-style separators so the LLM-facing context, the
+    // `includedFiles` summary, and the test assertions match regardless
+    // of host platform (Windows used to produce `specs\feature-a\foo`).
+    const rel = toPosix(relPath);
+    const header = `--- ${label}: ${rel} ---\n`;
     const footer = `\n--- END FILE ---\n`;
     const chunk = header + content + footer;
     if (total + chunk.length > maxTotal) {
-      skippedFiles.push(relPath);
+      skippedFiles.push(rel);
       return false;
     }
     parts.push(chunk);
-    includedFiles.push(relPath);
+    includedFiles.push(rel);
     total += chunk.length;
     return true;
   };
@@ -165,6 +169,15 @@ function safeRead(abs: string, maxBytes: number): ReadResult | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Force POSIX-style forward-slash separators. Used so the workspace
+ * paths we emit to the LLM and to consumers are platform-agnostic;
+ * on Windows `path.join` / `path.relative` produce backslashes.
+ */
+function toPosix(p: string): string {
+  return p.replace(/\\/g, '/');
 }
 
 function resolveInsideWorkspace(rel: string, root: string): string | null {
