@@ -78,6 +78,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // Workflow WebviewView (unified: constitution + specs + progress + tasks)
   const workflowView = new WorkflowViewProvider(context.extensionUri);
   context.subscriptions.push(
+    workflowView,
     vscode.window.registerWebviewViewProvider(WorkflowViewProvider.viewType, workflowView)
   );
 
@@ -95,6 +96,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // CodeLens — phase actions (approve, regenerate, progress bar)
   const phaseActionsProvider = new PhaseActionsCodeLensProvider(workspaceFolder?.uri);
   context.subscriptions.push(
+    phaseActionsProvider,
     vscode.languages.registerCodeLensProvider({ pattern: '**/specs/**/*.md' }, phaseActionsProvider)
   );
 
