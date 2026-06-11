@@ -62,6 +62,26 @@ describe('buildTaskContext', () => {
     ]);
   });
 
+  // Regression: on Windows `path.relative` returned `specs\feature-a\spec.md`
+  // and broke both the LLM-facing context labels and includedFiles. Assert
+  // that no emitted path ever carries a backslash, regardless of host OS.
+  it('emits POSIX-style separators on every platform', () => {
+    writeWs('specs/feature-a/spec.md', '# Spec body');
+    writeWs('specs/feature-a/plan.md', '# Plan body');
+    writeWs('src/foo.ts', 'export const foo = 1;\n');
+
+    const ctx = buildTaskContext({
+      specDir,
+      workspaceRoot: tmp,
+      taskText: 'Update src/foo.ts',
+    });
+
+    expect(ctx.text).not.toMatch(/--- (SPEC|EXISTING FILE): [^\n]*\\/);
+    for (const rel of ctx.includedFiles) {
+      expect(rel).not.toContain('\\');
+    }
+  });
+
   it('attaches current content of files referenced by the task', () => {
     writeWs('specs/feature-a/spec.md', 'See `src/foo.ts`.');
     writeWs('src/foo.ts', 'export const foo = 1;\n');
