@@ -333,12 +333,14 @@ export function activate(context: vscode.ExtensionContext): void {
         const isParallelBatch = batch[0].isParallel;
 
         if (isParallelBatch && batch.length > 1) {
-          // Run parallel tasks concurrently
+          // Run parallel tasks concurrently. Use allSettled so one failing
+          // task does not abort the whole batch and discard the work of
+          // siblings that have already written to disk.
           vscode.window.showInformationMessage(
             `Running ${batch.length} tasks in parallel (${completed + 1}-${completed + batch.length}/${pendingTasks.length})`
           );
 
-          await Promise.all(batch.map(async (task) => {
+          const results = await Promise.allSettled(batch.map(async (task) => {
             const freshDoc = await vscode.workspace.openTextDocument(doc.uri);
             const currentLine = findTaskLine(freshDoc, task.text);
             if (currentLine >= 0) {
@@ -346,6 +348,21 @@ export function activate(context: vscode.ExtensionContext): void {
             }
           }));
           completed += batch.length;
+
+          const failed: Array<{ task: PendingTask; reason: string }> = [];
+          for (let i = 0; i < results.length; i++) {
+            const r = results[i];
+            if (r.status === 'rejected') {
+              const reason = r.reason instanceof Error ? r.reason.message : String(r.reason);
+              failed.push({ task: batch[i], reason });
+              log.warn(`[runAllTasks] parallel task failed: "${batch[i].text.slice(0, 60)}" — ${reason}`);
+            }
+          }
+          if (failed.length > 0) {
+            vscode.window.showWarningMessage(
+              `${failed.length}/${batch.length} parallel task(s) failed. See Caramelo output for details. Continuing with the remaining batches.`
+            );
+          }
         } else {
           // Run sequential tasks one by one
           for (const task of batch) {
