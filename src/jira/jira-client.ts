@@ -1,3 +1,5 @@
+import { log } from '../utils/log.js';
+
 export interface JiraBoard {
   id: string;
   name: string;
@@ -32,6 +34,11 @@ type RawIssue = {
   };
 };
 
+// Acceptance-criteria description payloads larger than this are not worth
+// scanning byte-by-byte and historically have been the trigger for the
+// ReDoS-prone Gherkin heuristic. Truncating bounds the regex work.
+const AC_SCAN_MAX_CHARS = 16_000;
+
 export class JiraClient {
   private readonly authHeader: string;
 
@@ -63,8 +70,19 @@ export class JiraClient {
       signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) throw new Error(`Failed to fetch boards: ${res.status} ${res.statusText}`);
-    const data = await res.json() as { values: Array<{ id: number; name: string; type: string }> };
-    return data.values.map((b) => ({ id: String(b.id), name: b.name, type: b.type }));
+    const data = await safeJson(res, 'getBoards');
+    const values = (data as { values?: unknown })?.values;
+    if (!Array.isArray(values)) {
+      throw new Error('Jira returned unexpected board list shape (no `values` array).');
+    }
+    const out: JiraBoard[] = [];
+    for (const raw of values) {
+      if (!raw || typeof raw !== 'object') continue;
+      const b = raw as { id?: unknown; name?: unknown; type?: unknown };
+      if (b.id === undefined || typeof b.name !== 'string' || typeof b.type !== 'string') continue;
+      out.push({ id: String(b.id), name: b.name, type: b.type });
+    }
+    return out;
   }
 
   async searchIssues(_query?: string, maxResults = 50, startAt = 0): Promise<JiraSearchResult> {
@@ -81,6 +99,7 @@ export class JiraClient {
 
     const allIssues = new Map<string, JiraIssue>();
     let total = 0;
+    const failures: Array<{ url: string; reason: string }> = [];
 
     for (const url of endpoints) {
       try {
@@ -88,42 +107,62 @@ export class JiraClient {
           headers: this.headers(),
           signal: AbortSignal.timeout(15000),
         });
-        if (!res.ok) continue;
-        const data = await res.json() as { issues: Array<RawIssue>; total?: number };
-        total = Math.max(total, data.total ?? 0);
-        for (const issue of (data.issues || [])) {
-          if (!allIssues.has(issue.key)) {
+        if (!res.ok) {
+          failures.push({ url, reason: `HTTP ${res.status} ${res.statusText}` });
+          continue;
+        }
+        const data = await safeJson(res, `searchIssues:${endpointLabel(url)}`);
+        const shaped = data as { issues?: unknown; total?: unknown };
+        const issues = Array.isArray(shaped.issues) ? (shaped.issues as RawIssue[]) : [];
+        if (typeof shaped.total === 'number') {
+          total = Math.max(total, shaped.total);
+        }
+        for (const issue of issues) {
+          if (issue && typeof issue.key === 'string' && !allIssues.has(issue.key)) {
             allIssues.set(issue.key, this.mapIssue(issue));
           }
         }
-      } catch {
-        // Skip failed endpoint
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        failures.push({ url, reason });
+        log.warn(`[jira] searchIssues endpoint failed: ${endpointLabel(url)} — ${reason}`);
       }
     }
 
     // Also try the project-level search via API v2 as last resort
     const projectKey = await this.getBoardProjectKey();
     if (projectKey) {
+      const v2Url = `${this.instanceUrl}/rest/api/2/search?jql=${encodeURIComponent(`project = ${projectKey} ORDER BY updated DESC`)}&maxResults=${maxResults}&startAt=${startAt}&fields=${fields}`;
       try {
-        const res = await fetch(
-          `${this.instanceUrl}/rest/api/2/search?jql=${encodeURIComponent(`project = ${projectKey} ORDER BY updated DESC`)}&maxResults=${maxResults}&startAt=${startAt}&fields=${fields}`,
-          { headers: this.headers(), signal: AbortSignal.timeout(15000) }
-        );
+        const res = await fetch(v2Url, { headers: this.headers(), signal: AbortSignal.timeout(15000) });
         if (res.ok) {
-          const data = await res.json() as { issues: Array<RawIssue>; total?: number };
-          total = Math.max(total, data.total ?? 0);
-          for (const issue of (data.issues || [])) {
-            if (!allIssues.has(issue.key)) {
+          const data = await safeJson(res, 'searchIssues:v2');
+          const shaped = data as { issues?: unknown; total?: unknown };
+          const issues = Array.isArray(shaped.issues) ? (shaped.issues as RawIssue[]) : [];
+          if (typeof shaped.total === 'number') {
+            total = Math.max(total, shaped.total);
+          }
+          for (const issue of issues) {
+            if (issue && typeof issue.key === 'string' && !allIssues.has(issue.key)) {
               allIssues.set(issue.key, this.mapIssue(issue));
             }
           }
+        } else {
+          // v2 search not available — that's OK, we have Agile results. Still
+          // worth a debug breadcrumb in case the agile endpoints also failed.
+          log.debug(`[jira] v2 search returned ${res.status}; continuing with agile results`);
         }
-      } catch {
-        // v2 search not available — that's OK, we have Agile results
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        log.debug(`[jira] v2 search threw: ${reason}`);
       }
     }
 
     if (allIssues.size === 0) {
+      if (failures.length > 0) {
+        const summary = failures.map((f) => `${endpointLabel(f.url)} (${f.reason})`).join('; ');
+        throw new Error(`No issues fetched. All board endpoints failed: ${summary}`);
+      }
       throw new Error('No issues found on this board');
     }
 
@@ -148,7 +187,7 @@ export class JiraClient {
     }
 
     if (!res.ok) throw new Error(`Failed to fetch issue ${key}: ${res.status}`);
-    const data = await res.json() as RawIssue;
+    const data = await safeJson(res, `getIssue:${key}`) as RawIssue;
     return this.mapIssue(data);
   }
 
@@ -158,16 +197,11 @@ export class JiraClient {
       .slice(-5)
       .map((c) => adfToPlainText(c.body));
 
-    // Extract acceptance criteria from description (common patterns)
-    let acceptanceCriteria = '';
-    const acMatch = desc.match(/(?:acceptance criteria|AC|given.*when.*then)[\s:]*(.+?)(?=\n\n|\n#|$)/is);
-    if (acMatch) acceptanceCriteria = acMatch[1].trim();
-
     return {
       key: raw.key,
       summary: raw.fields.summary,
       description: desc,
-      acceptanceCriteria,
+      acceptanceCriteria: extractAcceptanceCriteria(desc),
       status: raw.fields.status.name,
       assignee: raw.fields.assignee?.displayName ?? 'Unassigned',
       comments,
@@ -187,10 +221,11 @@ export class JiraClient {
         { headers: this.headers(), signal: AbortSignal.timeout(10000) }
       );
       if (!res.ok) return null;
-      const data = await res.json() as { location?: { projectKey?: string } };
+      const data = await safeJson(res, 'getBoardProjectKey') as { location?: { projectKey?: string } };
       this.boardProjectKey = data.location?.projectKey ?? null;
       return this.boardProjectKey;
-    } catch {
+    } catch (err) {
+      log.debug(`[jira] getBoardProjectKey threw: ${err instanceof Error ? err.message : String(err)}`);
       return null;
     }
   }
@@ -242,5 +277,47 @@ function adfToPlainText(adf: unknown): string {
     return parts.join('');
   }
 
+  return '';
+}
+
+/**
+ * Parse a fetch Response as JSON, surfacing a clear error when the body
+ * is not JSON (proxy/SSO interstitials, gateway HTML pages). The native
+ * SyntaxError leaks zero context — this wrapper attaches the source.
+ */
+async function safeJson(res: Response, source: string): Promise<unknown> {
+  try {
+    return await res.json();
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Jira returned non-JSON response in ${source} (HTTP ${res.status}). ` +
+      `Likely a proxy / SSO interstitial. Original parse error: ${detail}`
+    );
+  }
+}
+
+function endpointLabel(url: string): string {
+  // Strip the host so logs read like "/rest/agile/1.0/board/123/issue".
+  return url.replace(/^https?:\/\/[^/]+/, '') || url;
+}
+
+const AC_HEADING_RE = /(?:^|\n)\s*(?:#+\s*)?(?:acceptance criteria|AC)\b[\s:]*\n?([\s\S]{0,4000}?)(?=\n\s*\n|\n\s*#|$)/i;
+const GHERKIN_RE = /(?:^|\n)\s*given\b[^\n]{0,500}\n[\s\S]{0,500}?\bwhen\b[^\n]{0,500}\n[\s\S]{0,500}?\bthen\b[^\n]{0,500}/i;
+
+/**
+ * Heuristic extraction of acceptance criteria. Two narrow regexes,
+ * each anchored on its own marker, so we never run an unbounded
+ * `given.*when.*then` over a multi-MB description (the previous shape
+ * could catastrophically backtrack on tickets that had "given" and
+ * "when" but no "then"). Inputs are also truncated before scanning.
+ */
+function extractAcceptanceCriteria(desc: string): string {
+  if (!desc) return '';
+  const scan = desc.length > AC_SCAN_MAX_CHARS ? desc.slice(0, AC_SCAN_MAX_CHARS) : desc;
+  const heading = scan.match(AC_HEADING_RE);
+  if (heading?.[1]) return heading[1].trim();
+  const gherkin = scan.match(GHERKIN_RE);
+  if (gherkin) return gherkin[0].trim();
   return '';
 }
