@@ -10,6 +10,6 @@
     "sourceMap": true,
     "types": ["node", "mocha", "vscode"]
   },
-  "include": ["src/test/**/*"],
+  "include": ["src/test/**/*", "src/markdown.d.ts"],
   "exclude": ["node_modules", "dist", "out"]
 }

@@ -1,0 +1,5 @@
+{
+  "caramelo.autoApplyEdits": true,
+  "caramelo.tasks.allowWithoutGit": true,
+  "caramelo.useAgentLoop": false
+}
