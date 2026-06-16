@@ -31,7 +31,21 @@ import { log } from './utils/log.js';
 import { migrateProviderSettingsToGlobal } from './utils/migrate-providers.js';
 import type { ProviderConfig } from './constants.js';
 
-export function activate(context: vscode.ExtensionContext): void {
+/**
+ * Public test surface returned by activate(). Production callers do not
+ * consume it; the extension-host smoke harness uses it to inject a mock
+ * provider into the registry and drive end-to-end command flows without
+ * making real LLM calls. Keeping the surface minimal (only what tests
+ * genuinely need) prevents the API from drifting into a load-bearing
+ * runtime contract.
+ */
+export interface CarameloApi {
+  registry: ProviderRegistry;
+  workflowEngine: WorkflowEngine;
+  templateManager: TemplateManager;
+}
+
+export function activate(context: vscode.ExtensionContext): CarameloApi {
   const registry = new ProviderRegistry();
   const secrets = context.secrets;
 
@@ -394,6 +408,8 @@ export function activate(context: vscode.ExtensionContext): void {
     registry,
     statusBar
   );
+
+  return { registry, workflowEngine, templateManager };
 }
 
 export function deactivate(): void {
