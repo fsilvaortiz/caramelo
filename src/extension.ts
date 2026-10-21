@@ -18,6 +18,7 @@ import { runPhase } from './commands/run-phase.js';
 import { approvePhase } from './commands/approve-phase.js';
 import { startTask } from './commands/start-task.js';
 import { syncTemplates } from './commands/sync-templates.js';
+import { applyVsCodeSettings } from './commands/apply-vscode-settings.js';
 import { editConstitution } from './commands/edit-constitution.js';
 import { clarifySpec } from './commands/clarify.js';
 import { analyzeConsistency, fixSingleIssue } from './commands/analyze.js';
@@ -229,6 +230,7 @@ export function activate(context: vscode.ExtensionContext): CarameloApi {
       dagView.show();
     }),
     vscode.commands.registerCommand(COMMAND_IDS.syncTemplates, () => syncTemplates(templateSync)),
+    vscode.commands.registerCommand(COMMAND_IDS.applyVsCodeSettings, () => applyVsCodeSettings()),
     vscode.commands.registerCommand('caramelo.clarify', () => {
       if (editorContext.currentSpecName && specWorkspace) {
         clarifySpec(editorContext.currentSpecName, specWorkspace, registry, workflowView);
