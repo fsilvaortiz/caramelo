@@ -39,6 +39,7 @@ export type WebviewMsg =
   | { command: 'toggleTask'; filePath: string; line: number; done: boolean }
   | { command: 'toggleSpec'; name: string }
   | { command: 'runAllTasks'; path: string }
+  | { command: 'convergeTasks'; specName: string }
   | { command: 'createSpecFromJira' }
   | { command: 'openExternal'; url: string }
   | { command: 'openDag' }
@@ -144,6 +145,9 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider, vscode.
         vscode.commands.executeCommand('vscode.open', vscode.Uri.file(msg.path)).then(() => {
           setTimeout(() => vscode.commands.executeCommand('caramelo.runAllTasks'), 500);
         });
+        return;
+      case 'convergeTasks':
+        vscode.commands.executeCommand(COMMAND_IDS.convergeTasks, msg.specName);
         return;
       case 'createSpecFromJira':
         vscode.commands.executeCommand('caramelo.createSpecFromJira');
@@ -481,9 +485,13 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider, vscode.
       } else if (p.status === 'approved') {
         const hasPendingTasks = p.type === 'tasks' && spec.taskStats.total > 0 && spec.taskStats.completed < spec.taskStats.total;
         const allTasksDone = p.type === 'tasks' && spec.taskStats.total > 0 && spec.taskStats.completed === spec.taskStats.total;
+        const convergeBtn = p.type === 'tasks'
+          ? `<button class="phase-btn-sm" title="Reconcile tasks.md with codebase (Spec Kit /converge). Appends new tasks only — never edits existing." onclick="msg('convergeTasks',{specName:'${esc(spec.name)}'})">⟲ Converge</button>`
+          : '';
         action = `
           ${hasPendingTasks ? `<button class="phase-btn implement" onclick="msg('runAllTasks',{path:'${esc(p.filePath)}'})">▶ Implement</button>` : ''}
           ${allTasksDone ? '<span class="phase-done-text">✓ Done</span>' : ''}
+          ${convergeBtn}
           <button class="phase-btn-sm" onclick="msg('openFile',{path:'${esc(p.filePath)}'})">Open</button>
           <button class="phase-btn-sm" onclick="msg('runPhase',{specName:'${spec.name}',phaseType:'${p.type}'})">⟳</button>`;
       } else if (p.status === 'stale') {
@@ -715,6 +723,9 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case 'runAllTasks':
       if (!isNonEmptyStr(m.path)) return null;
       return { command: 'runAllTasks', path: m.path };
+    case 'convergeTasks':
+      if (!isNonEmptyStr(m.specName)) return null;
+      return { command: 'convergeTasks', specName: m.specName };
     case 'openExternal':
       if (!isNonEmptyStr(m.url)) return null;
       return { command: 'openExternal', url: m.url };
