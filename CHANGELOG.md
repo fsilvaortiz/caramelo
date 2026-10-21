@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.1.4] - 2026-10-21
+
+Catch-up release that closes the gap between Caramelo and GitHub Spec Kit v1.2.2 — upstream crossed the `v1.0.0` boundary on 2026-08-21 and ran four months of releases while Caramelo was pinned to templates from the pre-1.0 line.
+
+### Fixed (correctness)
+
+- **`/speckit.converge` and `/speckit.taskstoissues` placeholders reached the LLM verbatim.** Spec Kit v1.x added these two slash commands; `PLACEHOLDER_SUBSTITUTIONS` only mapped the eight pre-1.0 commands, so any template referencing either token silently degraded the prompt. The map now covers both, and the existing "every declared token" test (plus a new explicit case) protects against future drift. (#29)
+
+### Added (Spec Kit v1.x surface)
+
+- **Sync `templates/vscode-settings.json`.** Spec Kit v1.x ships recommended VS Code chat settings (`chat.promptFilesRecommendations` + `chat.tools.terminal.autoApprove`); Caramelo now downloads the file as an optional template and exposes a new command `Caramelo: Apply Spec Kit VS Code Settings` that merges it into the workspace's `.vscode/settings.json`. Merge is top-level-key-only (no silent deep edits of settings a user cannot see from the modal); conflicts raise a modal with three choices: Overwrite, Add new only, Cancel. Atomic write mirrors `TemplateSync` so a crash never leaves a torn file. (#30)
+- **Read `.specify/extensions.yml` and surface lifecycle hooks in the sidebar.** Spec Kit v1.x introduced a hook system for `before_specify` / `before_plan` / `before_converge` / etc. Caramelo now parses the file and renders a "Spec Kit Hooks" panel grouped by phase, each entry marked required/optional with an optional condition chip. The panel is hidden entirely when no hooks are configured. Execution of hooks stays with Spec Kit's own CLI — Caramelo is surfacing, not running. New runtime dependency `yaml@2.9.1` (pinned, zero production vulnerabilities after install). (#31)
+- **`/speckit.converge` as an inline action on approved Tasks phase.** New button next to Implement reconciles the current codebase against spec/plan/tasks and appends only the missing tasks to `tasks.md`. The system prompt forbids edits/reorders of existing tasks; the pure `appendConvergedTasks` helper preserves input bytes as a prefix of the output, and a test asserts that invariant directly. Each run writes a `tasks.pre-converge.md` backup and appends under a dated `## Converged Tasks — YYYY-MM-DD` section so multiple runs stay legible as an audit trail. When nothing is missing the model emits the sentinel `NONE` and the command surfaces "nothing to add" rather than pretending success. (#32)
+
+### Notes
+
+- All four PRs are self-contained and independently revertable. The release does not require coordinated changes across them.
+- Templates cached locally will auto-refresh to v1.2.2 on next extension activation (`TemplateSync` short-circuits only on `cached.tag === latest.tag`, which `v0.10.2 !== v1.2.2` cleanly fails).
+- Backlog for v0.2.0: executing (not just surfacing) `.specify/extensions.yml` hooks, enabling/disabling hooks from the UI, evaluating condition expressions.
+
 ## [0.1.3] - 2026-06-10
 
 ### Fixed (critical)
