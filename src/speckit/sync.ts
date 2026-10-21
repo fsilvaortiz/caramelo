@@ -54,6 +54,14 @@ const REQUIRED_TEMPLATES: readonly string[] = [
 const OPTIONAL_TEMPLATES: readonly string[] = [
   'constitution-template.md',
   'checklist-template.md',
+  // Added in Spec Kit v1.x. JSON blob with recommended VS Code
+  // settings (chat.promptFilesRecommendations and friends). Downloaded
+  // opportunistically; the `caramelo.applyVsCodeSettings` command
+  // merges it into the workspace's .vscode/settings.json on demand.
+  // Non-markdown, but the sync is file-name-agnostic and
+  // applyPlaceholders is a no-op on a token-free body, so no special-
+  // casing is needed here.
+  'vscode-settings.json',
 ];
 
 const ALL_TEMPLATES: readonly string[] = [...REQUIRED_TEMPLATES, ...OPTIONAL_TEMPLATES];

@@ -118,6 +118,10 @@
         "title": "Caramelo: Sync Spec Kit Templates"
       },
       {
+        "command": "caramelo.applyVsCodeSettings",
+        "title": "Caramelo: Apply Spec Kit VS Code Settings"
+      },
+      {
         "command": "caramelo.viewChanges",
         "title": "Caramelo: View Changes"
       },

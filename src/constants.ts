@@ -19,7 +19,10 @@ export const COMMAND_IDS = {
   syncTemplates: 'caramelo.syncTemplates',
   viewChanges: 'caramelo.viewChanges',
   previewSpec: 'caramelo.previewSpec',
+  applyVsCodeSettings: 'caramelo.applyVsCodeSettings',
 } as const;
+
+export const VSCODE_SETTINGS_FILE = 'vscode-settings.json';
 
 export const SETTINGS_KEYS = {
   providers: 'caramelo.providers',
