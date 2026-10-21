@@ -4,6 +4,7 @@ import * as path from 'path';
 import { SPECS_DIR_NAME, PHASE_FILES, COMMAND_IDS } from '../../constants.js';
 import { isObject, safeJsonParse } from '../../utils/safe-json.js';
 import { writeAnswersToSpec, type ClarificationQuestion } from '../../commands/clarify.js';
+import { loadHooks, groupHooksByPhase, type HookPhaseKey } from '../../speckit/extensions.js';
 import { log } from '../../utils/log.js';
 
 /**
@@ -339,12 +340,55 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider, vscode.
     return `<!DOCTYPE html><html><head>${head}</head><body>
 
     ${this.renderConstitution(hasCon)}
+    ${this.renderHooks()}
     ${this.renderNewSpecForm(hasCon)}
     ${specs.length === 0 ? '<div class="empty-hint">No specs yet. Create one above.</div>' : ''}
     ${specs.map((s) => this.renderSpecCard(s)).join('')}
 
     ${SCRIPT}
     </body></html>`;
+  }
+
+  /**
+   * Spec Kit v1.x reads `.specify/extensions.yml` for lifecycle hooks.
+   * Caramelo does not execute them (Spec Kit's own CLI does), but
+   * surfacing them here keeps the sidebar honest about what will run
+   * when a phase fires. The section is hidden entirely when no hooks
+   * are configured so it never adds UI noise.
+   */
+  private renderHooks(): string {
+    if (!this.workspaceUri) return '';
+    const hooks = loadHooks(this.workspaceUri.fsPath);
+    if (hooks.length === 0) return '';
+
+    const grouped = groupHooksByPhase(hooks);
+    const sections: string[] = [];
+    for (const [phaseKey, entries] of grouped.entries()) {
+      const items = entries.map((h) => {
+        const marker = h.optional ? '◯' : '⚙';
+        const cls = h.optional ? 'hook-item optional' : 'hook-item required';
+        const title = h.optional ? 'Optional hook' : 'Required hook';
+        const cond = h.condition ? `<span class="hook-condition" title="Condition (evaluated by Spec Kit)">${escHtml(h.condition)}</span>` : '';
+        return `<div class="${cls}" title="${title}">
+          <span class="hook-marker">${marker}</span>
+          <span class="hook-name">${escHtml(h.name)}</span>
+          ${cond}
+        </div>`;
+      }).join('');
+      sections.push(`<div class="hook-phase">
+        <div class="hook-phase-label">${formatHookPhaseLabel(phaseKey)}</div>
+        ${items}
+      </div>`);
+    }
+
+    return `<div class="hooks-panel" title="Hooks declared in .specify/extensions.yml — Spec Kit runs these; Caramelo only displays them.">
+      <div class="hooks-header">
+        <span class="hooks-icon">🪝</span>
+        <span class="hooks-title">Spec Kit Hooks</span>
+        <span class="hooks-count">${hooks.length}</span>
+      </div>
+      ${sections.join('')}
+    </div>`;
   }
 
   private renderClarifyPanel(session: ClarifySession): string {
@@ -655,6 +699,16 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider, vscode.
   }
 }
 
+function formatHookPhaseLabel(key: HookPhaseKey): string {
+  // "before_converge" → "Before Converge". Pure cosmetic; the raw key
+  // is what matters for debugging and users can hover the panel to see
+  // it in the title attribute if we ever need to.
+  return key
+    .split('_')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
 function esc(s: string): string { return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
 function escHtml(s: string): string {
   // Includes ' so attribute interpolations (single or double quoted)
@@ -799,6 +853,37 @@ body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); 
 .btn-primary:hover { background: var(--vscode-button-hoverBackground); }
 
 .empty-hint { text-align: center; padding: 16px 8px; opacity: 0.5; font-size: 0.9em; }
+
+/* Spec Kit Hooks panel */
+.hooks-panel {
+  margin-bottom: 8px; padding: 8px 10px; border-radius: 6px;
+  background: rgba(100, 150, 220, 0.06);
+  border: 1px solid rgba(100, 150, 220, 0.2);
+  font-size: 0.85em;
+}
+.hooks-header { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-weight: 600; }
+.hooks-icon { font-size: 0.9em; }
+.hooks-title { flex: 1; }
+.hooks-count {
+  background: rgba(100, 150, 220, 0.2); color: var(--vscode-foreground);
+  padding: 1px 6px; border-radius: 8px; font-size: 0.85em; font-weight: 500;
+}
+.hook-phase { margin-top: 4px; padding-left: 4px; }
+.hook-phase-label {
+  font-size: 0.85em; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.03em;
+  margin-top: 4px; margin-bottom: 2px;
+}
+.hook-item { display: flex; align-items: center; gap: 6px; padding: 2px 0 2px 10px; }
+.hook-marker { width: 10px; text-align: center; opacity: 0.8; flex-shrink: 0; }
+.hook-item.required .hook-marker { color: #FFC107; }
+.hook-item.optional .hook-marker { color: var(--vscode-descriptionForeground); opacity: 0.7; }
+.hook-name { flex: 1; font-family: var(--vscode-editor-font-family); font-size: 0.95em; }
+.hook-condition {
+  font-family: var(--vscode-editor-font-family); font-size: 0.8em;
+  opacity: 0.6; padding: 1px 5px; border-radius: 3px;
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+  max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 /* Spec Card */
 .spec-card {
