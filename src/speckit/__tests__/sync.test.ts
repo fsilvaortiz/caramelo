@@ -58,6 +58,20 @@ describe('applyPlaceholders', () => {
     }
   });
 
+  it('substitutes converge and taskstoissues (added in Spec Kit v1.x)', () => {
+    // Regression guard: these two tokens were added to upstream when
+    // the project jumped to v1.x. An unmapped token reaches the LLM
+    // verbatim and the prompt silently degrades — hard to notice in
+    // practice because the template still looks plausible.
+    const input =
+      'Run __SPECKIT_COMMAND_CONVERGE__ before implement, ' +
+      '__SPECKIT_COMMAND_TASKSTOISSUES__ to publish to GitHub.';
+    expect(applyPlaceholders(input)).toBe(
+      'Run /speckit.converge before implement, ' +
+      '/speckit.taskstoissues to publish to GitHub.',
+    );
+  });
+
   it('processes longer tokens first so overlapping prefixes do not get partially eaten', () => {
     // The substitution map doesn't currently contain overlapping keys,
     // but the ordering invariant is what protects the file from a
