@@ -19,7 +19,6 @@ export const COMMAND_IDS = {
   syncTemplates: 'caramelo.syncTemplates',
   viewChanges: 'caramelo.viewChanges',
   previewSpec: 'caramelo.previewSpec',
-  convergeTasks: 'caramelo.convergeTasks',
 } as const;
 
 export const SETTINGS_KEYS = {
