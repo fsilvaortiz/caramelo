@@ -20,6 +20,7 @@ export const COMMAND_IDS = {
   viewChanges: 'caramelo.viewChanges',
   previewSpec: 'caramelo.previewSpec',
   applyVsCodeSettings: 'caramelo.applyVsCodeSettings',
+  convergeTasks: 'caramelo.convergeTasks',
 } as const;
 
 export const VSCODE_SETTINGS_FILE = 'vscode-settings.json';
