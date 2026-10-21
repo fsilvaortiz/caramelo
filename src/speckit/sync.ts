@@ -54,6 +54,14 @@ const REQUIRED_TEMPLATES: readonly string[] = [
 const OPTIONAL_TEMPLATES: readonly string[] = [
   'constitution-template.md',
   'checklist-template.md',
+  // Added in Spec Kit v1.x. JSON blob with recommended VS Code
+  // settings (chat.promptFilesRecommendations and friends). Downloaded
+  // opportunistically; the `caramelo.applyVsCodeSettings` command
+  // merges it into the workspace's .vscode/settings.json on demand.
+  // Non-markdown, but the sync is file-name-agnostic and
+  // applyPlaceholders is a no-op on a token-free body, so no special-
+  // casing is needed here.
+  'vscode-settings.json',
 ];
 
 const ALL_TEMPLATES: readonly string[] = [...REQUIRED_TEMPLATES, ...OPTIONAL_TEMPLATES];
@@ -75,6 +83,11 @@ const PLACEHOLDER_SUBSTITUTIONS: Record<string, string> = {
   __SPECKIT_COMMAND_ANALYZE__: '/speckit.analyze',
   __SPECKIT_COMMAND_CONSTITUTION__: '/speckit.constitution',
   __SPECKIT_COMMAND_CHECKLIST__: '/speckit.checklist',
+  // Added in Spec Kit v1.x. `converge` reconciles codebase vs
+  // spec/plan/tasks before implement; `taskstoissues` emits GitHub
+  // issues from tasks.md. An unmapped token reaches the LLM verbatim.
+  __SPECKIT_COMMAND_CONVERGE__: '/speckit.converge',
+  __SPECKIT_COMMAND_TASKSTOISSUES__: '/speckit.taskstoissues',
 };
 
 /**
