@@ -16,6 +16,7 @@ tsconfig.json
 tsconfig.test.json
 esbuild.js
 eslint.config.js
+vitest.config.mts
 CLAUDE.md
 CONTRIBUTING.md
 **/*.ts

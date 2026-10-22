@@ -18,8 +18,8 @@ export default defineConfig({
     timeout: 30000,
     color: true,
   },
-  // Pin to current stable VS Code. This intentionally exceeds the
-  // engines.vscode minimum — a separate floor-check would be needed to
-  // guarantee we don't accidentally rely on post-1.95 API.
-  version: 'stable',
+  // Defaults to current stable. CI also runs a floor job with
+  // VSCODE_TEST_VERSION set to the engines.vscode minimum so post-floor
+  // API usage fails there instead of on users' machines.
+  version: process.env.VSCODE_TEST_VERSION || 'stable',
 });

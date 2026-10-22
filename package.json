@@ -381,19 +381,27 @@
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
-    "@types/node": "^20.0.0",
+    "@types/node": "^22.0.0",
     "@types/vscode": "^1.95.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
-    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^3.1.0",
-    "esbuild": "^0.24.0",
+    "esbuild": "^0.28.2",
     "eslint": "^9.0.0",
-    "mocha": "^11.7.5",
     "typescript": "^5.6.0",
-    "vitest": "^2.0.0"
+    "vite": "^8.3.3",
+    "vitest": "^5.0.3"
   },
   "dependencies": {
     "yaml": "2.9.1"
+  },
+  "overrides": {
+    "@vscode/test-cli": {
+      "mocha": {
+        "diff": "^8.0.4",
+        "serialize-javascript": "^7.1.2"
+      }
+    }
   }
 }
