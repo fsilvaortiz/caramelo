@@ -16,6 +16,7 @@ import { AgentRuntime } from '../agent/runtime.js';
 import { buildDefaultToolSet } from '../agent/tools/index.js';
 import { formatPrologue, pipeToOutputChannel } from '../agent/events.js';
 import { decideTaskOutcome } from './task-outcome.js';
+import { getCarameloChannel } from '../utils/output-channel.js';
 import {
   autoAllAllPolicy,
   perCallPolicy,
@@ -24,14 +25,7 @@ import {
 import { isToolCallingProvider } from '../agent/types.js';
 import type { ApprovalPolicy } from '../agent/types.js';
 
-let outputChannel: vscode.OutputChannel | undefined;
-
-function getOutputChannel(): vscode.OutputChannel {
-  if (!outputChannel) {
-    outputChannel = vscode.window.createOutputChannel('Caramelo');
-  }
-  return outputChannel;
-}
+const getOutputChannel = getCarameloChannel;
 
 /**
  * Serializes the pieces of a task that are NOT safe to run concurrently:
