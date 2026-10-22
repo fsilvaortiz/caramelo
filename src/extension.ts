@@ -27,7 +27,7 @@ import { AnalysisCodeLensProvider } from './views/codelens/analysis-codelens.js'
 import { createSpecFromJira } from './commands/create-spec-from-jira.js';
 import { generateChecklist } from './commands/generate-checklist.js';
 import { TemplateSync } from './speckit/sync.js';
-import { COMMAND_IDS, VIEW_IDS, SETTINGS_KEYS } from './constants.js';
+import { COMMAND_IDS, SETTINGS_KEYS } from './constants.js';
 import { initProgressBar } from './progress.js';
 import { log } from './utils/log.js';
 import { migrateProviderSettingsToGlobal } from './utils/migrate-providers.js';

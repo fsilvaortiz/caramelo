@@ -3,7 +3,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { SpecWorkspace } from '../specs/workspace.js';
 import type { ProviderRegistry } from '../providers/registry.js';
-import { SPECS_DIR_NAME, PHASE_FILES } from '../constants.js';
 
 interface AnalysisFinding {
   severity: 'critical' | 'high' | 'medium' | 'low';

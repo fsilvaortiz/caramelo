@@ -78,8 +78,6 @@ export async function createSpecFromJira(workspaceUri: vscode.Uri | undefined): 
     // Board issues may fail — that's OK, user can search by key
   }
 
-  // Add a hint item for direct key lookup
-  const hintItem: IssueItem = { label: '$(search) Enter an issue key directly (e.g. PROJ-123)', kind: vscode.QuickPickItemKind.Separator };
   quickPick.items = [...boardItems];
   quickPick.busy = false;
 
