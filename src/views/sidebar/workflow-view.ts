@@ -4,7 +4,7 @@ import * as path from 'path';
 import { SPECS_DIR_NAME, PHASE_FILES, COMMAND_IDS } from '../../constants.js';
 import { isObject, safeJsonParse } from '../../utils/safe-json.js';
 import { writeAnswersToSpec, type ClarificationQuestion } from '../../commands/clarify.js';
-import { loadHooks, groupHooksByPhase, type HookPhaseKey } from '../../speckit/extensions.js';
+import { loadHooks, groupHooksByEvent } from '../../speckit/extensions.js';
 import { log } from '../../utils/log.js';
 
 /**
@@ -367,22 +367,30 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider, vscode.
     const hooks = loadHooks(this.workspaceUri.fsPath);
     if (hooks.length === 0) return '';
 
-    const grouped = groupHooksByPhase(hooks);
+    const grouped = groupHooksByEvent(hooks);
     const sections: string[] = [];
-    for (const [phaseKey, entries] of grouped.entries()) {
+    for (const [event, entries] of grouped.entries()) {
       const items = entries.map((h) => {
         const marker = h.optional ? '◯' : '⚙';
-        const cls = h.optional ? 'hook-item optional' : 'hook-item required';
-        const title = h.optional ? 'Optional hook' : 'Required hook';
-        const cond = h.condition ? `<span class="hook-condition" title="Condition (evaluated by Spec Kit)">${escHtml(h.condition)}</span>` : '';
-        return `<div class="${cls}" title="${title}">
+        const cls = `hook-item ${h.optional ? 'optional' : 'required'}${h.enabled ? '' : ' disabled'}`;
+        const kind = h.optional ? 'Optional hook' : 'Mandatory hook';
+        const title = [
+          h.enabled ? kind : `${kind} (disabled)`,
+          h.extension ? `Extension: ${h.extension}` : '',
+          h.description ?? '',
+          h.prompt ? `Prompt: ${h.prompt}` : '',
+          `Priority: ${h.priority}`,
+        ].filter(Boolean).join('\n');
+        const ext = h.extension ? `<span class="hook-ext">${escHtml(h.extension)}</span>` : '';
+        const cond = h.condition ? `<span class="hook-condition" title="Condition">${escHtml(h.condition)}</span>` : '';
+        return `<div class="${cls}" title="${escHtml(title)}">
           <span class="hook-marker">${marker}</span>
-          <span class="hook-name">${escHtml(h.name)}</span>
-          ${cond}
+          <span class="hook-name">/${escHtml(h.command)}</span>
+          ${ext}${cond}
         </div>`;
       }).join('');
       sections.push(`<div class="hook-phase">
-        <div class="hook-phase-label">${formatHookPhaseLabel(phaseKey)}</div>
+        <div class="hook-phase-label">${formatHookEventLabel(event)}</div>
         ${items}
       </div>`);
     }
@@ -391,7 +399,7 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider, vscode.
       <div class="hooks-header">
         <span class="hooks-icon">🪝</span>
         <span class="hooks-title">Spec Kit Hooks</span>
-        <span class="hooks-count">${hooks.length}</span>
+        <span class="hooks-count">${hooks.filter((h) => h.enabled).length}</span>
       </div>
       ${sections.join('')}
     </div>`;
@@ -709,7 +717,7 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider, vscode.
   }
 }
 
-function formatHookPhaseLabel(key: HookPhaseKey): string {
+function formatHookEventLabel(key: string): string {
   // "before_converge" → "Before Converge". Pure cosmetic; the raw key
   // is what matters for debugging and users can hover the panel to see
   // it in the title attribute if we ever need to.
@@ -890,6 +898,11 @@ body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); 
 .hook-marker { width: 10px; text-align: center; opacity: 0.8; flex-shrink: 0; }
 .hook-item.required .hook-marker { color: #FFC107; }
 .hook-item.optional .hook-marker { color: var(--vscode-descriptionForeground); opacity: 0.7; }
+.hook-item.disabled { opacity: 0.45; text-decoration: line-through; }
+.hook-ext {
+  font-size: 0.8em; opacity: 0.7; padding: 1px 5px; border-radius: 3px;
+  background: rgba(100, 150, 220, 0.12);
+}
 .hook-name { flex: 1; font-family: var(--vscode-editor-font-family); font-size: 0.95em; }
 .hook-condition {
   font-family: var(--vscode-editor-font-family); font-size: 0.8em;

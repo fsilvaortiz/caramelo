@@ -206,3 +206,42 @@ suite('Regression: smoke workspace is isolated from any git repository', () => {
     assert.strictEqual(insideRepo, false, `smoke workspace ${workspaceRoot()} is inside a git repo`);
   });
 });
+
+suite('Regression: hooks panel renders the real Spec Kit extensions.yml schema', () => {
+  /** Render the workflow sidebar into a string via a minimal WebviewView stand-in. */
+  function renderSidebar(view: { resolveWebviewView(v: vscode.WebviewView): void }): string {
+    const noop = { dispose() { /* noop */ } };
+    const webview = { options: {}, cspSource: '', html: '', onDidReceiveMessage: () => noop };
+    view.resolveWebviewView({ webview, onDidDispose: () => noop } as unknown as vscode.WebviewView);
+    return webview.html;
+  }
+
+  test('upstream-shaped hooks (command/extension, no name) appear in the sidebar', async () => {
+    const { WorkflowViewProvider } = await import('../../views/sidebar/workflow-view.js');
+    const ymlPath = path.join(workspaceRoot(), '.specify', 'extensions.yml');
+    fs.mkdirSync(path.dirname(ymlPath), { recursive: true });
+    fs.writeFileSync(ymlPath, [
+      'hooks:',
+      '  after_tasks:',
+      '    - extension: jira',
+      '      command: speckit.jira.specstoissues',
+      '      optional: true',
+      '      prompt: "Create Jira issues from tasks?"',
+      '  before_implement:',
+      '    command: speckit.lint.check',
+      '    optional: false',
+      '',
+    ].join('\n'));
+    const view = new WorkflowViewProvider(vscode.Uri.file(workspaceRoot()));
+    try {
+      const html = renderSidebar(view);
+      assert.ok(html.includes('Spec Kit Hooks'), 'hooks panel should render');
+      assert.ok(html.includes('/speckit.jira.specstoissues'), 'list-form hook should be listed');
+      assert.ok(html.includes('/speckit.lint.check'), 'single-mapping hook should be listed');
+      assert.ok(html.includes('hook-item required'), 'optional:false should render as mandatory');
+    } finally {
+      view.dispose();
+      fs.rmSync(ymlPath, { force: true });
+    }
+  });
+});
