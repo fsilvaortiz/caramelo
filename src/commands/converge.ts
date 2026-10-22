@@ -4,130 +4,77 @@ import * as path from 'path';
 import type { SpecWorkspace } from '../specs/workspace.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { LLMProvider } from '../providers/types.js';
+import { AgentRuntime } from '../agent/runtime.js';
+import { buildReadOnlyToolSet } from '../agent/tools/index.js';
+import { pipeToOutputChannel } from '../agent/events.js';
+import { readOnlyAutoBatchedWritesPolicy } from '../agent/approval.js';
+import { isToolCallingProvider } from '../agent/types.js';
+import { pickTerminalArtifact } from '../specs/workflow.js';
 import { log } from '../utils/log.js';
+import { getCarameloChannel } from '../utils/output-channel.js';
 import { beginActionHooks } from '../speckit/hook-runner-vscode.js';
+import {
+  CONVERGE_SYSTEM_PROMPT,
+  appendConvergencePhase,
+  buildConvergeUserPrompt,
+  collectReferencedFiles,
+  formatFindingsTable,
+  parseConvergeFindings,
+  type ConvergeFinding,
+  type ConvergeInputs,
+} from './converge-core.js';
 
 interface Refreshable { refresh(): void }
 
-/**
- * Backup file written next to `tasks.md` before `/speckit.converge`
- * appends new tasks. The user can diff against it if the LLM output is
- * unsatisfactory. Stored as plain `.md` (not dotfile) so it is
- * discoverable in the Explorer; `.gitignore` templates for this repo
- * do not include this suffix, so it will land in git by default — the
- * user can `.gitignore` it per their preference.
- */
-export const CONVERGE_BACKUP_SUFFIX = '.pre-converge.md';
+function useAgent(provider: LLMProvider): boolean {
+  return vscode.workspace.getConfiguration().get<boolean>('caramelo.useAgentLoop', true) && isToolCallingProvider(provider);
+}
 
-const SYSTEM_PROMPT =
-  'You are Caramelo, a spec-driven development assistant executing the Spec Kit `/speckit.converge` ' +
-  'action. Your job: compare the current `tasks.md` against `spec.md` and `plan.md`, identify tasks ' +
-  'the feature still needs that are NOT already in `tasks.md`, and list only those new tasks. You MUST ' +
-  'NOT edit, reorder, or restate existing tasks. You MUST NOT invent tasks unrelated to the spec/plan. ' +
-  'If there are no new tasks to add, respond with the single line `NONE`.';
+function maxIterations(): number {
+  const raw = vscode.workspace.getConfiguration().get<number>('caramelo.agent.maxIterations');
+  // Assessing a codebase needs more reads than generating a phase.
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return 25;
+  return Math.max(3, Math.min(50, Math.floor(raw)));
+}
 
-const USER_PROMPT_HEADER =
-  'Produce a Markdown unordered list of ONLY the net-new tasks that need to be added to tasks.md. ' +
-  'Use `- [ ] ` for every item. Keep each task atomic (one concrete deliverable per item) and phrased ' +
-  'the same way the existing tasks are phrased. No preamble, no closing commentary — just the list, ' +
-  'or the single word `NONE`.\n\n' +
-  'If a required `data-model.md`, `research.md`, or contract file is implied by the plan but missing ' +
-  'from `tasks.md` coverage, add a task for it.\n';
-
-/**
- * Parse the LLM response into a list of new task lines.
- *
- * The LLM is instructed to produce `- [ ]` Markdown checkboxes. We tolerate
- * common deviations: numbered lists, missing checkboxes, bullet symbols
- * other than `-`. We also honor the explicit `NONE` sentinel. Anything we
- * can't recognise as a task line is dropped (we do NOT return it as-is —
- * the whole point of this parser is to keep garbage out of tasks.md).
- *
- * Pure function; exported for tests.
- */
-export function parseConvergeOutput(raw: string): string[] {
-  const text = raw.trim();
-  if (!text) return [];
-  if (text.toUpperCase() === 'NONE') return [];
-
-  const lines = text.split('\n');
-  const out: string[] = [];
-  for (const line of lines) {
-    const stripped = line.trimEnd();
-    if (!stripped.trim()) continue;
-    // Already properly formatted `- [ ] text`
-    const checkboxMatch = stripped.match(/^\s*[-*+]\s+\[[ xX]\]\s+(.+)$/);
-    if (checkboxMatch) {
-      out.push(`- [ ] ${checkboxMatch[1].trim()}`);
-      continue;
-    }
-    // Numbered list: `1. text` or `1) text`
-    const numberedMatch = stripped.match(/^\s*\d+[.)]\s+(.+)$/);
-    if (numberedMatch) {
-      out.push(`- [ ] ${numberedMatch[1].trim()}`);
-      continue;
-    }
-    // Plain bullet: `- text` or `* text` or `+ text`
-    const bulletMatch = stripped.match(/^\s*[-*+]\s+(.+)$/);
-    if (bulletMatch) {
-      out.push(`- [ ] ${bulletMatch[1].trim()}`);
-      continue;
-    }
-    // Everything else is discarded — probably commentary from a chatty model.
+async function assess(
+  provider: LLMProvider,
+  inputs: ConvergeInputs,
+  workspaceRoot: string,
+  signal: AbortSignal,
+  channel: vscode.OutputChannel,
+): Promise<string> {
+  if (useAgent(provider)) {
+    const result = await new AgentRuntime().run(provider, {
+      system: CONVERGE_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: buildConvergeUserPrompt(inputs, true) }],
+      tools: buildReadOnlyToolSet(),
+      approval: readOnlyAutoBatchedWritesPolicy({ isAutoApplyEnabled: () => false, setSessionAutoApply: () => { /* read-only */ } }),
+      workspaceRoot,
+      signal,
+      onEvent: pipeToOutputChannel(channel),
+      maxIterations: maxIterations(),
+    });
+    if (result.stopReason === 'cancelled' || result.stopReason === 'aborted_by_user') throw new Error('cancelled');
+    if (result.stopReason !== 'stop') throw new Error(result.error ?? `agent stopped: ${result.stopReason}`);
+    return pickTerminalArtifact(result.messages);
   }
-  return out;
-}
 
-/**
- * Append a converged-tasks section to `tasks.md`. The function returns
- * the full new file content; writing to disk is the caller's job so
- * tests don't need temp-dir choreography.
- *
- * The appended block is clearly delimited with a dated heading so a
- * reader can see at a glance which tasks were added by `/speckit.converge`
- * versus authored during the initial `/speckit.tasks` run. Multiple
- * converge runs produce multiple dated sections — intentional, so the
- * audit trail stays legible.
- *
- * Invariant: the function NEVER modifies lines that were already in the
- * input (test coverage asserts this on arbitrary inputs). The returned
- * string always starts with the original string unchanged.
- */
-export function appendConvergedTasks(
-  current: string,
-  newTasks: readonly string[],
-  isoDate: string,
-): string {
-  if (newTasks.length === 0) return current;
-  const trimmedBase = current.endsWith('\n') ? current : `${current}\n`;
-  const header = `## Converged Tasks — ${isoDate}`;
-  const body = newTasks.map((t) => (t.startsWith('- [ ]') ? t : `- [ ] ${t}`)).join('\n');
-  return `${trimmedBase}\n${header}\n\n${body}\n`;
-}
-
-/** Build the user-visible prompt body with the three artifacts inlined. */
-export function buildConvergeMessages(
-  specMd: string,
-  planMd: string,
-  tasksMd: string,
-): Array<{ role: 'system' | 'user'; content: string }> {
-  return [
-    { role: 'system', content: SYSTEM_PROMPT },
-    {
-      role: 'user',
-      content:
-        `${USER_PROMPT_HEADER}\n` +
-        `--- SPEC: spec.md ---\n${specMd}\n\n` +
-        `--- PLAN: plan.md ---\n${planMd}\n\n` +
-        `--- TASKS: tasks.md (current) ---\n${tasksMd}\n`,
-    },
-  ];
-}
-
-async function collectStream(stream: AsyncIterable<string>): Promise<string> {
-  let acc = '';
-  for await (const chunk of stream) acc += chunk;
-  return acc;
+  channel.appendLine('(provider has no tool calling — assessing files referenced by plan.md / tasks.md)');
+  const withCode: ConvergeInputs = {
+    ...inputs,
+    referencedFiles: collectReferencedFiles(workspaceRoot, [inputs.planMd, inputs.tasksMd]),
+  };
+  channel.appendLine(`  included ${withCode.referencedFiles!.length} file(s)`);
+  let raw = '';
+  for await (const chunk of provider.chat(
+    [{ role: 'system', content: CONVERGE_SYSTEM_PROMPT }, { role: 'user', content: buildConvergeUserPrompt(withCode, false) }],
+    { signal },
+  )) {
+    raw += chunk;
+  }
+  if (signal.aborted) throw new Error('cancelled');
+  return raw;
 }
 
 export async function convergeTasks(
@@ -136,76 +83,94 @@ export async function convergeTasks(
   registry: ProviderRegistry,
   specsTree: Refreshable,
 ): Promise<void> {
-  if (!registry.activeProvider) {
+  const provider = registry.activeProvider;
+  if (!provider) {
     vscode.window.showWarningMessage('No active LLM provider. Configure one first.');
     vscode.commands.executeCommand('caramelo.selectProvider');
     return;
   }
-
   if (vscode.workspace.isTrusted === false) {
-    vscode.window.showWarningMessage(
-      'Caramelo: LLM execution is blocked in untrusted workspaces. Trust the workspace to run converge.',
-    );
+    vscode.window.showWarningMessage('Caramelo: LLM execution is blocked in untrusted workspaces. Trust the workspace to run converge.');
     return;
   }
-
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   const spec = workspace.listSpecs().find((s) => s.name === specName);
-  if (!spec) {
+  if (!spec || !workspaceRoot) {
     vscode.window.showErrorMessage(`Spec "${specName}" not found.`);
     return;
   }
 
-  const specMdPath = path.join(spec.dirPath, 'spec.md');
-  const planMdPath = path.join(spec.dirPath, 'plan.md');
-  const tasksMdPath = path.join(spec.dirPath, 'tasks.md');
-
-  for (const [label, p] of [['spec.md', specMdPath], ['plan.md', planMdPath], ['tasks.md', tasksMdPath]] as const) {
-    if (!fs.existsSync(p)) {
-      vscode.window.showErrorMessage(`Caramelo: cannot converge — ${label} missing. Approve the earlier phases first.`);
+  const files = { spec: 'spec.md', plan: 'plan.md', tasks: 'tasks.md' } as const;
+  const prerequisite = { spec: '/speckit.specify (Generate Requirements)', plan: '/speckit.plan (Generate Design)', tasks: '/speckit.tasks (Generate Tasks)' };
+  for (const key of ['spec', 'plan', 'tasks'] as const) {
+    if (!fs.existsSync(path.join(spec.dirPath, files[key]))) {
+      vscode.window.showErrorMessage(`Caramelo: cannot converge — ${files[key]} is missing. Run ${prerequisite[key]} first.`);
       return;
     }
   }
 
-  // Before-hooks may edit tasks.md; reading it earlier would make the append overwrite their changes.
+  // Before-hooks may edit tasks.md; read everything only afterwards.
   const hooks = await beginActionHooks('converge', specName, registry);
   if (!hooks) return;
 
-  const specMd = fs.readFileSync(specMdPath, 'utf-8');
-  const planMd = fs.readFileSync(planMdPath, 'utf-8');
-  const tasksMd = fs.readFileSync(tasksMdPath, 'utf-8');
+  const tasksPath = path.join(spec.dirPath, files.tasks);
+  const read = (f: string) => fs.readFileSync(path.join(spec.dirPath, f), 'utf-8');
+  const constitutionPath = path.join(workspaceRoot, '.specify', 'memory', 'constitution.md');
+  const inputs: ConvergeInputs = {
+    specMd: read(files.spec),
+    planMd: read(files.plan),
+    tasksMd: read(files.tasks),
+    constitutionMd: fs.existsSync(constitutionPath) ? fs.readFileSync(constitutionPath, 'utf-8') : undefined,
+  };
 
-  const backupPath = path.join(spec.dirPath, `tasks${CONVERGE_BACKUP_SUFFIX}`);
-  fs.writeFileSync(backupPath, tasksMd, 'utf-8');
+  const channel = getCarameloChannel();
+  channel.show(true);
+  channel.appendLine(`\n${'─'.repeat(60)}`);
+  channel.appendLine(`▶ Converge — ${specName}`);
+  channel.appendLine('─'.repeat(60));
 
-  const messages = buildConvergeMessages(specMd, planMd, tasksMd);
-
-  let succeeded = false;
+  let findings: ConvergeFinding[] | null = null;
   await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: `Converging ${specName}…`, cancellable: false },
-    async () => {
+    { location: vscode.ProgressLocation.Notification, title: `Converging ${specName}…`, cancellable: true },
+    async (_progress, token) => {
+      const abort = new AbortController();
+      token.onCancellationRequested(() => abort.abort());
       try {
-        const provider = registry.activeProvider as LLMProvider;
-        const raw = await collectStream(provider.chat(messages));
-        const newTasks = parseConvergeOutput(raw);
-        if (newTasks.length === 0) {
-          vscode.window.showInformationMessage(`Converge: no new tasks found for "${specName}". Nothing added.`);
-          succeeded = true;
-          return;
+        const raw = await assess(provider, inputs, workspaceRoot, abort.signal, channel);
+        findings = parseConvergeFindings(raw);
+        if (findings === null) {
+          log.warn('[converge] unparseable findings (first 400 B):', raw.slice(0, 400));
+          channel.appendLine('\n✗ The model did not return a findings JSON object. tasks.md was not changed.');
+          vscode.window.showErrorMessage('Converge: the model returned no usable findings. tasks.md was not changed — try again.');
         }
-        const isoDate = new Date().toISOString().slice(0, 10);
-        const merged = appendConvergedTasks(tasksMd, newTasks, isoDate);
-        fs.writeFileSync(tasksMdPath, merged, 'utf-8');
-        specsTree.refresh();
-        vscode.window.showInformationMessage(
-          `Converge: appended ${newTasks.length} new task${newTasks.length === 1 ? '' : 's'} to ${specName}/tasks.md. Backup at ${path.basename(backupPath)}.`,
-        );
-        succeeded = true;
       } catch (err) {
-        log.warn('[converge] failed:', err);
         const msg = err instanceof Error ? err.message : String(err);
-        vscode.window.showErrorMessage(`Converge failed: ${msg}. Your tasks.md is unchanged (backup kept).`);
+        channel.appendLine(`\n✗ Converge ${msg === 'cancelled' ? 'cancelled' : `failed: ${msg}`}. tasks.md was not changed.`);
+        if (msg !== 'cancelled') vscode.window.showErrorMessage(`Converge failed: ${msg}. tasks.md was not changed.`);
       }
     },
   );
-  if (succeeded) await hooks.after();
+  if (findings === null) return;
+  const found: ConvergeFinding[] = findings;
+
+  if (found.length === 0) {
+    channel.appendLine('\n✅ Converged — the implementation satisfies the spec, plan, and tasks.');
+    vscode.window.showInformationMessage(`✅ ${specName} converged — the implementation satisfies the spec, plan, and tasks.`);
+    await hooks.after();
+    return;
+  }
+
+  // Re-read right before writing: the assessment can take minutes and the user may have edited tasks.md.
+  const current = fs.readFileSync(tasksPath, 'utf-8');
+  fs.writeFileSync(tasksPath, appendConvergencePhase(current, found), 'utf-8');
+  specsTree.refresh();
+  channel.appendLine(`\n## Convergence Findings\n\n${formatFindingsTable(found)}\n`);
+  channel.appendLine(`Appended ${found.length} task(s) to ${specName}/tasks.md. Run Implement to complete them; a follow-up converge should find fewer items.`);
+  void vscode.window.showInformationMessage(
+    `Converge: ${found.length} remaining item(s) appended to ${specName}/tasks.md as a Convergence phase.`,
+    'Open tasks.md',
+  ).then(async (choice) => {
+    if (choice === 'Open tasks.md') await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(tasksPath));
+  });
+  await hooks.after();
 }

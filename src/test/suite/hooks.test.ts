@@ -237,7 +237,9 @@ suite('Spec Kit hooks wired into Caramelo actions (functional)', () => {
     this.timeout(30_000);
     mock.setDispatcher((messages) => {
       const sys = messages.find((m) => m.role === 'system')?.content ?? '';
-      return { reply: sys.includes('executing a Spec Kit extension hook') ? 'hook done' : '- [ ] Added by converge' };
+      return { reply: sys.includes('executing a Spec Kit extension hook')
+        ? 'hook done'
+        : '```json\n{"findings":[{"gapType":"missing","severity":"HIGH","sourceRef":"FR-001","evidence":"src","task":"Added by converge"}]}\n```' };
     });
     const spec = seedSpec({
       statuses: { requirements: 'approved', design: 'approved', tasks: 'approved' },
@@ -248,7 +250,7 @@ suite('Spec Kit hooks wired into Caramelo actions (functional)', () => {
       await convergeTasks(spec.name, workspace as never, api.registry as never, { refresh: () => { /* noop */ } });
       const order = mock.calls.map((c) => (isHookCall(c) ? hookCommandOf(c) : 'converge'));
       assert.deepStrictEqual(order, ['before-converge', 'converge', 'after-converge']);
-      assert.ok(readSpecFile(spec, 'tasks.md')!.includes('- [ ] Added by converge'));
+      assert.ok(readSpecFile(spec, 'tasks.md')!.includes('- [ ] T001 Added by converge per FR-001 (missing)'));
     } finally {
       removeSpec(spec);
     }

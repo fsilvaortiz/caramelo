@@ -25,6 +25,11 @@ export function buildDefaultToolSet(options: ToolSetOptions): Tool[] {
   return tools;
 }
 
+/** Inspection-only tools: nothing that writes files or runs commands. */
+export function buildReadOnlyToolSet(): Tool[] {
+  return [fileReadTool, listDirTool, grepTool, globTool];
+}
+
 export {
   fileReadTool,
   fileWriteTool,
