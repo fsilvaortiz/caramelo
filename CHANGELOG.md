@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.2.0] - 2026-10-22
+
+Spec Kit extension hooks now **run**, Converge **inspects the code**, and several data-loss bugs are fixed. Also: CI on Node 22 with a VS Code 1.95 floor check, zero `npm audit` findings, and optional automatic Marketplace publishing.
+
+### Fixed (high)
+
+- **The hooks panel from v0.1.4 never showed a real hook.** It was written against a guessed schema: it required a `name` field Spec Kit never writes (entries are keyed by `command`), defaulted `optional` to false (Spec Kit: true), rejected the single-mapping form, ignored `priority`, and only knew 18 hard-coded events. The parser now mirrors Spec Kit v1.2.2's `HookExecutor`. (#42)
+- **Converge never looked at the code.** It compared spec/plan/tasks with each other, so it could not find unbuilt work. See *Added* below. (#46)
+- **The Jira link was erased on the first phase transition.** `writeMetadata` rewrote `.caramelo-meta.json` as `{ phases }`, dropping the `jira` field written by *Create Spec from Jira* — the badge disappeared as soon as requirements were generated. Other metadata fields are now preserved. (#41)
+- **The spec description was discarded.** The text typed in *New Spec → Brief description* reached `handleCreateSpec` and was never used; requirements generation only saw the slug. It is now stored and included in the requirements prompt. (#41)
+- **Running smoke tests locally stashed your uncommitted work.** The test workspace lived inside the repository, so start-task's git-safety `git stash -u` captured the developer's changes. The harness now runs against a temp copy outside any repository, with a regression test. (#38)
+
+### Added
+
+- **Spec Kit hooks run around every action.** `before_<cmd>` / `after_<cmd>` hooks from `.specify/extensions.yml` fire around constitution, specify, clarify, plan, tasks, checklist, analyze, converge and implement. Mandatory hooks run automatically; optional ones ask first; a failed mandatory *before* hook asks whether to continue. Hook commands are resolved through the extension manifest and rendered exactly as Spec Kit registers them (verified against Spec Kit's own Python on 208 inputs, macOS and Windows: 0 differences), then run through the agent — bash and file writes still need approval. Actions read their inputs only after *before* hooks, so hooks can prepare artifacts. `caramelo.hooks.run` turns this off; untrusted workspaces never run hooks. (#44, #45)
+- **Hook conditions and enable/disable.** Conditions are evaluated like Spec Kit (`config.x is set`, `config.x == 'v'`, `env.X …`, with the same layered extension config) — 14,820-case differential test against Spec Kit's Python: 0 differences. The sidebar shows whether each condition holds and an Enable/Disable button that edits `extensions.yml` without losing comments. (#43)
+- **Converge, Spec Kit style.** Checks the current code against spec, plan, tasks and the constitution (read-only agent tools, or the referenced files for providers without tool calling), classifies gaps as missing / partial / contradicts / unrequested with severities, and appends `## Phase N: Convergence` with continuing task IDs. Nothing is rewritten; when nothing remains, `tasks.md` is left byte-for-byte unchanged. The `tasks.pre-converge.md` backup is no longer written. (#46)
+- **Automatic Marketplace publishing** on `v*.*.*` tags when the `VSCE_PAT` secret is set; the tag must be on `main`, and `vsce` is now a pinned dependency. (#47)
+- Documentation: new *Spec Kit integration* guide, *Converge* in the workflow guide. (#48)
+
+### Changed
+
+- CI and release workflows run on **Node 22** (Node 20 reached end of life). A new smoke job tests against **VS Code 1.95.0**, the `engines.vscode` minimum. (#39)
+- Dev dependencies: vitest 5, esbuild 0.28, @vscode/test-cli 0.0.15. `npm audit`: 19 findings (2 critical) → 0. (#39)
+- `npm run lint` fails on warnings; all eight existing warnings were cleared, and the unused `ProgressViewProvider` was deleted. (#40, #41)
+- One shared "Caramelo" output channel instead of four (analyze leaked a new one per run). (#44)
+
 ## [0.1.4] - 2026-10-21
 
 Catch-up release that closes the gap between Caramelo and GitHub Spec Kit v1.2.2 — upstream crossed the `v1.0.0` boundary on 2026-08-21 and ran four months of releases while Caramelo was pinned to templates from the pre-1.0 line.
@@ -13,6 +40,11 @@ Catch-up release that closes the gap between Caramelo and GitHub Spec Kit v1.2.2
 - **Sync `templates/vscode-settings.json`.** Spec Kit v1.x ships recommended VS Code chat settings (`chat.promptFilesRecommendations` + `chat.tools.terminal.autoApprove`); Caramelo now downloads the file as an optional template and exposes a new command `Caramelo: Apply Spec Kit VS Code Settings` that merges it into the workspace's `.vscode/settings.json`. Merge is top-level-key-only (no silent deep edits of settings a user cannot see from the modal); conflicts raise a modal with three choices: Overwrite, Add new only, Cancel. Atomic write mirrors `TemplateSync` so a crash never leaves a torn file. (#30)
 - **Read `.specify/extensions.yml` and surface lifecycle hooks in the sidebar.** Spec Kit v1.x introduced a hook system for `before_specify` / `before_plan` / `before_converge` / etc. Caramelo now parses the file and renders a "Spec Kit Hooks" panel grouped by phase, each entry marked required/optional with an optional condition chip. The panel is hidden entirely when no hooks are configured. Execution of hooks stays with Spec Kit's own CLI — Caramelo is surfacing, not running. New runtime dependency `yaml@2.9.1` (pinned, zero production vulnerabilities after install). (#31)
 - **`/speckit.converge` as an inline action on approved Tasks phase.** New button next to Implement reconciles the current codebase against spec/plan/tasks and appends only the missing tasks to `tasks.md`. The system prompt forbids edits/reorders of existing tasks; the pure `appendConvergedTasks` helper preserves input bytes as a prefix of the output, and a test asserts that invariant directly. Each run writes a `tasks.pre-converge.md` backup and appends under a dated `## Converged Tasks — YYYY-MM-DD` section so multiple runs stay legible as an audit trail. When nothing is missing the model emits the sentinel `NONE` and the command surfaces "nothing to add" rather than pretending success. (#32, re-landed in #36)
+
+### Fixed (packaging & CI — landed after these notes were first written)
+
+- **The Marketplace rejected the 0.1.4 upload**: the extension icon was 1.8 MB, over the 1024 KB limit. Resized to 256×256 (78 KB). The `.vsix` also shipped the whole VitePress `website/` folder (3,529 of 3,551 files); excluding it took the package from 28.79 MB to 221 KB. (#37)
+- **macOS smoke tests failed on every PR**: VS Code 1.110+ renamed the macOS executable, which `@vscode/test-electron` 2.x could not launch. Upgraded to 3.1.0. (#34)
 
 ### Notes
 

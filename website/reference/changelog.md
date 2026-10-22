@@ -6,6 +6,12 @@ Browse releases on GitHub: [github.com/fsilvaortiz/caramelo/releases](https://gi
 
 ## Latest
 
+### v0.2.0 — 2026-10-22
+
+**Spec Kit hooks run and Converge inspects the code.** Hooks from `.specify/extensions.yml` now fire around every Caramelo action (mandatory automatically, optional on confirmation, conditions evaluated like Spec Kit), with Enable/Disable in the sidebar. Converge checks the code against spec, plan, tasks and constitution and appends a `Phase N: Convergence`. Fixes: the v0.1.4 hooks panel never showed real hooks, the Jira link was erased on the first phase transition, the spec description was ignored, and local smoke tests could stash your work. CI moves to Node 22 with a VS Code 1.95 floor check; tagged releases can publish to the Marketplace automatically.
+
+[Full v0.2.0 notes](https://github.com/fsilvaortiz/caramelo/releases/tag/v0.2.0)
+
 ### v0.1.4 — 2026-10-21
 
 Catch-up with Spec Kit v1.2.2 (upstream crossed 1.0 in August 2026). `/speckit.converge` and `/speckit.taskstoissues` placeholders are now substituted, Spec Kit's `vscode-settings.json` can be merged with **Apply Spec Kit VS Code Settings**, hooks from `.specify/extensions.yml` appear in the sidebar, and a **Converge** action was added to the Tasks phase. The packaged extension shrank from 28.8 MB to 221 KB.
