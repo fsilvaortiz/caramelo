@@ -187,3 +187,22 @@ suite('Regression: #19 — parallel startTask survives a single failure', () => 
     }
   });
 });
+
+suite('Regression: smoke workspace is isolated from any git repository', () => {
+  test('workspace root is not inside a git work tree', async () => {
+    // start-task's git-safety runs `git stash push -u` in the workspace.
+    // If the smoke fixture lives inside a repo (e.g. the Caramelo checkout),
+    // every run stashes the developer's uncommitted work.
+    const { execFileSync } = await import('child_process');
+    let insideRepo = true;
+    try {
+      execFileSync('git', ['rev-parse', '--is-inside-work-tree'], {
+        cwd: workspaceRoot(),
+        stdio: 'pipe',
+      });
+    } catch {
+      insideRepo = false;
+    }
+    assert.strictEqual(insideRepo, false, `smoke workspace ${workspaceRoot()} is inside a git repo`);
+  });
+});
