@@ -53,7 +53,9 @@
 ### Spec Kit Compatible
 
 - **Uses `specs/`** directory — fully interoperable with Spec Kit CLI
-- **Auto-syncs templates** from GitHub Spec Kit releases
+- **Auto-syncs templates** from GitHub Spec Kit releases (v1.x)
+- **Extension hooks** — runs the hooks in `.specify/extensions.yml` before/after each action (mandatory ones automatically, optional ones on confirmation), evaluates their conditions like Spec Kit, and lets you enable/disable each one from the sidebar
+- **Recommended VS Code settings** — *Apply Spec Kit VS Code Settings* merges Spec Kit's `vscode-settings.json` into your workspace, asking before overwriting anything
 - **Generates intermediate artifacts**: research.md, data-model.md, contracts/
 - **Constitution as LLM context** — project principles included in every generation
 - **Offline-first** — bundled fallback templates, no internet required
@@ -70,10 +72,11 @@
 
 ### Quality Tools
 
-- **Clarify** — LLM identifies ambiguities, presents questions as QuickPick dialogs
+- **Clarify** — LLM identifies ambiguities and asks up to five questions inline in the sidebar
 - **Analyze** — cross-artifact consistency check with severity-coded findings
 - **Auto-fix** — CodeLens buttons on analysis.md to fix individual or all findings with LLM
 - **Checklists** — content-specific quality verification items per phase
+- **Converge** — after implementing, checks the code against spec, plan, tasks and constitution and appends the remaining work as a `Phase N: Convergence` section (Spec Kit `/speckit.converge`); never rewrites existing tasks or code
 
 ### Jira Integration
 
@@ -151,7 +154,8 @@ Constitution (project principles)
        │     ├── Requirements (spec.md)
        │     ├── Design (plan.md + research.md + data-model.md + contracts/)
        │     ├── Tasks (tasks.md)
-       │     └── Implementation (task execution)
+       │     ├── Implementation (task execution)
+       │     └── Converge (append what the code still misses → implement again)
        │
        └──→ [Feature 2]
              └── ...
@@ -199,6 +203,7 @@ API keys and Jira tokens are stored securely in VS Code's SecretStorage, never i
 
 | Setting | Default | Description |
 |---------|---------|-------------|
+| `caramelo.hooks.run` | `true` | Run Spec Kit extension hooks from `.specify/extensions.yml` around Caramelo actions. Never runs in untrusted workspaces. |
 | `caramelo.sse.timeoutMs` | `300000` | Max time (ms) to wait for a chunk of streaming output before giving up. Increase for slow local models. Minimum 5000. |
 | `authHeader` (per provider) | `Authorization` / `x-api-key` | HTTP header used to send the API key. Letters, digits, hyphens only. |
 | `authPrefix` (per provider) | `Bearer` / empty | Prefix prepended to the key. Letters, digits, hyphens only. Leave empty to send the raw key. |

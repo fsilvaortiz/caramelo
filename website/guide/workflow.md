@@ -12,7 +12,7 @@ specs/006-agentic-tool-calling/
 ├── research.md                   ← R&D decisions  (text-only follow-up)
 ├── data-model.md                 ← Data entities  (text-only follow-up)
 ├── contracts/                    ← Interface contracts (optional)
-├── tasks.md                      ← Tasks          (P3, agent path)
+├── tasks.md                      ← Tasks          (P3, agent path; Converge appends here)
 └── analysis.md                   ← Cross-artifact consistency report (on demand)
 ```
 
@@ -20,7 +20,7 @@ Each phase has a CodeLens approval bar at the top of its document. Approving mov
 
 ## Phase 1 — Requirements (`spec.md`)
 
-A user-story spec built from the project description and your constitution. **Text-only generation** — there's no code to inspect yet, so the agent path is skipped here intentionally.
+A user-story spec built from the feature name, the description you typed when creating the spec (or the imported Jira issue), and your constitution. **Text-only generation** — there's no code to inspect yet, so the agent path is skipped here intentionally.
 
 You can run `/clarify` against an in-progress spec: the LLM identifies ambiguities, and Caramelo presents up to five questions inline in the sidebar. Skipped questions are not written; submitted answers go into a dated `## Clarifications` section.
 
@@ -39,6 +39,26 @@ Each task has two CodeLens buttons: **Run Task** (one) and **Run All Tasks** (sw
 ## Phase 4 — Analysis (optional)
 
 `/analyze` runs across all phase artifacts and writes `analysis.md` with severity-coded findings (critical / high / medium / low). Each finding has a CodeLens **Fix** button that re-runs the agent against the offending document. **Fix All** sweeps every finding sequentially.
+
+## Phase 5 — Converge (after implementing)
+
+Once Tasks is approved and you've run the tasks, **⟲ Converge** (next to Implement on the Tasks phase) runs Spec Kit's `/speckit.converge`: it checks the **current code** against `spec.md`, `plan.md`, `tasks.md` and the constitution, and adds whatever is still missing as new tasks.
+
+- Existing tasks are verified in the code whatever their checkbox says — a ticked box is not evidence.
+- Each gap is classified `missing`, `partial`, `contradicts` (including constitution violations) or `unrequested`, with a severity from CRITICAL to LOW and the requirement it traces to.
+- Remaining work is appended as a new `## Phase N: Convergence` section, continuing the task numbering, constitution and CRITICAL items first:
+
+  ```markdown
+  ## Phase 4: Convergence
+
+  - [ ] T043 CRITICAL: Hash passwords before storing them per Constitution II (contradicts)
+  - [ ] T044 Add rate limiting to the login endpoint per FR-004 (missing)
+  ```
+
+- Nothing is ever rewritten: existing tasks, `spec.md`, `plan.md` and your code are untouched. When nothing remains, `tasks.md` is left exactly as it was and you get **✅ Converged**.
+- With a tool-calling provider the check runs as an agent limited to **read-only** tools (`file_read`, `grep`, `glob`, `list_dir`). Other providers receive the files that `plan.md` and `tasks.md` name.
+
+The findings table is written to the **Caramelo** output channel. Run the new tasks with **Run All Tasks**, then converge again — it should find fewer items each time.
 
 ## Approval gates and stale flags
 
