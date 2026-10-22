@@ -1,8 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import {
   parseHooksYaml,
   groupHooksByEvent,
   normalizePriority,
+  setHookEnabled,
+  HookChangedError,
   DEFAULT_HOOK_PRIORITY,
   type HookEntry,
 } from '../extensions.js';
@@ -137,7 +142,7 @@ hooks:
     expect(parseHooksYaml('hooks:\n  installed:\n    - command: speckit.a.b\n')).toEqual([]);
   });
 
-  it('keeps condition as an opaque trimmed string; null/blank become undefined', () => {
+  it('keeps condition raw: null/empty → undefined, whitespace and non-strings kept so they never match', () => {
     const raw = `
 hooks:
   before_implement:
@@ -147,8 +152,21 @@ hooks:
       condition: "   "
     - command: speckit.a.three
       condition: null
+    - command: speckit.a.four
+      condition: ""
+    - command: speckit.a.five
+      condition: 5
+    - command: speckit.a.six
+      condition: []
 `;
-    expect(parseHooksYaml(raw).map((h) => h.condition)).toEqual(['config.connection.url is set', undefined, undefined]);
+    expect(parseHooksYaml(raw).map((h) => h.condition)).toEqual([
+      '  config.connection.url is set ',
+      '   ',
+      undefined,
+      undefined,
+      '<invalid condition: 5>',
+      undefined,
+    ]);
   });
 
   it('returns [] for empty, malformed, non-object, or hooks-less documents', () => {
@@ -211,5 +229,79 @@ describe('groupHooksByEvent', () => {
 
   it('returns an empty map for empty input', () => {
     expect(groupHooksByEvent([]).size).toBe(0);
+  });
+});
+
+describe('setHookEnabled', () => {
+  let root: string;
+  const file = () => path.join(root, '.specify', 'extensions.yml');
+  const write = (body: string) => {
+    fs.mkdirSync(path.dirname(file()), { recursive: true });
+    fs.writeFileSync(file(), body);
+  };
+
+  beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'caramelo-hooks-')); });
+  afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
+
+  const LIST_FILE = [
+    '# Managed by specify — comments must survive',
+    'installed:',
+    '  - jira',
+    'hooks:',
+    '  after_tasks:',
+    '    - extension: jira',
+    '      command: speckit.jira.specstoissues  # inline note',
+    '      optional: true',
+    '    - extension: jira',
+    '      command: speckit.jira.sync',
+    '      enabled: true',
+    '',
+  ].join('\n');
+
+  it('disables a list entry, adding `enabled: false`, and keeps comments and siblings intact', () => {
+    write(LIST_FILE);
+    setHookEnabled(root, { event: 'after_tasks', index: 0, command: 'speckit.jira.specstoissues' }, false);
+    const out = fs.readFileSync(file(), 'utf-8');
+    expect(out).toContain('# Managed by specify — comments must survive');
+    expect(out).toContain('# inline note');
+    const hooks = parseHooksYaml(out);
+    expect(hooks.map((h) => [h.command, h.enabled])).toEqual([
+      ['speckit.jira.specstoissues', false],
+      ['speckit.jira.sync', true],
+    ]);
+  });
+
+  it('re-enables by flipping an existing enabled field', () => {
+    write(LIST_FILE.replace('      enabled: true', '      enabled: false'));
+    setHookEnabled(root, { event: 'after_tasks', index: 1, command: 'speckit.jira.sync' }, true);
+    expect(parseHooksYaml(fs.readFileSync(file(), 'utf-8'))[1].enabled).toBe(true);
+  });
+
+  it('handles the single-mapping form', () => {
+    write('hooks:\n  before_plan:\n    command: speckit.x.verify\n');
+    setHookEnabled(root, { event: 'before_plan', index: 0, command: 'speckit.x.verify' }, false);
+    expect(parseHooksYaml(fs.readFileSync(file(), 'utf-8'))[0].enabled).toBe(false);
+  });
+
+  it('refuses to write when the entry at that index is a different command', () => {
+    write(LIST_FILE);
+    const before = fs.readFileSync(file(), 'utf-8');
+    expect(() => setHookEnabled(root, { event: 'after_tasks', index: 0, command: 'speckit.jira.sync' }, false))
+      .toThrow(HookChangedError);
+    expect(fs.readFileSync(file(), 'utf-8')).toBe(before);
+  });
+
+  it('refuses when the event or index no longer exists', () => {
+    write(LIST_FILE);
+    expect(() => setHookEnabled(root, { event: 'after_tasks', index: 5, command: 'speckit.jira.sync' }, false))
+      .toThrow(HookChangedError);
+    expect(() => setHookEnabled(root, { event: 'before_plan', index: 0, command: 'speckit.jira.sync' }, false))
+      .toThrow(HookChangedError);
+  });
+
+  it('refuses to touch an invalid YAML file and leaves no temp files', () => {
+    write('hooks:\n  after_tasks: [\n');
+    expect(() => setHookEnabled(root, { event: 'after_tasks', index: 0, command: 'x' }, false)).toThrow(/not valid YAML/);
+    expect(fs.readdirSync(path.dirname(file()))).toEqual(['extensions.yml']);
   });
 });

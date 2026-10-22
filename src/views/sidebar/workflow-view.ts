@@ -4,7 +4,8 @@ import * as path from 'path';
 import { SPECS_DIR_NAME, PHASE_FILES, COMMAND_IDS } from '../../constants.js';
 import { isObject, safeJsonParse } from '../../utils/safe-json.js';
 import { writeAnswersToSpec, type ClarificationQuestion } from '../../commands/clarify.js';
-import { loadHooks, groupHooksByEvent } from '../../speckit/extensions.js';
+import { loadHooks, groupHooksByEvent, setHookEnabled, HookChangedError } from '../../speckit/extensions.js';
+import { evaluateHookCondition } from '../../speckit/hook-conditions.js';
 import { log } from '../../utils/log.js';
 
 /**
@@ -41,6 +42,7 @@ export type WebviewMsg =
   | { command: 'toggleSpec'; name: string }
   | { command: 'runAllTasks'; path: string }
   | { command: 'convergeTasks'; specName: string }
+  | { command: 'toggleHook'; event: string; index: number; hookCommand: string; enabled: boolean }
   | { command: 'createSpecFromJira' }
   | { command: 'openExternal'; url: string }
   | { command: 'openDag' }
@@ -149,6 +151,9 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider, vscode.
         return;
       case 'convergeTasks':
         vscode.commands.executeCommand(COMMAND_IDS.convergeTasks, msg.specName);
+        return;
+      case 'toggleHook':
+        this.handleToggleHook(msg.event, msg.index, msg.hookCommand, msg.enabled);
         return;
       case 'createSpecFromJira':
         vscode.commands.executeCommand('caramelo.createSpecFromJira');
@@ -308,6 +313,20 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider, vscode.
     this.refresh();
   }
 
+  private handleToggleHook(event: string, index: number, command: string, enabled: boolean): void {
+    if (!this.workspaceUri) return;
+    try {
+      setHookEnabled(this.workspaceUri.fsPath, { event, index, command }, enabled);
+    } catch (err) {
+      if (err instanceof HookChangedError) {
+        vscode.window.showWarningMessage('Caramelo: .specify/extensions.yml changed since it was displayed — refreshed, try again.');
+      } else {
+        vscode.window.showErrorMessage(`Caramelo: could not update hook: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    this.refresh();
+  }
+
   private hasConstitution(): boolean {
     if (!this.workspaceUri) return false;
     const p = path.join(this.workspaceUri.fsPath, '.specify', 'memory', 'constitution.md');
@@ -364,7 +383,8 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider, vscode.
    */
   private renderHooks(): string {
     if (!this.workspaceUri) return '';
-    const hooks = loadHooks(this.workspaceUri.fsPath);
+    const root = this.workspaceUri.fsPath;
+    const hooks = loadHooks(root);
     if (hooks.length === 0) return '';
 
     const grouped = groupHooksByEvent(hooks);
@@ -382,11 +402,17 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider, vscode.
           `Priority: ${h.priority}`,
         ].filter(Boolean).join('\n');
         const ext = h.extension ? `<span class="hook-ext">${escHtml(h.extension)}</span>` : '';
-        const cond = h.condition ? `<span class="hook-condition" title="Condition">${escHtml(h.condition)}</span>` : '';
+        let cond = '';
+        if (h.condition) {
+          const met = evaluateHookCondition(h.condition, { workspaceRoot: root, extensionId: h.extension });
+          cond = `<span class="hook-condition ${met ? 'met' : 'unmet'}" title="Condition ${met ? 'met' : 'not met'} — evaluated like Spec Kit">${met ? '✓' : '✗'} ${escHtml(h.condition.trim())}</span>`;
+        }
+        const toggleArgs = escHtml(`{event:'${esc(h.event)}',index:${h.index},hookCommand:'${esc(h.command)}',enabled:${!h.enabled}}`);
+        const toggle = `<button class="hook-toggle" title="${h.enabled ? 'Disable' : 'Enable'} this hook in .specify/extensions.yml" onclick="msg('toggleHook',${toggleArgs})">${h.enabled ? 'Disable' : 'Enable'}</button>`;
         return `<div class="${cls}" title="${escHtml(title)}">
           <span class="hook-marker">${marker}</span>
           <span class="hook-name">/${escHtml(h.command)}</span>
-          ${ext}${cond}
+          ${ext}${cond}${toggle}
         </div>`;
       }).join('');
       sections.push(`<div class="hook-phase">
@@ -395,7 +421,7 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider, vscode.
       </div>`);
     }
 
-    return `<div class="hooks-panel" title="Hooks declared in .specify/extensions.yml — Spec Kit runs these; Caramelo only displays them.">
+    return `<div class="hooks-panel" title="Hooks declared in .specify/extensions.yml">
       <div class="hooks-header">
         <span class="hooks-icon">🪝</span>
         <span class="hooks-title">Spec Kit Hooks</span>
@@ -790,6 +816,11 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case 'convergeTasks':
       if (!isNonEmptyStr(m.specName)) return null;
       return { command: 'convergeTasks', specName: m.specName };
+    case 'toggleHook':
+      if (!isNonEmptyStr(m.event) || !isNonEmptyStr(m.hookCommand)) return null;
+      if (!isInt(m.index) || m.index < 0) return null;
+      if (typeof m.enabled !== 'boolean') return null;
+      return { command: 'toggleHook', event: m.event, index: m.index, hookCommand: m.hookCommand, enabled: m.enabled };
     case 'openExternal':
       if (!isNonEmptyStr(m.url)) return null;
       return { command: 'openExternal', url: m.url };
@@ -898,7 +929,15 @@ body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); 
 .hook-marker { width: 10px; text-align: center; opacity: 0.8; flex-shrink: 0; }
 .hook-item.required .hook-marker { color: #FFC107; }
 .hook-item.optional .hook-marker { color: var(--vscode-descriptionForeground); opacity: 0.7; }
-.hook-item.disabled { opacity: 0.45; text-decoration: line-through; }
+.hook-item.disabled .hook-name, .hook-item.disabled .hook-ext { opacity: 0.45; text-decoration: line-through; }
+.hook-condition.met { border-color: rgba(76,175,80,0.4); }
+.hook-condition.unmet { border-color: rgba(244,67,54,0.4); }
+.hook-toggle {
+  margin-left: auto; flex-shrink: 0; padding: 1px 6px; border-radius: 3px; cursor: pointer;
+  font-size: 0.8em; background: transparent; color: var(--vscode-descriptionForeground);
+  border: 1px solid var(--vscode-widget-border, rgba(255,255,255,0.15));
+}
+.hook-toggle:hover { color: var(--vscode-foreground); border-color: var(--vscode-focusBorder); }
 .hook-ext {
   font-size: 0.8em; opacity: 0.7; padding: 1px 5px; border-radius: 3px;
   background: rgba(100, 150, 220, 0.12);
