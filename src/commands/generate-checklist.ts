@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { SpecWorkspace } from '../specs/workspace.js';
 import type { ProviderRegistry } from '../providers/registry.js';
+import { beginActionHooks } from '../speckit/hook-runner-vscode.js';
 
 export async function generateChecklist(
   specName: string,
@@ -33,6 +34,10 @@ export async function generateChecklist(
     vscode.window.showErrorMessage(`Document ${fileName} not found.`);
     return;
   }
+
+  // Before-hooks may edit the document, so read it only afterwards.
+  const hooks = await beginActionHooks('checklist', specName, registry);
+  if (!hooks) return;
 
   const content = fs.readFileSync(filePath, 'utf-8');
 
@@ -69,4 +74,5 @@ IMPORTANT: Do NOT include generic items. Every item must reference specific cont
   await vscode.window.showTextDocument(doc);
 
   vscode.window.showInformationMessage(`Checklist generated for ${phaseType}.`);
+  await hooks.after();
 }

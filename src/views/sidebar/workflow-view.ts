@@ -6,6 +6,7 @@ import { isObject, safeJsonParse } from '../../utils/safe-json.js';
 import { writeAnswersToSpec, type ClarificationQuestion } from '../../commands/clarify.js';
 import { loadHooks, groupHooksByEvent, setHookEnabled, HookChangedError } from '../../speckit/extensions.js';
 import { evaluateHookCondition } from '../../speckit/hook-conditions.js';
+import { hooksEnabled } from '../../speckit/hook-runner-vscode.js';
 import { log } from '../../utils/log.js';
 
 /**
@@ -24,6 +25,8 @@ interface ClarifySession {
   specPath: string;
   questions: ClarificationQuestion[];
   answers: Map<number, Answer>;
+  /** Runs once answers are written to the spec (fires `after_clarify` hooks). */
+  onComplete?: () => Promise<void>;
 }
 
 /**
@@ -192,6 +195,7 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider, vscode.
     specName: string,
     specPath: string,
     questions: ClarificationQuestion[],
+    onComplete?: () => Promise<void>,
   ): Promise<void> {
     if (this.clarifySession && hasPickedAnswers(this.clarifySession)) {
       const choice = await vscode.window.showWarningMessage(
@@ -203,7 +207,7 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider, vscode.
       );
       if (choice !== 'Discard and continue') return;
     }
-    this.clarifySession = { specName, specPath, questions, answers: new Map() };
+    this.clarifySession = { specName, specPath, questions, answers: new Map(), onComplete };
     if (this.view) this.view.show?.(true);
     this.refresh();
   }
@@ -234,7 +238,7 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider, vscode.
 
   handleClarifySubmit(): void {
     if (!this.clarifySession) return;
-    const { specName, specPath, questions, answers } = this.clarifySession;
+    const { specName, specPath, questions, answers, onComplete } = this.clarifySession;
 
     // Unanswered questions and explicit skips both drop out — the
     // product decision is "we only persist what the user chose to
@@ -261,6 +265,7 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider, vscode.
       vscode.workspace.openTextDocument(specPath).then((doc) => {
         vscode.window.showTextDocument(doc);
       });
+      onComplete?.().catch((err) => log.warn('[clarify] after_clarify hooks failed:', err));
     } else {
       // Toast the actual failure instead of pretending we wrote.
       const detail = result.error instanceof Error ? result.error.message : String(result.error ?? '');
@@ -421,10 +426,15 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider, vscode.
       </div>`);
     }
 
-    return `<div class="hooks-panel" title="Hooks declared in .specify/extensions.yml">
+    const running = hooksEnabled();
+    const panelTitle = running
+      ? 'Hooks from .specify/extensions.yml run before/after Caramelo actions. Mandatory hooks run automatically; optional ones ask first.'
+      : 'Hooks are not running: caramelo.hooks.run is off or the workspace is untrusted.';
+    return `<div class="hooks-panel" title="${escHtml(panelTitle)}">
       <div class="hooks-header">
         <span class="hooks-icon">🪝</span>
         <span class="hooks-title">Spec Kit Hooks</span>
+        ${running ? '' : '<span class="hooks-paused">not running</span>'}
         <span class="hooks-count">${hooks.filter((h) => h.enabled).length}</span>
       </div>
       ${sections.join('')}
@@ -919,6 +929,10 @@ body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); 
 .hooks-count {
   background: rgba(100, 150, 220, 0.2); color: var(--vscode-foreground);
   padding: 1px 6px; border-radius: 8px; font-size: 0.85em; font-weight: 500;
+}
+.hooks-paused {
+  font-size: 0.8em; font-weight: 500; padding: 1px 6px; border-radius: 8px;
+  background: rgba(255,193,7,0.15); color: var(--vscode-foreground);
 }
 .hook-phase { margin-top: 4px; padding-left: 4px; }
 .hook-phase-label {

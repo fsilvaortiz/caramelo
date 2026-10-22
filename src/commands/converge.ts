@@ -5,6 +5,7 @@ import type { SpecWorkspace } from '../specs/workspace.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { LLMProvider } from '../providers/types.js';
 import { log } from '../utils/log.js';
+import { beginActionHooks } from '../speckit/hook-runner-vscode.js';
 
 interface Refreshable { refresh(): void }
 
@@ -165,6 +166,10 @@ export async function convergeTasks(
     }
   }
 
+  // Before-hooks may edit tasks.md; reading it earlier would make the append overwrite their changes.
+  const hooks = await beginActionHooks('converge', specName, registry);
+  if (!hooks) return;
+
   const specMd = fs.readFileSync(specMdPath, 'utf-8');
   const planMd = fs.readFileSync(planMdPath, 'utf-8');
   const tasksMd = fs.readFileSync(tasksMdPath, 'utf-8');
@@ -174,6 +179,7 @@ export async function convergeTasks(
 
   const messages = buildConvergeMessages(specMd, planMd, tasksMd);
 
+  let succeeded = false;
   await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: `Converging ${specName}…`, cancellable: false },
     async () => {
@@ -183,6 +189,7 @@ export async function convergeTasks(
         const newTasks = parseConvergeOutput(raw);
         if (newTasks.length === 0) {
           vscode.window.showInformationMessage(`Converge: no new tasks found for "${specName}". Nothing added.`);
+          succeeded = true;
           return;
         }
         const isoDate = new Date().toISOString().slice(0, 10);
@@ -192,6 +199,7 @@ export async function convergeTasks(
         vscode.window.showInformationMessage(
           `Converge: appended ${newTasks.length} new task${newTasks.length === 1 ? '' : 's'} to ${specName}/tasks.md. Backup at ${path.basename(backupPath)}.`,
         );
+        succeeded = true;
       } catch (err) {
         log.warn('[converge] failed:', err);
         const msg = err instanceof Error ? err.message : String(err);
@@ -199,4 +207,5 @@ export async function convergeTasks(
       }
     },
   );
+  if (succeeded) await hooks.after();
 }

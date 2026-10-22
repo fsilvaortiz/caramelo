@@ -27,6 +27,8 @@ import { AnalysisCodeLensProvider } from './views/codelens/analysis-codelens.js'
 import { createSpecFromJira } from './commands/create-spec-from-jira.js';
 import { generateChecklist } from './commands/generate-checklist.js';
 import { TemplateSync } from './speckit/sync.js';
+import { beginActionHooks } from './speckit/hook-runner-vscode.js';
+import { findSpecForFile } from './specs/spec.js';
 import { COMMAND_IDS, SETTINGS_KEYS } from './constants.js';
 import { initProgressBar } from './progress.js';
 import { log } from './utils/log.js';
@@ -305,15 +307,18 @@ export function activate(context: vscode.ExtensionContext): CarameloApi {
 
       // Collect all pending tasks with parallel info
       interface PendingTask { line: number; text: string; isParallel: boolean }
-      const pendingTasks: PendingTask[] = [];
-      for (let i = 0; i < doc.lineCount; i++) {
-        const text = doc.lineAt(i).text.trimStart();
-        if (/^- \[ \] /.test(text)) {
-          const taskText = text.replace(/^- \[ \] /, '').trim();
-          const isParallel = /\[P\]/.test(taskText);
-          pendingTasks.push({ line: i, text: taskText, isParallel });
+      const collectPending = (d: vscode.TextDocument): PendingTask[] => {
+        const out: PendingTask[] = [];
+        for (let i = 0; i < d.lineCount; i++) {
+          const text = d.lineAt(i).text.trimStart();
+          if (/^- \[ \] /.test(text)) {
+            const taskText = text.replace(/^- \[ \] /, '').trim();
+            out.push({ line: i, text: taskText, isParallel: /\[P\]/.test(taskText) });
+          }
         }
-      }
+        return out;
+      };
+      let pendingTasks = collectPending(doc);
 
       if (pendingTasks.length === 0) {
         vscode.window.showInformationMessage('All tasks are already complete!');
@@ -329,6 +334,17 @@ export function activate(context: vscode.ExtensionContext): CarameloApi {
 
       const confirm = await vscode.window.showInformationMessage(msg, 'Run All', 'Cancel');
       if (confirm !== 'Run All') return;
+
+      const specName = specWorkspace ? findSpecForFile(doc.uri.fsPath, specWorkspace.getSpecsRoot())?.specName : undefined;
+      const hooks = await beginActionHooks('implement', specName, registry);
+      if (!hooks) return;
+      // before_implement hooks may have edited tasks.md.
+      pendingTasks = collectPending(await vscode.workspace.openTextDocument(doc.uri));
+      if (pendingTasks.length === 0) {
+        vscode.window.showInformationMessage('All tasks are already complete!');
+        await hooks.after();
+        return;
+      }
 
       // Group consecutive [P] tasks into batches
       const batches: PendingTask[][] = [];
@@ -409,6 +425,7 @@ export function activate(context: vscode.ExtensionContext): CarameloApi {
       vscode.window.showInformationMessage(`All ${pendingTasks.length} tasks executed!`);
       editorContext.update();
       workflowView.refresh();
+      await hooks.after();
     }),
     vscode.commands.registerCommand('caramelo.showLockedMessage', (reason: string) =>
       vscode.window.showInformationMessage(reason ?? 'Previous phase must be approved first')
