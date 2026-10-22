@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { getApi, installMockProvider } from './helpers/api.js';
 import type { MockLLMProvider } from './helpers/mock-provider.js';
@@ -10,6 +11,7 @@ import {
   seedConstitution,
   seedSpec,
   specFileExists,
+  workspaceRoot,
 } from './helpers/workspace.js';
 
 /**
@@ -83,6 +85,44 @@ suite('Phase generation with mock LLM', () => {
 
       const meta = readMeta(spec);
       assert.strictEqual(meta.phases.requirements, 'pending-approval');
+    } finally {
+      removeSpec(spec);
+    }
+  });
+
+  test('description typed in the sidebar reaches the requirements prompt', async function () {
+    this.timeout(20_000);
+    const { WorkflowViewProvider } = await import('../../views/sidebar/workflow-view.js');
+    const view = new WorkflowViewProvider(vscode.Uri.file(workspaceRoot()));
+    const name = `feat-desc-${Date.now()}`;
+    const description = 'Users sign in with their corporate SSO account';
+    view.dispatch({ command: 'createSpec', name, description });
+    view.dispose();
+
+    const spec = { name, dir: path.join(workspaceRoot(), 'specs', name), metaPath: path.join(workspaceRoot(), 'specs', name, '.caramelo-meta.json') };
+    try {
+      assert.strictEqual(readMeta(spec).description, description);
+      mock.queueReply('# Requirements\n\n- SSO login.\n');
+      await runPhaseDirect(name, 'requirements');
+
+      const user = mock.calls[0].messages.find((m) => m.role === 'user');
+      assert.ok(user?.content.includes(description), 'requirements prompt should carry the sidebar description');
+      assert.strictEqual(readMeta(spec).description, description, 'description must survive the phase transition');
+    } finally {
+      removeSpec(spec);
+    }
+  });
+
+  test('Jira link in meta survives phase generation (regression)', async function () {
+    this.timeout(20_000);
+    mock.queueReply('# Requirements\n\n- From Jira.\n');
+    const jira = { key: 'PROJ-7', url: 'https://example.atlassian.net/browse/PROJ-7', boardName: 'Board' };
+    const spec = seedSpec({ meta: { jira } });
+    try {
+      await runPhaseDirect(spec.name, 'requirements');
+      const meta = readMeta(spec);
+      assert.strictEqual(meta.phases.requirements, 'pending-approval');
+      assert.deepStrictEqual(meta.jira, jira);
     } finally {
       removeSpec(spec);
     }

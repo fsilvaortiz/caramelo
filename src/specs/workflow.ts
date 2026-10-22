@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { TemplateManager } from '../speckit/templates.js';
-import { setPhaseStatus, markDownstreamStale, type PhaseType, type Spec } from './spec.js';
+import { setPhaseStatus, markDownstreamStale, readSpecDescription, type PhaseType, type Spec } from './spec.js';
 import { showProgress, updateProgress, hideProgress } from '../progress.js';
 import { AgentRuntime } from '../agent/runtime.js';
 import { buildDefaultToolSet } from '../agent/tools/index.js';
@@ -450,6 +450,10 @@ export class WorkflowEngine {
 
     if (phaseType === 'requirements') {
       parts.push(`Feature: ${spec.name}`);
+      const description = readSpecDescription(spec.dirPath);
+      if (description) {
+        parts.push(`## Feature Description\n\n${description}`);
+      }
       const jiraContextPath = path.join(spec.dirPath, 'jira-context.md');
       if (fs.existsSync(jiraContextPath)) {
         parts.push(`## Jira Issue Context\n\n${fs.readFileSync(jiraContextPath, 'utf-8')}`);

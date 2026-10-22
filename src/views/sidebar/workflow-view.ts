@@ -286,7 +286,9 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider, vscode.
     if (!fs.existsSync(specDir)) fs.mkdirSync(specDir, { recursive: true });
     const metaPath = path.join(specDir, '.caramelo-meta.json');
     if (!fs.existsSync(metaPath)) {
-      fs.writeFileSync(metaPath, JSON.stringify({ phases: { requirements: 'pending', design: 'pending', tasks: 'pending' } }, null, 2));
+      const meta: Record<string, unknown> = { phases: { requirements: 'pending', design: 'pending', tasks: 'pending' } };
+      if (description.trim()) meta.description = description.trim();
+      fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
     }
     this.refresh();
     this.onSpecCreatedCallback?.(name);
@@ -814,7 +816,7 @@ function createSpec() {
   const name = document.getElementById('specName').value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   const desc = document.getElementById('specDesc').value.trim();
   if (!name) { document.getElementById('specName').style.borderColor = '#f44'; return; }
-  msg('createSpec', { name, description: desc || name });
+  msg('createSpec', { name, description: desc });
   document.getElementById('specName').value = '';
   document.getElementById('specDesc').value = '';
   document.getElementById('newSpecBody').style.display = 'none';

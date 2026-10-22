@@ -53,6 +53,8 @@ export interface SeedSpecOptions {
   statuses?: Partial<Record<'requirements' | 'design' | 'tasks', string>>;
   /** Optional contents for spec.md / plan.md / tasks.md. */
   files?: Partial<Record<'spec' | 'plan' | 'tasks', string>>;
+  /** Extra top-level fields for `.caramelo-meta.json` (e.g. `jira`, `description`). */
+  meta?: Record<string, unknown>;
 }
 
 export interface SeededSpec {
@@ -68,6 +70,7 @@ export function seedSpec(opts: SeedSpecOptions = {}): SeededSpec {
   const dir = path.join(workspaceRoot(), 'specs', name);
   fs.mkdirSync(dir, { recursive: true });
   const meta = {
+    ...opts.meta,
     phases: {
       requirements: opts.statuses?.requirements ?? 'pending',
       design: opts.statuses?.design ?? 'pending',
@@ -97,7 +100,7 @@ export function removeSpec(spec: SeededSpec): void {
 }
 
 /** Read the JSON-encoded meta file from a seeded spec. */
-export function readMeta(spec: SeededSpec): { phases: Record<string, string> } {
+export function readMeta(spec: SeededSpec): { phases: Record<string, string>; [key: string]: unknown } {
   return JSON.parse(fs.readFileSync(spec.metaPath, 'utf-8'));
 }
 
