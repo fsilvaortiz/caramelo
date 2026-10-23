@@ -13,6 +13,7 @@ import {
   setPhaseStatus,
   writeMetadata,
   findSpecForFile,
+  readSpecDescription,
 } from '../spec.js';
 
 let tmpDir: string;
@@ -231,5 +232,62 @@ describe('findSpecForFile', () => {
     const specsRoot = path.join(tmpDir, 'specs');
     const filePath = path.join(specsRoot, 'feature-a', 'notes.md');
     expect(findSpecForFile(filePath, specsRoot)).toBeNull();
+  });
+});
+
+describe('metadata preservation', () => {
+  const phases = { requirements: 'approved', design: 'pending', tasks: 'pending' } as const;
+
+  it('writeMetadata keeps jira and description fields (regression: Jira link was erased)', () => {
+    const metaPath = path.join(tmpDir, META_FILE_NAME);
+    const jira = { key: 'PROJ-1', url: 'https://x.atlassian.net/browse/PROJ-1', boardName: 'B' };
+    fs.writeFileSync(metaPath, JSON.stringify({ phases: { requirements: 'pending', design: 'pending', tasks: 'pending' }, jira, description: 'Login with SSO' }));
+
+    writeMetadata(metaPath, { ...phases });
+
+    const after = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+    expect(after.jira).toEqual(jira);
+    expect(after.description).toBe('Login with SSO');
+    expect(after.phases).toEqual(phases);
+  });
+
+  it('setPhaseStatus keeps the Jira link across a phase transition', () => {
+    const metaPath = path.join(tmpDir, META_FILE_NAME);
+    fs.writeFileSync(metaPath, JSON.stringify({ phases: { requirements: 'pending', design: 'pending', tasks: 'pending' }, jira: { key: 'PROJ-2' } }));
+    const spec = buildSpec('feat', tmpDir);
+
+    setPhaseStatus(spec, 'requirements', 'generating');
+
+    expect(JSON.parse(fs.readFileSync(metaPath, 'utf-8')).jira).toEqual({ key: 'PROJ-2' });
+  });
+
+  it('writeMetadata creates the file when it does not exist', () => {
+    const metaPath = path.join(tmpDir, 'nested', META_FILE_NAME);
+    writeMetadata(metaPath, { ...phases });
+    expect(JSON.parse(fs.readFileSync(metaPath, 'utf-8'))).toEqual({ phases });
+  });
+
+  it('writeMetadata recovers from a corrupt meta file instead of throwing', () => {
+    const metaPath = path.join(tmpDir, META_FILE_NAME);
+    fs.writeFileSync(metaPath, '{not json');
+    writeMetadata(metaPath, { ...phases });
+    expect(JSON.parse(fs.readFileSync(metaPath, 'utf-8'))).toEqual({ phases });
+  });
+});
+
+describe('readSpecDescription', () => {
+  it('returns the trimmed description', () => {
+    fs.writeFileSync(path.join(tmpDir, META_FILE_NAME), JSON.stringify({ phases: {}, description: '  Login with SSO \n' }));
+    expect(readSpecDescription(tmpDir)).toBe('Login with SSO');
+  });
+
+  it('returns undefined when missing, blank, non-string, or the file is absent/corrupt', () => {
+    expect(readSpecDescription(tmpDir)).toBeUndefined();
+    for (const description of ['', '   ', 42, null]) {
+      fs.writeFileSync(path.join(tmpDir, META_FILE_NAME), JSON.stringify({ phases: {}, description }));
+      expect(readSpecDescription(tmpDir)).toBeUndefined();
+    }
+    fs.writeFileSync(path.join(tmpDir, META_FILE_NAME), '{bad');
+    expect(readSpecDescription(tmpDir)).toBeUndefined();
   });
 });

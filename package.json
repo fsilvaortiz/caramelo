@@ -372,7 +372,7 @@
     "build": "node esbuild.js",
     "build:prod": "node esbuild.js --production",
     "watch": "node esbuild.js --watch",
-    "lint": "eslint src/",
+    "lint": "eslint src/ --max-warnings=0",
     "test": "vitest run",
     "compile-tests": "tsc -p tsconfig.test.json",
     "pretest:smoke": "npm run compile-tests && npm run build",

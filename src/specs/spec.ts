@@ -43,10 +43,28 @@ export function parseMetadata(metaPath: string): PhaseStatuses {
   return { ...DEFAULT_STATUSES, ...phases };
 }
 
+/** Rewrites `phases` only; other meta fields (`jira`, `description`, …) are preserved. */
 export function writeMetadata(metaPath: string, statuses: PhaseStatuses): void {
   const dir = path.dirname(metaPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(metaPath, JSON.stringify({ phases: statuses }, null, 2));
+  let existing: Record<string, unknown> = {};
+  try {
+    existing = safeJsonParse(fs.readFileSync(metaPath, 'utf-8'), isObject) ?? {};
+  } catch { /* missing file → start fresh */ }
+  fs.writeFileSync(metaPath, JSON.stringify({ ...existing, phases: statuses }, null, 2));
+}
+
+/** Free-text feature description captured when the spec was created, if any. */
+export function readSpecDescription(dirPath: string): string | undefined {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(path.join(dirPath, META_FILE_NAME), 'utf-8');
+  } catch {
+    return undefined;
+  }
+  const data = safeJsonParse(raw, isObject);
+  const desc = data?.description;
+  return typeof desc === 'string' && desc.trim() ? desc.trim() : undefined;
 }
 
 export function getPhaseStatus(spec: Spec, phaseType: PhaseType): PhaseStatus {
