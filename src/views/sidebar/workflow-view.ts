@@ -576,7 +576,7 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider, vscode.
         const hasPendingTasks = p.type === 'tasks' && spec.taskStats.total > 0 && spec.taskStats.completed < spec.taskStats.total;
         const allTasksDone = p.type === 'tasks' && spec.taskStats.total > 0 && spec.taskStats.completed === spec.taskStats.total;
         const convergeBtn = p.type === 'tasks'
-          ? `<button class="phase-btn-sm" title="Reconcile tasks.md with codebase (Spec Kit /converge). Appends new tasks only — never edits existing." onclick="msg('convergeTasks',{specName:'${esc(spec.name)}'})">⟲ Converge</button>`
+          ? `<button class="phase-btn-sm" title="Spec Kit /converge: assess the code against spec, plan and tasks, and append the remaining work as a Convergence phase. Never edits existing tasks or code." onclick="msg('convergeTasks',{specName:'${esc(spec.name)}'})">⟲ Converge</button>`
           : '';
         action = `
           ${hasPendingTasks ? `<button class="phase-btn implement" onclick="msg('runAllTasks',{path:'${esc(p.filePath)}'})">▶ Implement</button>` : ''}

@@ -1,168 +1,167 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import {
-  parseConvergeOutput,
-  appendConvergedTasks,
-  buildConvergeMessages,
-} from '../converge.js';
+  appendConvergencePhase,
+  buildConvergeUserPrompt,
+  collectReferencedFiles,
+  formatFindingsTable,
+  orderFindings,
+  parseConvergeFindings,
+  taskNumbering,
+  CONVERGE_SYSTEM_PROMPT,
+  type ConvergeFinding,
+} from '../converge-core.js';
 
-describe('parseConvergeOutput', () => {
-  it('returns empty for the NONE sentinel in any case', () => {
-    expect(parseConvergeOutput('NONE')).toEqual([]);
-    expect(parseConvergeOutput('none')).toEqual([]);
-    expect(parseConvergeOutput('  None  ')).toEqual([]);
-  });
+const f = (over: Partial<ConvergeFinding> & Pick<ConvergeFinding, 'task'>): ConvergeFinding => ({
+  gapType: 'missing', severity: 'HIGH', sourceRef: 'FR-001', evidence: 'src/a.ts', ...over,
+});
 
-  it('returns empty for an empty / whitespace-only body', () => {
-    expect(parseConvergeOutput('')).toEqual([]);
-    expect(parseConvergeOutput('   \n\n')).toEqual([]);
-  });
+const TASKS = `# Tasks: Login
 
-  it('parses properly-formatted checkbox lines', () => {
-    const raw = `
-- [ ] First task
-- [ ] Second task
-- [ ] Third task
-    `;
-    expect(parseConvergeOutput(raw)).toEqual([
-      '- [ ] First task',
-      '- [ ] Second task',
-      '- [ ] Third task',
+## Phase 1: Setup
+
+- [x] T001 Create project structure
+- [ ] T002 [P] Configure linting
+
+## Phase 2: User Story 1
+
+- [ ] T003 [US1] Implement login form in src/login.ts
+- [X] T010 [US1] Add session store
+`;
+
+describe('parseConvergeFindings', () => {
+  it('reads the fenced JSON object and normalises casing/whitespace', () => {
+    const raw = 'Here you go:\n```json\n{"findings":[{"gapType":"Partial","severity":"high","sourceRef":" FR-003 ","evidence":"src/x.ts","task":"Validate   email\\n format"}]}\n```\nDone.';
+    expect(parseConvergeFindings(raw)).toEqual([
+      { gapType: 'partial', severity: 'HIGH', sourceRef: 'FR-003', evidence: 'src/x.ts', task: 'Validate email format' },
     ]);
   });
 
-  it('normalises already-checked items back to unchecked (new tasks are not pre-done)', () => {
-    const raw = '- [x] Should start as pending\n- [X] Even uppercase X\n';
-    expect(parseConvergeOutput(raw)).toEqual([
-      '- [ ] Should start as pending',
-      '- [ ] Even uppercase X',
+  it('accepts an unfenced object and an empty findings list (converged)', () => {
+    expect(parseConvergeFindings('{"findings": []}')).toEqual([]);
+    expect(parseConvergeFindings('result {"findings":[]} end')).toEqual([]);
+  });
+
+  it('drops entries with unknown gap types, severities or no task; defaults a missing sourceRef', () => {
+    const raw = JSON.stringify({ findings: [
+      { gapType: 'nope', severity: 'HIGH', task: 'x' },
+      { gapType: 'missing', severity: 'URGENT', task: 'x' },
+      { gapType: 'missing', severity: 'LOW', task: '  ' },
+      { gapType: 'unrequested', severity: 'LOW', task: 'Review the debug endpoint' },
+      'not an object',
+    ] });
+    expect(parseConvergeFindings(raw)).toEqual([
+      { gapType: 'unrequested', severity: 'LOW', sourceRef: 'unspecified', evidence: '', task: 'Review the debug endpoint' },
     ]);
   });
 
-  it('accepts numbered lists and converts them to checkboxes', () => {
-    const raw = `
-1. Alpha
-2) Beta
-3. Gamma
-    `;
-    expect(parseConvergeOutput(raw)).toEqual([
-      '- [ ] Alpha',
-      '- [ ] Beta',
-      '- [ ] Gamma',
-    ]);
-  });
-
-  it('accepts plain bullets and converts them to checkboxes', () => {
-    const raw = `
-- plain dash
-* asterisk bullet
-+ plus bullet
-    `;
-    expect(parseConvergeOutput(raw)).toEqual([
-      '- [ ] plain dash',
-      '- [ ] asterisk bullet',
-      '- [ ] plus bullet',
-    ]);
-  });
-
-  it('discards free-form prose that is not a list line', () => {
-    // A chatty model preamble must not leak into tasks.md.
-    const raw = `
-Here are the new tasks you need to add:
-
-- [ ] Real task
-
-Let me know if you want to iterate.
-    `;
-    expect(parseConvergeOutput(raw)).toEqual(['- [ ] Real task']);
-  });
-
-  it('mixes shapes without losing any task', () => {
-    const raw = `
-- [ ] A proper checkbox
-1. A numbered item
-* A bullet
-- [X] A pre-checked item
-    `;
-    expect(parseConvergeOutput(raw)).toEqual([
-      '- [ ] A proper checkbox',
-      '- [ ] A numbered item',
-      '- [ ] A bullet',
-      '- [ ] A pre-checked item',
-    ]);
+  it('returns null (do not write) for prose, malformed JSON, or the wrong shape', () => {
+    expect(parseConvergeFindings('- [ ] some markdown task')).toBeNull();
+    expect(parseConvergeFindings('```json\n{"findings": [\n```')).toBeNull();
+    expect(parseConvergeFindings('{"tasks": []}')).toBeNull();
+    expect(parseConvergeFindings('')).toBeNull();
   });
 });
 
-describe('appendConvergedTasks', () => {
-  const BASE = `# Tasks\n\n- [ ] Alpha\n- [ ] Beta\n`;
-
-  it('is a no-op when there are no new tasks', () => {
-    expect(appendConvergedTasks(BASE, [], '2026-10-21')).toBe(BASE);
-  });
-
-  it('preserves every byte of the original file as a prefix of the output', () => {
-    // The core invariant — the LLM only adds, never edits.
-    const out = appendConvergedTasks(BASE, ['- [ ] Gamma'], '2026-10-21');
-    expect(out.startsWith(BASE)).toBe(true);
-  });
-
-  it('appends a dated section with the new tasks', () => {
-    const out = appendConvergedTasks(BASE, ['- [ ] Gamma', '- [ ] Delta'], '2026-10-21');
-    expect(out).toContain('## Converged Tasks — 2026-10-21');
-    expect(out).toContain('- [ ] Gamma');
-    expect(out).toContain('- [ ] Delta');
-    expect(out).toMatch(/\n$/); // trailing newline
-  });
-
-  it('coerces a bare task string into a checkbox line', () => {
-    // Defence in depth: parseConvergeOutput already normalises, but if a
-    // caller supplies a raw string we still get valid markdown.
-    const out = appendConvergedTasks(BASE, ['Raw task text'], '2026-10-21');
-    expect(out).toContain('- [ ] Raw task text');
-  });
-
-  it('handles a base file that already ends with a newline (no double blank line insertion)', () => {
-    const out = appendConvergedTasks(BASE, ['- [ ] One'], '2026-10-21');
-    // Expect at most two consecutive newlines between the original and the heading.
-    expect(out).not.toMatch(/\n{3,}## Converged/);
-  });
-
-  it('handles a base file that does NOT end with a newline', () => {
-    const noNewline = `# Tasks\n\n- [ ] Alpha`;
-    const out = appendConvergedTasks(noNewline, ['- [ ] Beta'], '2026-10-21');
-    expect(out.startsWith(noNewline)).toBe(true);
-    expect(out).toContain('## Converged Tasks — 2026-10-21');
-  });
-
-  it('each converge run appends a new dated section (audit trail stays legible)', () => {
-    const first = appendConvergedTasks(BASE, ['- [ ] T1'], '2026-10-20');
-    const second = appendConvergedTasks(first, ['- [ ] T2'], '2026-10-21');
-    expect(second).toContain('## Converged Tasks — 2026-10-20');
-    expect(second).toContain('## Converged Tasks — 2026-10-21');
-    expect(second.indexOf('2026-10-20')).toBeLessThan(second.indexOf('2026-10-21'));
+describe('orderFindings', () => {
+  it('puts constitution findings first, then CRITICAL → LOW, stable within a level', () => {
+    const ordered = orderFindings([
+      f({ task: 'low', severity: 'LOW' }),
+      f({ task: 'high-1' }),
+      f({ task: 'const', severity: 'HIGH', sourceRef: 'Constitution II', gapType: 'contradicts' }),
+      f({ task: 'crit', severity: 'CRITICAL' }),
+      f({ task: 'high-2' }),
+    ]);
+    expect(ordered.map((x) => x.task)).toEqual(['const', 'crit', 'high-1', 'high-2', 'low']);
   });
 });
 
-describe('buildConvergeMessages', () => {
-  it('produces a system message with the never-edit constraint', () => {
-    const msgs = buildConvergeMessages('spec', 'plan', 'tasks');
-    expect(msgs[0].role).toBe('system');
-    expect(msgs[0].content).toMatch(/MUST NOT edit, reorder, or restate/);
+describe('taskNumbering', () => {
+  it('finds the highest task id (checked or not) and phase number', () => {
+    expect(taskNumbering(TASKS)).toEqual({ maxTaskId: 10, maxPhase: 2 });
   });
 
-  it('inlines all three artifacts in the user message, labelled', () => {
-    const msgs = buildConvergeMessages('SPEC BODY', 'PLAN BODY', 'TASKS BODY');
-    expect(msgs[1].role).toBe('user');
-    expect(msgs[1].content).toContain('--- SPEC: spec.md ---');
-    expect(msgs[1].content).toContain('SPEC BODY');
-    expect(msgs[1].content).toContain('--- PLAN: plan.md ---');
-    expect(msgs[1].content).toContain('PLAN BODY');
-    expect(msgs[1].content).toContain('--- TASKS: tasks.md (current) ---');
-    expect(msgs[1].content).toContain('TASKS BODY');
+  it('ignores ids outside checklist items and handles an empty file', () => {
+    expect(taskNumbering('See T999 in prose.\n- [ ] T004 real\n')).toEqual({ maxTaskId: 4, maxPhase: 0 });
+    expect(taskNumbering('')).toEqual({ maxTaskId: 0, maxPhase: 0 });
+  });
+});
+
+describe('appendConvergencePhase', () => {
+  it('leaves tasks.md byte-for-byte unchanged when there are no findings', () => {
+    expect(appendConvergencePhase(TASKS, [])).toBe(TASKS);
   });
 
-  it('instructs the model to respond with NONE when nothing is missing', () => {
-    const msgs = buildConvergeMessages('a', 'b', 'c');
-    const combined = msgs.map((m) => m.content).join('\n');
-    expect(combined).toContain('NONE');
+  it('appends "## Phase N: Convergence" with continuing zero-padded ids, per <source> (<gap>)', () => {
+    const out = appendConvergencePhase(TASKS, [
+      f({ task: 'Add rate limiting to login', sourceRef: 'FR-004', gapType: 'missing', severity: 'HIGH' }),
+      f({ task: 'Encrypt the session cookie', sourceRef: 'Constitution I', gapType: 'contradicts', severity: 'CRITICAL' }),
+    ]);
+    expect(out.startsWith(TASKS)).toBe(true);
+    expect(out.slice(TASKS.length)).toBe(
+      '\n## Phase 3: Convergence\n\n' +
+      '- [ ] T011 CRITICAL: Encrypt the session cookie per Constitution I (contradicts)\n' +
+      '- [ ] T012 Add rate limiting to login per FR-004 (missing)\n',
+    );
+  });
+
+  it('a second run adds a new phase below the previous Convergence phase without touching it', () => {
+    const first = appendConvergencePhase(TASKS, [f({ task: 'One' })]);
+    const second = appendConvergencePhase(first, [f({ task: 'Two' })]);
+    expect(second.startsWith(first)).toBe(true);
+    expect(second).toContain('## Phase 3: Convergence\n\n- [ ] T011 One per FR-001 (missing)');
+    expect(second).toContain('## Phase 4: Convergence\n\n- [ ] T012 Two per FR-001 (missing)');
+  });
+
+  it('works on a tasks.md without ids or phases and without a trailing newline', () => {
+    const base = '# Tasks\n\n- [ ] Existing';
+    const out = appendConvergencePhase(base, [f({ task: 'New' })]);
+    expect(out).toBe('# Tasks\n\n- [ ] Existing\n\n## Phase 1: Convergence\n\n- [ ] T001 New per FR-001 (missing)\n');
+  });
+});
+
+describe('prompts', () => {
+  it('system prompt forbids writes and asks for the JSON findings contract', () => {
+    expect(CONVERGE_SYSTEM_PROMPT).toMatch(/Do NOT modify any file/);
+    expect(CONVERGE_SYSTEM_PROMPT).toMatch(/completion claims are not evidence/);
+    expect(CONVERGE_SYSTEM_PROMPT).toContain('{"findings": []}');
+  });
+
+  it('user prompt includes artifacts, skips a template constitution, and inlines code when tools are unavailable', () => {
+    const withTools = buildConvergeUserPrompt({ specMd: 'S', planMd: 'P', tasksMd: 'T', constitutionMd: '# [PRINCIPLE_1_NAME]' }, true);
+    expect(withTools).toContain('Inspect the codebase with your tools');
+    expect(withTools).toContain('--- SPEC: spec.md ---\nS');
+    expect(withTools).not.toContain('CONSTITUTION');
+
+    const noTools = buildConvergeUserPrompt(
+      { specMd: 'S', planMd: 'P', tasksMd: 'T', constitutionMd: '# Real', referencedFiles: [{ path: 'src/a.ts', content: 'code' }] },
+      false,
+    );
+    expect(noTools).toContain('You cannot browse the workspace');
+    expect(noTools).toContain('--- CONSTITUTION ---\n# Real');
+    expect(noTools).toContain('--- CODE: src/a.ts ---\ncode');
+  });
+
+  it('findings table escapes pipes', () => {
+    expect(formatFindingsTable([f({ task: 'a | b' })])).toContain('| F1 | missing | HIGH | FR-001 | src/a.ts | a \\| b |');
+  });
+});
+
+describe('collectReferencedFiles', () => {
+  let root: string;
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'caramelo-conv-'));
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'specs', 'f'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src', 'login.ts'), 'export const login = 1;');
+    fs.writeFileSync(path.join(root, 'specs', 'f', 'plan.md'), 'plan');
+  });
+  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  it('includes existing files the artifacts name, once, skipping missing, spec artifacts and paths outside the root', () => {
+    const text = 'Edit `src/login.ts` and src/login.ts, create src/new.ts, see specs/f/plan.md and ../../etc/passwd.';
+    expect(collectReferencedFiles(root, [text])).toEqual([{ path: 'src/login.ts', content: 'export const login = 1;' }]);
   });
 });
