@@ -5,6 +5,14 @@ import type { ProviderRegistry } from '../providers/registry.js';
 import { log } from '../utils/log.js';
 import { getCarameloChannel } from '../utils/output-channel.js';
 import { beginActionHooks } from '../speckit/hook-runner-vscode.js';
+import { getCentralConstitution } from '../constitution/central-vscode.js';
+import {
+  centralViewHtml,
+  connectCentral,
+  connectSectionHtml,
+  currentConstitution,
+  disconnectCentralSource,
+} from '../constitution/central-editor.js';
 
 const getConstitutionChannel = getCarameloChannel;
 
@@ -29,8 +37,9 @@ export function editConstitution(
     return;
   }
 
-  const constitutionPath = path.join(workspaceFolder.uri.fsPath, '.specify', 'memory', 'constitution.md');
-  const existing = loadExistingConstitution(constitutionPath);
+  const root = workspaceFolder.uri.fsPath;
+  const constitutionPath = path.join(root, '.specify', 'memory', 'constitution.md');
+  const central = getCentralConstitution();
 
   const panel = vscode.window.createWebviewPanel(
     'caramelo.constitution',
@@ -39,11 +48,68 @@ export function editConstitution(
     { enableScripts: true, retainContextWhenHidden: true }
   );
 
-  panel.webview.html = getWebviewContent(existing, !!registry?.activeProvider);
+  // Central mode is a read-only view; local mode is the editable form, which
+  // is only re-rendered when the mode changes so typed input is never lost.
+  let mode: 'central' | 'local' | undefined;
+  let connectError: string | undefined;
+  const render = (force = false): void => {
+    const { config, error } = central?.config() ?? {};
+    const next = config ? 'central' : 'local';
+    if (!force && next === 'local' && mode === 'local') return;
+    mode = next;
+    if (config && central) {
+      panel.webview.html = centralViewHtml(panel.webview.cspSource, config, central.getStatus(), currentConstitution(root));
+    } else {
+      const err = connectError ?? (error ? `caramelo.constitution settings are invalid: ${error.message}` : undefined);
+      panel.webview.html = getWebviewContent(loadExistingConstitution(constitutionPath), !!registry?.activeProvider, connectSectionHtml(err));
+    }
+  };
+  render(true);
+  if (central) {
+    const sub = central.onDidChange(() => render());
+    panel.onDidDispose(() => sub.dispose());
+  }
 
   panel.webview.onDidReceiveMessage(
     async (message) => {
+      if (message.command === 'connectCentral' && central) {
+        const input = {
+          repository: typeof message.repository === 'string' ? message.repository : '',
+          path: typeof message.path === 'string' ? message.path : '',
+          ref: typeof message.ref === 'string' ? message.ref : '',
+        };
+        if (vscode.workspace.isTrusted === false) {
+          connectError = 'Trust this workspace to connect a central constitution.';
+          render(true);
+          return;
+        }
+        const result = await connectCentral(root, input);
+        connectError = result.ok ? undefined : result.error;
+        central.refreshLocal();
+        constitutionTree.refresh();
+        if (result.ok) vscode.window.showInformationMessage('Caramelo: constitution connected to the central repository.');
+        render(true);
+        return;
+      }
+      if (message.command === 'syncCentral' && central) {
+        await central.sync();
+        constitutionTree.refresh();
+        render(true);
+        return;
+      }
+      if (message.command === 'disconnectCentral' && central) {
+        const result = await disconnectCentralSource(root);
+        central.refreshLocal();
+        constitutionTree.refresh();
+        if (!result.ok && result.error) vscode.window.showWarningMessage(`Caramelo: ${result.error}`);
+        render(true);
+        return;
+      }
       if (message.command === 'save') {
+        if (central?.config().config) {
+          vscode.window.showWarningMessage('Caramelo: this constitution follows a central repository — change it there, or disconnect first.');
+          return;
+        }
         const hooks = registry ? await beginActionHooks('constitution', undefined, registry) : undefined;
         if (registry && !hooks) return;
         saveConstitution(constitutionPath, message.data);
@@ -463,7 +529,7 @@ function saveConstitution(filePath: string, data: ConstitutionData): void {
   fs.writeFileSync(filePath, sections.join('\n\n'), 'utf-8');
 }
 
-function getWebviewContent(data: ConstitutionData, hasLLM: boolean): string {
+function getWebviewContent(data: ConstitutionData, hasLLM: boolean, centralSection = ''): string {
   const principlesHtml = data.principles
     .map(
       (p, i) => `
@@ -584,6 +650,8 @@ function getWebviewContent(data: ConstitutionData, hasLLM: boolean): string {
 <body>
   <h1>Project Constitution</h1>
   <p class="subtitle">Define the non-negotiable principles that guide all development in this project. These will be used as context when generating specs.</p>
+
+  ${centralSection}
 
   ${aiSection}
 

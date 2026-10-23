@@ -149,7 +149,7 @@ export function activate(context: vscode.ExtensionContext): CarameloApi {
   // remote Git repository when caramelo.constitution.repository is set.
   const centralConstitution = new CentralConstitution(workspaceFolder?.uri.fsPath);
   setCentralConstitution(centralConstitution);
-  context.subscriptions.push(centralConstitution);
+  context.subscriptions.push(centralConstitution, centralConstitution.onDidChange(() => workflowView.refresh()));
   if (workspaceFolder) {
     const watcher = vscode.workspace.createFileSystemWatcher(
       new vscode.RelativePattern(workspaceFolder, '.specify/memory/{constitution.md,constitution-source.json}'),

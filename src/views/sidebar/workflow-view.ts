@@ -7,6 +7,8 @@ import { writeAnswersToSpec, type ClarificationQuestion } from '../../commands/c
 import { loadHooks, groupHooksByEvent, setHookEnabled, HookChangedError } from '../../speckit/extensions.js';
 import { evaluateHookCondition } from '../../speckit/hook-conditions.js';
 import { hooksEnabled } from '../../speckit/hook-runner-vscode.js';
+import { getCentralConstitution } from '../../constitution/central-vscode.js';
+import { describeStatus } from '../../constitution/central-editor.js';
 import { log } from '../../utils/log.js';
 
 /**
@@ -37,6 +39,7 @@ interface ClarifySession {
  */
 export type WebviewMsg =
   | { command: 'openConstitution' }
+  | { command: 'syncConstitution' }
   | { command: 'createSpec'; name: string; description: string }
   | { command: 'runPhase'; specName: string; phaseType: string }
   | { command: 'approvePhase'; specName: string; phaseType: string }
@@ -125,6 +128,9 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider, vscode.
     switch (msg.command) {
       case 'openConstitution':
         vscode.commands.executeCommand(COMMAND_IDS.editConstitution);
+        return;
+      case 'syncConstitution':
+        vscode.commands.executeCommand(COMMAND_IDS.syncConstitution);
         return;
       case 'createSpec':
         this.handleCreateSpec(msg.name, msg.description);
@@ -501,6 +507,20 @@ export class WorkflowViewProvider implements vscode.WebviewViewProvider, vscode.
   }
 
   private renderConstitution(has: boolean): string {
+    const central = getCentralConstitution();
+    if (central?.isConfigured()) {
+      const s = describeStatus(central.getStatus());
+      const icon = s.tone === 'ok' ? '🔒' : '⚠';
+      const label = s.action === 'restore' ? 'Restore' : s.action === 'retry' ? 'Retry' : s.action === 'sync' ? 'Sync' : '';
+      const button = label
+        ? `<button class="con-action" onclick="event.stopPropagation(); msg('syncConstitution')">${label}</button>`
+        : '';
+      return `<div class="constitution ${s.tone === 'ok' ? 'ok' : 'warn'}" onclick="msg('openConstitution')" title="Central constitution — click to view">
+        <span class="con-icon">${icon}</span>
+        <span class="con-text"><span>Constitution</span><span class="con-sub">${escHtml(s.text)}</span></span>
+        ${button || '<span class="con-edit">View</span>'}
+      </div>`;
+    }
     if (has) {
       return `<div class="constitution ok" onclick="msg('openConstitution')">
         <span class="con-icon">✓</span>
@@ -795,6 +815,7 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
   const isNonEmptyStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
   switch (cmd) {
     case 'openConstitution':
+    case 'syncConstitution':
     case 'createSpecFromJira':
     case 'openDag':
     case 'clarifySubmit':
@@ -889,6 +910,12 @@ body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); 
 .constitution.warn .con-icon { color: #FFC107; }
 .constitution:hover { opacity: 0.85; }
 .con-edit { margin-left: auto; opacity: 0.5; font-size: 0.85em; }
+.con-text { display: flex; flex-direction: column; min-width: 0; }
+.con-sub { font-size: 0.85em; font-weight: 400; opacity: 0.75; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.con-action {
+  margin-left: auto; flex-shrink: 0; padding: 2px 8px; border-radius: 3px; cursor: pointer; font-size: 0.85em;
+  background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none;
+}
 
 /* New Spec */
 .new-spec { margin-bottom: 8px; }
