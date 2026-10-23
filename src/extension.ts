@@ -28,6 +28,7 @@ import { createSpecFromJira } from './commands/create-spec-from-jira.js';
 import { generateChecklist } from './commands/generate-checklist.js';
 import { TemplateSync } from './speckit/sync.js';
 import { beginActionHooks } from './speckit/hook-runner-vscode.js';
+import { CentralConstitution, setCentralConstitution } from './constitution/central-vscode.js';
 import { findSpecForFile } from './specs/spec.js';
 import { COMMAND_IDS, SETTINGS_KEYS } from './constants.js';
 import { initProgressBar } from './progress.js';
@@ -144,6 +145,26 @@ export function activate(context: vscode.ExtensionContext): CarameloApi {
     })
     .catch((err) => log.warn('template sync failed:', err));
 
+  // Central constitution: .specify/memory/constitution.md mirrors a file in a
+  // remote Git repository when caramelo.constitution.repository is set.
+  const centralConstitution = new CentralConstitution(workspaceFolder?.uri.fsPath);
+  setCentralConstitution(centralConstitution);
+  context.subscriptions.push(centralConstitution);
+  if (workspaceFolder) {
+    const watcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(workspaceFolder, '.specify/memory/{constitution.md,constitution-source.json}'),
+    );
+    const refresh = () => centralConstitution.refreshLocal();
+    context.subscriptions.push(watcher, watcher.onDidChange(refresh), watcher.onDidCreate(refresh), watcher.onDidDelete(refresh));
+  }
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('caramelo.constitution')) void centralConstitution.checkRemote(true);
+    }),
+    vscode.workspace.onDidGrantWorkspaceTrust(() => void centralConstitution.onActivation()),
+  );
+  void centralConstitution.onActivation().catch((err) => log.warn('central constitution check failed:', err));
+
   // Status bar. Click focuses the Providers sidebar webview — never
   // opens a top-bar QuickPick. Provider selection / editing lives
   // inline in the sidebar.
@@ -233,6 +254,13 @@ export function activate(context: vscode.ExtensionContext): CarameloApi {
       dagView.show();
     }),
     vscode.commands.registerCommand(COMMAND_IDS.syncTemplates, () => syncTemplates(templateSync)),
+    vscode.commands.registerCommand(COMMAND_IDS.syncConstitution, async () => {
+      if (!centralConstitution.isConfigured()) {
+        vscode.window.showInformationMessage('Caramelo: no central constitution is configured. Set caramelo.constitution.repository, or connect one from the Constitution editor.');
+        return;
+      }
+      if (await centralConstitution.sync()) vscode.window.showInformationMessage('Caramelo: constitution synced from the central repository.');
+    }),
     vscode.commands.registerCommand(COMMAND_IDS.applyVsCodeSettings, () => applyVsCodeSettings()),
     vscode.commands.registerCommand(COMMAND_IDS.convergeTasks, (specNameOrItem: string | { spec: { name: string } }) => {
       if (!specWorkspace) {

@@ -22,6 +22,7 @@ export type GitSourceErrorKind =
   | 'too-large'
   | 'timeout'
   | 'git-missing'
+  | 'invalid-content'
   | 'unknown';
 
 export class GitSourceError extends Error {

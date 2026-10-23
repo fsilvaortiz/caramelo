@@ -13,6 +13,7 @@ import { pickTerminalArtifact } from '../specs/workflow.js';
 import { log } from '../utils/log.js';
 import { getCarameloChannel } from '../utils/output-channel.js';
 import { beginActionHooks } from '../speckit/hook-runner-vscode.js';
+import { ensureCentralConstitutionCurrent } from '../constitution/central-vscode.js';
 import {
   CONVERGE_SYSTEM_PROMPT,
   appendConvergencePhase,
@@ -108,6 +109,8 @@ export async function convergeTasks(
       return;
     }
   }
+
+  if (!(await ensureCentralConstitutionCurrent())) return;
 
   // Before-hooks may edit tasks.md; read everything only afterwards.
   const hooks = await beginActionHooks('converge', specName, registry);

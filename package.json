@@ -118,6 +118,10 @@
         "title": "Caramelo: Sync Spec Kit Templates"
       },
       {
+        "command": "caramelo.syncConstitution",
+        "title": "Caramelo: Sync Central Constitution"
+      },
+      {
         "command": "caramelo.applyVsCodeSettings",
         "title": "Caramelo: Apply Spec Kit VS Code Settings"
       },
@@ -335,6 +339,24 @@
           "type": "boolean",
           "default": true,
           "description": "Run tasks via a tool-calling agent loop (file_read / file_edit / grep / bash / …) when the active provider supports it. When false, Caramelo falls back to the legacy single-shot SEARCH/REPLACE text protocol. Leave this on unless you need to debug regressions against the legacy path."
+        },
+        "caramelo.constitution.repository": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "Git repository holding the central constitution (`https://…`, `git@host:org/repo.git`, `ssh://…`, `git://…` or `file://…`). When set, `.specify/memory/constitution.md` is kept as an exact copy of that file and edited only through the repository. Uses your existing Git credentials. Commit this in `.vscode/settings.json` so the whole team shares it."
+        },
+        "caramelo.constitution.path": {
+          "type": "string",
+          "default": "constitution.md",
+          "scope": "resource",
+          "markdownDescription": "Path of the constitution file inside `#caramelo.constitution.repository#`."
+        },
+        "caramelo.constitution.ref": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "Branch or tag to follow in `#caramelo.constitution.repository#`. Empty follows the repository's default branch; a tag pins the team to a reviewed version."
         },
         "caramelo.hooks.run": {
           "type": "boolean",
