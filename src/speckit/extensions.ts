@@ -5,76 +5,86 @@ import { log } from '../utils/log.js';
 import { isObject } from '../utils/safe-json.js';
 
 /**
- * Spec Kit v1.x reads `.specify/extensions.yml` for lifecycle hooks
- * attached to phase commands. Caramelo does not execute these hooks
- * (Spec Kit's own CLI / runners do), but surfacing them in the
- * workflow sidebar prevents the UI from lying about what will happen
- * when a phase runs.
+ * Lifecycle hooks registered in `.specify/extensions.yml`, mirroring
+ * Spec Kit v1.x's `HookExecutor` (src/specify_cli/extensions/__init__.py):
  *
- * Hook list is scoped to known phase keys. Spec Kit adds more over
- * time; unknown keys under `hooks:` are not surfaced but also do not
- * fail the parse — a conservative, visible policy that matches how
- * `applyPlaceholders` handles unknown tokens.
+ * ```yaml
+ * hooks:
+ *   after_tasks:
+ *     - extension: jira
+ *       command: speckit.jira.specstoissues
+ *       enabled: true        # default true
+ *       optional: true       # default true
+ *       priority: 10         # default 10, lower runs first
+ *       prompt: "Create Jira issues from tasks?"
+ *       description: "..."
+ *       condition: null
+ * ```
  */
-export type HookPhaseKey =
-  | 'before_specify'
-  | 'after_specify'
-  | 'before_plan'
-  | 'after_plan'
-  | 'before_tasks'
-  | 'after_tasks'
-  | 'before_implement'
-  | 'after_implement'
-  | 'before_clarify'
-  | 'after_clarify'
-  | 'before_analyze'
-  | 'after_analyze'
-  | 'before_constitution'
-  | 'after_constitution'
-  | 'before_checklist'
-  | 'after_checklist'
-  | 'before_converge'
-  | 'after_converge';
-
-const KNOWN_HOOK_KEYS: ReadonlySet<string> = new Set<HookPhaseKey>([
-  'before_specify', 'after_specify',
-  'before_plan', 'after_plan',
-  'before_tasks', 'after_tasks',
-  'before_implement', 'after_implement',
-  'before_clarify', 'after_clarify',
-  'before_analyze', 'after_analyze',
-  'before_constitution', 'after_constitution',
-  'before_checklist', 'after_checklist',
-  'before_converge', 'after_converge',
-]);
-
 export interface HookEntry {
-  /** Phase lifecycle slot the hook runs on (e.g. `before_converge`). */
-  readonly phaseKey: HookPhaseKey;
-  /** Hook identifier (never empty — entries missing a name are dropped). */
-  readonly name: string;
-  /** Whether Spec Kit treats this hook as skippable. Absent → false. */
-  readonly optional: boolean;
-  /**
-   * Opaque expression Spec Kit may evaluate before running the hook.
-   * Caramelo does not interpret this — it just displays it so the user
-   * knows the hook is conditional.
-   */
+  /** Lifecycle event, e.g. `before_plan`, `after_tasks`, `before_bug_fix`. */
+  readonly event: string;
+  /** Position inside the event's list in the file; identifies the entry for edits. */
+  readonly index: number;
+  readonly command: string;
+  readonly extension?: string;
+  readonly description?: string;
+  readonly prompt?: string;
   readonly condition?: string;
+  readonly optional: boolean;
+  readonly enabled: boolean;
+  readonly priority: number;
 }
 
-/** Guards against pathological file sizes — anything over 256 KiB is almost certainly not a hooks config. */
+export const DEFAULT_HOOK_PRIORITY = 10;
+
+/** Events Spec Kit core emits; extensions may add more (`before_bug_assess`, …). */
+export const CORE_HOOK_EVENTS: readonly string[] = [
+  'before_constitution', 'after_constitution',
+  'before_specify', 'after_specify',
+  'before_clarify', 'after_clarify',
+  'before_plan', 'after_plan',
+  'before_tasks', 'after_tasks',
+  'before_checklist', 'after_checklist',
+  'before_analyze', 'after_analyze',
+  'before_converge', 'after_converge',
+  'before_implement', 'after_implement',
+  'before_taskstoissues', 'after_taskstoissues',
+];
+
+const EVENT_PATTERN = /^(before|after)_[a-z0-9_]+$/;
+
 const MAX_EXTENSIONS_YML_BYTES = 256 * 1024;
 
+export function extensionsYmlPath(workspaceRoot: string): string {
+  return path.join(workspaceRoot, '.specify', 'extensions.yml');
+}
+
+/** Port of Spec Kit's `normalize_priority`: invalid, boolean or < 1 → default. */
+export function normalizePriority(value: unknown): number {
+  let n: number;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return DEFAULT_HOOK_PRIORITY;
+    n = Math.trunc(value);
+  } else if (typeof value === 'string' && /^\s*[+-]?\d+\s*$/.test(value)) {
+    n = parseInt(value, 10);
+  } else {
+    return DEFAULT_HOOK_PRIORITY;
+  }
+  return n >= 1 ? n : DEFAULT_HOOK_PRIORITY;
+}
+
+function optionalString(v: unknown): string | undefined {
+  return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+}
+
 /**
- * Read and parse `.specify/extensions.yml` from the workspace root.
- * Returns an empty array on any failure (missing file, parse error,
- * malformed shape). All failure modes are logged at WARN with enough
- * context to debug — a conservative, visible policy that matches
- * `TemplateSync.doCheckForUpdates`.
+ * Read and parse `.specify/extensions.yml`. Missing file → `[]` silently;
+ * unreadable / oversized / malformed → `[]` with a warning (Spec Kit's
+ * templates likewise tell the user instead of skipping silently).
  */
 export function loadHooks(workspaceRoot: string): readonly HookEntry[] {
-  const filePath = path.join(workspaceRoot, '.specify', 'extensions.yml');
+  const filePath = extensionsYmlPath(workspaceRoot);
   let raw: string;
   try {
     const stat = fs.statSync(filePath);
@@ -90,29 +100,15 @@ export function loadHooks(workspaceRoot: string): readonly HookEntry[] {
     }
     return [];
   }
-
   return parseHooksYaml(raw);
 }
 
 /**
- * Pure parser: raw YAML text → `HookEntry[]`. Exported for tests.
- *
- * Shape expected:
- *
- * ```yaml
- * hooks:
- *   before_converge:
- *     - name: my-check
- *       optional: true
- *       enabled: false   # entries explicitly disabled are dropped
- *       condition: "something"
- * ```
- *
- * Deviations we silently drop (and log at DEBUG):
- * - Entries whose `enabled` is `false`.
- * - Entries missing a non-empty `name`.
- * - Unknown phase keys under `hooks:`.
- * - Non-array values under a known phase key.
+ * Pure parser, exported for tests. Returns every well-formed entry,
+ * including disabled ones (`enabled: false`) so the UI can offer to
+ * re-enable them. Each event's entries are sorted by priority with a
+ * stable sort, like `get_hooks_for_event`. Entries without a `command`
+ * are dropped — there is nothing to show or run.
  */
 export function parseHooksYaml(raw: string): readonly HookEntry[] {
   let doc: unknown;
@@ -122,46 +118,58 @@ export function parseHooksYaml(raw: string): readonly HookEntry[] {
     log.warn('[speckit-extensions] YAML parse failed:', err instanceof Error ? err.message : err);
     return [];
   }
-
-  if (!isObject(doc)) return [];
-  const hooks = (doc as Record<string, unknown>).hooks;
-  if (!isObject(hooks)) return [];
+  if (!isObject(doc) || !isObject(doc.hooks)) return [];
 
   const out: HookEntry[] = [];
-  for (const [key, bucket] of Object.entries(hooks)) {
-    if (!KNOWN_HOOK_KEYS.has(key)) {
-      log.debug(`[speckit-extensions] unknown hook phase "${key}" — skipped.`);
+  for (const [event, bucket] of Object.entries(doc.hooks)) {
+    if (!EVENT_PATTERN.test(event)) {
+      log.debug(`[speckit-extensions] ignoring non-lifecycle key "hooks.${event}".`);
       continue;
     }
-    if (!Array.isArray(bucket)) {
-      log.warn(`[speckit-extensions] hooks.${key} is not a list — skipped.`);
+    const entries = Array.isArray(bucket) ? bucket : isObject(bucket) ? [bucket] : null;
+    if (!entries) {
+      log.warn(`[speckit-extensions] hooks.${event} is neither a mapping nor a list — skipped.`);
       continue;
     }
-    for (const entry of bucket) {
-      if (!isObject(entry)) continue;
-      const rec = entry as Record<string, unknown>;
-      // `enabled` is implicit-true. Only `enabled: false` disables.
-      if (rec.enabled === false) continue;
-      const name = typeof rec.name === 'string' ? rec.name.trim() : '';
-      if (!name) continue;
-      const optional = rec.optional === true;
-      const condition =
-        typeof rec.condition === 'string' && rec.condition.trim().length > 0
-          ? rec.condition.trim()
-          : undefined;
-      out.push({ phaseKey: key as HookPhaseKey, name, optional, condition });
-    }
+    const parsed: HookEntry[] = [];
+    entries.forEach((entry, index) => {
+      if (!isObject(entry)) return;
+      const command = optionalString(entry.command);
+      if (!command) {
+        log.warn(`[speckit-extensions] hooks.${event}[${index}] has no command — skipped.`);
+        return;
+      }
+      parsed.push({
+        event,
+        index,
+        command,
+        extension: optionalString(entry.extension),
+        description: optionalString(entry.description),
+        prompt: optionalString(entry.prompt),
+        condition: optionalString(entry.condition),
+        optional: entry.optional !== false,
+        enabled: entry.enabled !== false,
+        priority: normalizePriority(entry.priority),
+      });
+    });
+    parsed.sort((a, b) => a.priority - b.priority);
+    out.push(...parsed);
   }
   return out;
 }
 
-/** Group hooks by their phase key for UI rendering. */
-export function groupHooksByPhase(hooks: readonly HookEntry[]): Map<HookPhaseKey, HookEntry[]> {
-  const out = new Map<HookPhaseKey, HookEntry[]>();
+/** Group by event, core events first in lifecycle order, then the rest alphabetically. */
+export function groupHooksByEvent(hooks: readonly HookEntry[]): Map<string, HookEntry[]> {
+  const byEvent = new Map<string, HookEntry[]>();
   for (const h of hooks) {
-    const bucket = out.get(h.phaseKey);
+    const bucket = byEvent.get(h.event);
     if (bucket) bucket.push(h);
-    else out.set(h.phaseKey, [h]);
+    else byEvent.set(h.event, [h]);
   }
-  return out;
+  const rank = (e: string): number => {
+    const i = CORE_HOOK_EVENTS.indexOf(e);
+    return i === -1 ? CORE_HOOK_EVENTS.length : i;
+  };
+  const ordered = [...byEvent.keys()].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  return new Map(ordered.map((e) => [e, byEvent.get(e)!]));
 }
