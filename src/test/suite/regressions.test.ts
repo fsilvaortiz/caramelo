@@ -263,6 +263,24 @@ suite('Regression: hooks panel renders the real Spec Kit extensions.yml schema',
     }
   });
 
+  test('panel says "not running" when caramelo.hooks.run is off', async () => {
+    const { WorkflowViewProvider } = await import('../../views/sidebar/workflow-view.js');
+    const ymlPath = path.join(workspaceRoot(), '.specify', 'extensions.yml');
+    fs.mkdirSync(path.dirname(ymlPath), { recursive: true });
+    fs.writeFileSync(ymlPath, 'hooks:\n  before_plan:\n    - command: speckit.a.b\n');
+    const cfg = vscode.workspace.getConfiguration();
+    const view = new WorkflowViewProvider(vscode.Uri.file(workspaceRoot()));
+    try {
+      assert.ok(!renderSidebar(view).includes('not running'));
+      await cfg.update('caramelo.hooks.run', false, vscode.ConfigurationTarget.Workspace);
+      assert.ok(renderSidebar(view).includes('not running'));
+    } finally {
+      await cfg.update('caramelo.hooks.run', undefined, vscode.ConfigurationTarget.Workspace);
+      view.dispose();
+      fs.rmSync(ymlPath, { force: true });
+    }
+  });
+
   test('upstream-shaped hooks (command/extension, no name) appear in the sidebar', async () => {
     const { WorkflowViewProvider } = await import('../../views/sidebar/workflow-view.js');
     const ymlPath = path.join(workspaceRoot(), '.specify', 'extensions.yml');

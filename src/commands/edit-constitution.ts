@@ -4,6 +4,7 @@ import * as path from 'path';
 import type { ProviderRegistry } from '../providers/registry.js';
 import { log } from '../utils/log.js';
 import { getCarameloChannel } from '../utils/output-channel.js';
+import { beginActionHooks } from '../speckit/hook-runner-vscode.js';
 
 const getConstitutionChannel = getCarameloChannel;
 
@@ -43,10 +44,13 @@ export function editConstitution(
   panel.webview.onDidReceiveMessage(
     async (message) => {
       if (message.command === 'save') {
+        const hooks = registry ? await beginActionHooks('constitution', undefined, registry) : undefined;
+        if (registry && !hooks) return;
         saveConstitution(constitutionPath, message.data);
         constitutionTree.refresh();
         vscode.window.showInformationMessage('Constitution saved!');
         panel.dispose();
+        await hooks?.after();
       } else if (message.command === 'generate') {
         await generateWithAI(message.projectDescription, registry, panel);
       }

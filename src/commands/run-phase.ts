@@ -4,10 +4,19 @@ import type { ProviderRegistry } from '../providers/registry.js';
 import type { TemplateManager } from '../speckit/templates.js';
 import type { WorkflowEngine } from '../specs/workflow.js';
 import { getPhaseStatus, type PhaseType } from '../specs/spec.js';
+import { beginActionHooks } from '../speckit/hook-runner-vscode.js';
+import type { HookAction } from '../speckit/hook-runner.js';
 
 interface Refreshable { refresh(): void }
 
 const PHASE_ORDER: PhaseType[] = ['requirements', 'design', 'tasks'];
+/** Spec Kit command each phase corresponds to, for `before_` / `after_` hooks. */
+const PHASE_HOOK_ACTION: Record<PhaseType, HookAction> = {
+  requirements: 'specify',
+  design: 'plan',
+  tasks: 'tasks',
+};
+
 const PHASE_LABELS: Record<PhaseType, string> = {
   requirements: 'Requirements',
   design: 'Design',
@@ -51,6 +60,10 @@ export async function runPhase(
     }
   }
 
+  const hooks = await beginActionHooks(PHASE_HOOK_ACTION[phase], spec.name, registry);
+  if (!hooks) return;
+
   await workflowEngine.runPhase(spec, phase, registry, templateManager);
   specsTree.refresh();
+  if (getPhaseStatus(spec, phase) === 'pending-approval') await hooks.after();
 }

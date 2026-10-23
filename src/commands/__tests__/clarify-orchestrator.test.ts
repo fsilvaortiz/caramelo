@@ -106,6 +106,7 @@ describe('clarifySpec — orchestrator early returns', () => {
       expect.arrayContaining([
         expect.objectContaining({ question: 'Auth?', options: ['JWT', 'OAuth'], recommended: 0 }),
       ]),
+      expect.any(Function),
     );
   });
 

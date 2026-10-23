@@ -3,7 +3,15 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { installMockProvider } from './helpers/api.js';
 import type { MockLLMProvider } from './helpers/mock-provider.js';
-import { workspaceRoot } from './helpers/workspace.js';
+import {
+  clearConstitution,
+  readMeta,
+  readSpecFile,
+  removeSpec,
+  seedConstitution,
+  seedSpec,
+  workspaceRoot,
+} from './helpers/workspace.js';
 
 /**
  * End-to-end hook engine: a demo extension installed under .specify/extensions,
@@ -123,6 +131,126 @@ suite('Spec Kit hooks (functional)', () => {
       assert.strictEqual(mock.calls.length, 0);
     } finally {
       await cfg.update('caramelo.hooks.run', undefined, vscode.ConfigurationTarget.Workspace);
+    }
+  });
+});
+
+suite('Spec Kit hooks wired into Caramelo actions (functional)', () => {
+  let mock: MockLLMProvider;
+  let uninstall: () => void;
+  let api: { registry: unknown; workflowEngine: unknown; templateManager: unknown };
+  let workspace: unknown;
+  const root = () => workspaceRoot();
+  const extDir = () => path.join(root(), '.specify', 'extensions', 'wired');
+  const ymlPath = () => path.join(root(), '.specify', 'extensions.yml');
+  const isHookCall = (c: { messages: Array<{ role: string; content: string }> }) =>
+    c.messages.some((m) => m.role === 'system' && m.content.includes('executing a Spec Kit extension hook'));
+  const hookCommandOf = (c: { messages: Array<{ role: string; content: string }> }) =>
+    /HOOK:(\S+)/.exec(c.messages.find((m) => m.role === 'user')!.content)?.[1];
+
+  suiteSetup(async function () {
+    this.timeout(60_000);
+    const installed = await installMockProvider({ id: 'mock-hooks-wired', displayName: 'Mock (hooks wired)' });
+    mock = installed.mock;
+    uninstall = installed.uninstall;
+    api = installed.api as never;
+    seedConstitution();
+    const vscode = await import('vscode');
+    const { SpecWorkspace } = await import('../../specs/workspace.js');
+    workspace = new SpecWorkspace(vscode.workspace.workspaceFolders![0].uri);
+
+    const cmds = ['before-plan', 'after-plan', 'before-converge', 'after-converge'];
+    fs.mkdirSync(path.join(extDir(), 'commands'), { recursive: true });
+    fs.writeFileSync(path.join(extDir(), 'extension.yml'), [
+      'provides:',
+      '  commands:',
+      ...cmds.flatMap((c) => [`    - name: speckit.wired.${c}`, `      file: commands/${c}.md`]),
+      '',
+    ].join('\n'));
+    for (const c of cmds) fs.writeFileSync(path.join(extDir(), 'commands', `${c}.md`), `HOOK:${c}\n$ARGUMENTS\n`);
+    fs.writeFileSync(ymlPath(), [
+      'hooks:',
+      ...['before_plan', 'after_plan', 'before_converge', 'after_converge'].flatMap((e) => [
+        `  ${e}:`,
+        '    - extension: wired',
+        `      command: speckit.wired.${e.replace('_', '-')}`,
+        '      optional: false',
+      ]),
+      '',
+    ].join('\n'));
+  });
+
+  suiteTeardown(() => {
+    uninstall?.();
+    clearConstitution();
+    fs.rmSync(extDir(), { recursive: true, force: true });
+    fs.rmSync(ymlPath(), { force: true });
+  });
+
+  setup(() => mock.reset());
+
+  async function runDesign(specName: string): Promise<void> {
+    const { runPhase } = await import('../../commands/run-phase.js');
+    await runPhase(specName, 'design', workspace as never, api.registry as never, api.templateManager as never,
+      api.workflowEngine as never, { refresh: () => { /* noop */ } } as never);
+  }
+
+  test('plan generation runs before_plan → generation → after_plan, in that order', async function () {
+    this.timeout(30_000);
+    mock.setDispatcher((messages) => {
+      const sys = messages.find((m) => m.role === 'system')?.content ?? '';
+      return { reply: sys.includes('executing a Spec Kit extension hook') ? 'hook done' : '# Plan\n\n1. Do it\n' };
+    });
+    const spec = seedSpec({ statuses: { requirements: 'approved', design: 'pending' }, files: { spec: '# Req\n' } });
+    try {
+      await runDesign(spec.name);
+      const order = mock.calls.map((c) => (isHookCall(c) ? hookCommandOf(c) : 'generate'));
+      // design also generates intermediate artifacts after the plan; they sit between plan and after_plan.
+      assert.strictEqual(order[0], 'before-plan', `order: ${order.join(', ')}`);
+      assert.strictEqual(order[1], 'generate', `order: ${order.join(', ')}`);
+      assert.strictEqual(order[order.length - 1], 'after-plan', `order: ${order.join(', ')}`);
+      assert.ok(!order.includes('before-converge') && !order.includes('after-converge'), 'unrelated events must not fire');
+      assert.strictEqual(readMeta(spec).phases.design, 'pending-approval');
+    } finally {
+      removeSpec(spec);
+    }
+  });
+
+  test('after_plan does not run when plan generation fails', async function () {
+    this.timeout(30_000);
+    mock.setDispatcher((messages) => {
+      const sys = messages.find((m) => m.role === 'system')?.content ?? '';
+      return sys.includes('executing a Spec Kit extension hook') ? { reply: 'hook done' } : { error: new Error('LLM down') };
+    });
+    const spec = seedSpec({ statuses: { requirements: 'approved', design: 'pending' }, files: { spec: '# Req\n' } });
+    try {
+      await runDesign(spec.name);
+      const hooks = mock.calls.filter(isHookCall).map(hookCommandOf);
+      assert.deepStrictEqual(hooks, ['before-plan']);
+      assert.notStrictEqual(readMeta(spec).phases.design, 'pending-approval');
+    } finally {
+      removeSpec(spec);
+    }
+  });
+
+  test('converge runs before_converge and after_converge around the append', async function () {
+    this.timeout(30_000);
+    mock.setDispatcher((messages) => {
+      const sys = messages.find((m) => m.role === 'system')?.content ?? '';
+      return { reply: sys.includes('executing a Spec Kit extension hook') ? 'hook done' : '- [ ] Added by converge' };
+    });
+    const spec = seedSpec({
+      statuses: { requirements: 'approved', design: 'approved', tasks: 'approved' },
+      files: { spec: '# Req\n', plan: '# Plan\n', tasks: '# Tasks\n\n- [ ] Existing\n' },
+    });
+    try {
+      const { convergeTasks } = await import('../../commands/converge.js');
+      await convergeTasks(spec.name, workspace as never, api.registry as never, { refresh: () => { /* noop */ } });
+      const order = mock.calls.map((c) => (isHookCall(c) ? hookCommandOf(c) : 'converge'));
+      assert.deepStrictEqual(order, ['before-converge', 'converge', 'after-converge']);
+      assert.ok(readSpecFile(spec, 'tasks.md')!.includes('- [ ] Added by converge'));
+    } finally {
+      removeSpec(spec);
     }
   });
 });

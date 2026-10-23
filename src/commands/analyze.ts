@@ -4,6 +4,7 @@ import * as path from 'path';
 import type { SpecWorkspace } from '../specs/workspace.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import { getCarameloChannel } from '../utils/output-channel.js';
+import { beginActionHooks } from '../speckit/hook-runner-vscode.js';
 
 interface AnalysisFinding {
   severity: 'critical' | 'high' | 'medium' | 'low';
@@ -33,11 +34,15 @@ export async function analyzeConsistency(
   const specsRoot = workspace.getSpecsRoot();
   const specDir = path.join(specsRoot, specName);
 
-  const artifacts = collectArtifacts(specDir);
-  if (artifacts.length < 2) {
+  if (collectArtifacts(specDir).length < 2) {
     vscode.window.showWarningMessage('At least 2 phase documents are needed for consistency analysis.');
     return;
   }
+
+  const hooks = await beginActionHooks('analyze', specName, registry);
+  if (!hooks) return;
+  // Collected after the before-hooks, which may have edited the artifacts.
+  const artifacts = collectArtifacts(specDir);
 
   const combinedContent = artifacts
     .map((a) => `=== ${a.name} ===\n\n${a.content}`)
@@ -73,6 +78,7 @@ Output ONLY the JSON between \`\`\`json and \`\`\` delimiters. If no issues foun
 
   const doc = await vscode.workspace.openTextDocument(analysisPath);
   await vscode.window.showTextDocument(doc);
+  await hooks.after();
 
   if (findings && findings.length > 0) {
     const criticalCount = findings.filter((f) => f.severity === 'critical').length;

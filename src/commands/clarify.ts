@@ -6,6 +6,7 @@ import type { ProviderRegistry } from '../providers/registry.js';
 import type { WorkflowViewProvider } from '../views/sidebar/workflow-view.js';
 import { isAbortError } from '../errors.js';
 import { log } from '../utils/log.js';
+import { beginActionHooks } from '../speckit/hook-runner-vscode.js';
 
 export interface ClarificationQuestion {
   question: string;
@@ -43,6 +44,10 @@ export async function clarifySpec(
     return;
   }
 
+  // Before-hooks may edit spec.md, so read it only afterwards.
+  const hooks = await beginActionHooks('clarify', specName, registry);
+  if (!hooks) return;
+
   let specContent: string;
   try {
     specContent = fs.readFileSync(specPath, 'utf-8');
@@ -68,10 +73,11 @@ export async function clarifySpec(
   }
   if (result.questions.length === 0) {
     vscode.window.showInformationMessage('No critical ambiguities found. Proceed to Design.');
+    await hooks.after();
     return;
   }
 
-  workflowView.startClarify(specName, specPath, result.questions);
+  workflowView.startClarify(specName, specPath, result.questions, () => hooks.after());
 }
 
 type GenerateResult =

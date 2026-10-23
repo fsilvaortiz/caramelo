@@ -157,3 +157,31 @@ export async function runActionHooks(
   reportOutcomes(`${timing}_${action}`, result.outcomes);
   return result.proceed;
 }
+
+export interface ActionHooks {
+  /** Run the `after_<action>` hooks; call only once the action succeeded. */
+  after(): Promise<void>;
+}
+
+const NO_HOOKS: ActionHooks = { after: async () => { /* nothing registered */ } };
+
+/**
+ * Run `before_<action>` hooks for an action that is about to proceed.
+ * Returns undefined when a failed mandatory hook made the user cancel —
+ * the caller must stop. Call after the action's own precondition checks
+ * so hooks never run for an action that would bail out anyway.
+ */
+export async function beginActionHooks(
+  action: HookAction,
+  specName: string | undefined,
+  registry: ProviderRegistry,
+): Promise<ActionHooks | undefined> {
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!workspaceRoot) return NO_HOOKS;
+  const ctx: HookRunContext = { workspaceRoot, specName };
+  if (!(await runActionHooks('before', action, ctx, registry))) {
+    vscode.window.showInformationMessage(`Caramelo: ${action} cancelled by a failed Spec Kit hook.`);
+    return undefined;
+  }
+  return { after: async () => { await runActionHooks('after', action, ctx, registry); } };
+}
