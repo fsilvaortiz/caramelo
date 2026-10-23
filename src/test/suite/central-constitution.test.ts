@@ -134,4 +134,39 @@ suite('Central constitution (functional, real git)', () => {
       removeSpec(spec);
     }
   });
+
+  test('sidebar shows "update available" with a Sync button that syncs through the real command', async function () {
+    this.timeout(30_000);
+    const { CentralConstitution, setCentralConstitution } = await import('../../constitution/central-vscode.js');
+    const { WorkflowViewProvider } = await import('../../views/sidebar/workflow-view.js');
+    // Bring the workspace to the current central version, then publish a newer one.
+    await vscode.commands.executeCommand('caramelo.syncConstitution');
+    publish('# Acme Constitution v4\n');
+    const central = new CentralConstitution(workspaceRoot(), {
+      ask: async () => undefined, notify: async () => undefined, error: () => { /* noop */ }, withProgress: (_t, task) => task(),
+    });
+    setCentralConstitution(central);
+    await central.checkRemote(true);
+
+    const noop = { dispose() { /* noop */ } };
+    const webview = { options: {}, cspSource: '', html: '', onDidReceiveMessage: () => noop };
+    const view = new WorkflowViewProvider(vscode.Uri.file(workspaceRoot()));
+    try {
+      view.resolveWebviewView({ webview, onDidDispose: () => noop } as unknown as vscode.WebviewView);
+      assert.ok(webview.html.includes('Update available'), 'status text');
+      assert.ok(webview.html.includes("msg('syncConstitution')"), 'Sync button');
+
+      view.dispatch({ command: 'syncConstitution' });
+      const deadline = Date.now() + 15_000;
+      while (!fs.readFileSync(constitutionPath(), 'utf-8').includes('v4') && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      assert.strictEqual(fs.readFileSync(constitutionPath(), 'utf-8'), '# Acme Constitution v4\n');
+      central.refreshLocal();
+      view.refresh();
+      assert.ok(webview.html.includes('Central ·'), 'synced status after the click');
+    } finally {
+      view.dispose();
+    }
+  });
 });

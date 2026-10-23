@@ -135,7 +135,7 @@ export function classifyGitError(err: unknown, source: GitSource): GitSourceErro
     return new GitSourceError('file-not-found', `${source.path} was not found in ${where}${source.ref ? ` at ${source.ref}` : ''}.`, stderr);
   }
   if (/authentication failed|permission denied|could not read username|terminal prompts disabled|access denied|http basic: access denied|returned error: 40[13]/.test(s)) {
-    return new GitSourceError('auth', `Access denied to ${where}. Check your Git credentials (SSH key or credential helper).`, stderr);
+    return new GitSourceError('auth', `Access denied to ${where} — or it does not exist (hosts answer both the same way). Check the URL and your Git credentials (SSH key or credential helper).`, stderr);
   }
   if (/repository .*not found|not found|does not appear to be a git repository|returned error: 404/.test(s)) {
     return new GitSourceError('not-found', `Repository not found: ${where}.`, stderr);
