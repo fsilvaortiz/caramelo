@@ -26,6 +26,12 @@ Every Caramelo setting, what it does, and what it defaults to.
 | `caramelo.agent.maxIterations` | number | `15` | Maximum agent turns per task. Range 3–50. The agent stops cleanly when this is hit. |
 | `caramelo.agent.approval` | enum | `"auto-reads-batched-writes"` | How write/bash calls are gated. See [Agent loop & tools](/guide/agent#approval-policies). Values: `auto-reads-batched-writes`, `per-call`, `auto-all`. |
 
+## Spec Kit
+
+| Setting | Type | Default | Notes |
+|---|---|---|---|
+| `caramelo.hooks.run` | boolean | `true` | Run Spec Kit extension hooks from `.specify/extensions.yml` before and after Caramelo actions. Mandatory hooks run automatically, optional ones ask first; bash and file writes still need approval. Hooks never run in untrusted workspaces. See [Spec Kit integration](/guide/spec-kit#extension-hooks). |
+
 ## Debugging
 
 | Variable | Notes |

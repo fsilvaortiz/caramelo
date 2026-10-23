@@ -50,6 +50,7 @@ export default defineConfig({
             { text: 'Spec-driven flow', link: '/guide/workflow' },
             { text: 'Constitution', link: '/guide/constitution' },
             { text: 'Agent loop & tools', link: '/guide/agent' },
+            { text: 'Spec Kit integration', link: '/guide/spec-kit' },
           ],
         },
       ],
