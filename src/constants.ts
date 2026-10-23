@@ -20,6 +20,7 @@ export const COMMAND_IDS = {
   viewChanges: 'caramelo.viewChanges',
   previewSpec: 'caramelo.previewSpec',
   applyVsCodeSettings: 'caramelo.applyVsCodeSettings',
+  syncConstitution: 'caramelo.syncConstitution',
   convergeTasks: 'caramelo.convergeTasks',
 } as const;
 

@@ -5,6 +5,7 @@ import type { TemplateManager } from '../speckit/templates.js';
 import type { WorkflowEngine } from '../specs/workflow.js';
 import { getPhaseStatus, type PhaseType } from '../specs/spec.js';
 import { beginActionHooks } from '../speckit/hook-runner-vscode.js';
+import { ensureCentralConstitutionCurrent } from '../constitution/central-vscode.js';
 import type { HookAction } from '../speckit/hook-runner.js';
 
 interface Refreshable { refresh(): void }
@@ -59,6 +60,8 @@ export async function runPhase(
       return;
     }
   }
+
+  if (!(await ensureCentralConstitutionCurrent())) return;
 
   const hooks = await beginActionHooks(PHASE_HOOK_ACTION[phase], spec.name, registry);
   if (!hooks) return;
