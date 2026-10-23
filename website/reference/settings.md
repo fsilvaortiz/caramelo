@@ -26,6 +26,14 @@ Every Caramelo setting, what it does, and what it defaults to.
 | `caramelo.agent.maxIterations` | number | `15` | Maximum agent turns per task. Range 3–50. The agent stops cleanly when this is hit. |
 | `caramelo.agent.approval` | enum | `"auto-reads-batched-writes"` | How write/bash calls are gated. See [Agent loop & tools](/guide/agent#approval-policies). Values: `auto-reads-batched-writes`, `per-call`, `auto-all`. |
 
+## Constitution
+
+| Setting | Type | Default | Notes |
+|---|---|---|---|
+| `caramelo.constitution.repository` | string | `""` | Git repository holding a central constitution (`https://`, `ssh://`, `git@host:path`, `git://`, `file://`). When set, `.specify/memory/constitution.md` is kept as an exact copy of its file. See [Central constitution](/guide/constitution#central-constitution-from-a-git-repository). |
+| `caramelo.constitution.path` | string | `"constitution.md"` | File inside that repository. |
+| `caramelo.constitution.ref` | string | `""` | Branch or tag to follow. Empty follows the default branch; a tag pins a reviewed version. |
+
 ## Spec Kit
 
 | Setting | Type | Default | Notes |

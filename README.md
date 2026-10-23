@@ -32,6 +32,7 @@
 - **Unified sidebar** — providers, constitution, specs, progress, and task checklist in one panel
 - **Sequential phase flow** with approval gates: Requirements → Design → Tasks
 - **Constitution editor** — visual form with AI generation (describe your project, LLM suggests principles)
+- **Central constitution** — follow a constitution kept in a Git repository (one source for many projects); Caramelo keeps `constitution.md` as an exact copy and offers a one-click sync when it changes
 - **Workflow DAG** — interactive graph showing all specs and their phase statuses
 - **Progress ring** — overall completion percentage (phases 50% + tasks 50%), 100% only when all tasks done
 - **Stale alerts** — downstream phases flagged when upstream is regenerated
@@ -203,6 +204,8 @@ API keys and Jira tokens are stored securely in VS Code's SecretStorage, never i
 
 | Setting | Default | Description |
 |---------|---------|-------------|
+| `caramelo.constitution.repository` | `""` | Git repository of a central constitution. When set, `.specify/memory/constitution.md` is kept as an exact copy of its file. |
+| `caramelo.constitution.path` / `.ref` | `constitution.md` / `""` | File inside that repository, and the branch or tag to follow (empty = default branch). |
 | `caramelo.hooks.run` | `true` | Run Spec Kit extension hooks from `.specify/extensions.yml` around Caramelo actions. Never runs in untrusted workspaces. |
 | `caramelo.sse.timeoutMs` | `300000` | Max time (ms) to wait for a chunk of streaming output before giving up. Increase for slow local models. Minimum 5000. |
 | `authHeader` (per provider) | `Authorization` / `x-api-key` | HTTP header used to send the API key. Letters, digits, hyphens only. |
