@@ -1,5 +1,8 @@
 import { defineConfig } from 'vitest/config';
-import * as path from 'path';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   test: {
@@ -12,7 +15,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      vscode: path.resolve(__dirname, 'src/__mocks__/vscode.ts'),
+      vscode: path.resolve(dirname, 'src/__mocks__/vscode.ts'),
     },
   },
 });
