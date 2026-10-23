@@ -216,6 +216,53 @@ suite('Regression: hooks panel renders the real Spec Kit extensions.yml schema',
     return webview.html;
   }
 
+  test('Disable button writes enabled:false to extensions.yml and re-renders dimmed', async () => {
+    const { WorkflowViewProvider } = await import('../../views/sidebar/workflow-view.js');
+    const ymlPath = path.join(workspaceRoot(), '.specify', 'extensions.yml');
+    fs.mkdirSync(path.dirname(ymlPath), { recursive: true });
+    fs.writeFileSync(ymlPath, '# keep me\nhooks:\n  before_plan:\n    - extension: lint\n      command: speckit.lint.check\n');
+    const view = new WorkflowViewProvider(vscode.Uri.file(workspaceRoot()));
+    try {
+      renderSidebar(view);
+      view.dispatch({ command: 'toggleHook', event: 'before_plan', index: 0, hookCommand: 'speckit.lint.check', enabled: false });
+      const yml = fs.readFileSync(ymlPath, 'utf-8');
+      assert.ok(yml.includes('enabled: false'), `expected enabled:false, got:\n${yml}`);
+      assert.ok(yml.includes('# keep me'), 'comments must survive the edit');
+      assert.ok(renderSidebar(view).includes('hook-item optional disabled'));
+    } finally {
+      view.dispose();
+      fs.rmSync(ymlPath, { force: true });
+    }
+  });
+
+  test('condition chip reflects evaluation and hook commands cannot break out of attributes', async () => {
+    const { WorkflowViewProvider } = await import('../../views/sidebar/workflow-view.js');
+    const ymlPath = path.join(workspaceRoot(), '.specify', 'extensions.yml');
+    fs.mkdirSync(path.dirname(ymlPath), { recursive: true });
+    fs.writeFileSync(ymlPath, [
+      'hooks:',
+      '  after_tasks:',
+      '    - command: speckit.a.met',
+      "      condition: \"env.CARAMELO_SMOKE_COND == 'on'\"",
+      '    - command: speckit.a.unmet',
+      "      condition: \"env.CARAMELO_SMOKE_COND == 'off'\"",
+      '    - command: \'speckit.x.y" onmouseover="alert(1)\'',
+      '',
+    ].join('\n'));
+    process.env.CARAMELO_SMOKE_COND = 'on';
+    const view = new WorkflowViewProvider(vscode.Uri.file(workspaceRoot()));
+    try {
+      const html = renderSidebar(view);
+      assert.ok(/hook-condition met[^>]*>✓ env\.CARAMELO_SMOKE_COND == &#39;on&#39;/.test(html), 'met condition chip');
+      assert.ok(/hook-condition unmet[^>]*>✗ env\.CARAMELO_SMOKE_COND == &#39;off&#39;/.test(html), 'unmet condition chip');
+      assert.ok(!html.includes('" onmouseover="'), 'raw double quote must not reach the markup');
+    } finally {
+      delete process.env.CARAMELO_SMOKE_COND;
+      view.dispose();
+      fs.rmSync(ymlPath, { force: true });
+    }
+  });
+
   test('upstream-shaped hooks (command/extension, no name) appear in the sidebar', async () => {
     const { WorkflowViewProvider } = await import('../../views/sidebar/workflow-view.js');
     const ymlPath = path.join(workspaceRoot(), '.specify', 'extensions.yml');

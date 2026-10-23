@@ -78,6 +78,23 @@ function optionalString(v: unknown): string | undefined {
   return typeof v === 'string' && v.trim() ? v.trim() : undefined;
 }
 
+function isPyTruthy(v: unknown): boolean {
+  if (Array.isArray(v)) return v.length > 0;
+  if (isObject(v)) return Object.keys(v).length > 0;
+  return Boolean(v);
+}
+
+/**
+ * Raw condition, untrimmed: Spec Kit evaluates any truthy value, so a
+ * whitespace-only string never matches (hook skipped) and a non-string
+ * value raises inside the evaluator (also skipped). Coercing non-strings
+ * to a string reproduces that outcome, since no pattern can match.
+ */
+function rawCondition(v: unknown): string | undefined {
+  if (!isPyTruthy(v)) return undefined;
+  return typeof v === 'string' ? v : `<invalid condition: ${JSON.stringify(v)}>`;
+}
+
 /**
  * Read and parse `.specify/extensions.yml`. Missing file → `[]` silently;
  * unreadable / oversized / malformed → `[]` with a warning (Spec Kit's
@@ -146,7 +163,7 @@ export function parseHooksYaml(raw: string): readonly HookEntry[] {
         extension: optionalString(entry.extension),
         description: optionalString(entry.description),
         prompt: optionalString(entry.prompt),
-        condition: optionalString(entry.condition),
+        condition: rawCondition(entry.condition),
         optional: entry.optional !== false,
         enabled: entry.enabled !== false,
         priority: normalizePriority(entry.priority),
@@ -172,4 +189,51 @@ export function groupHooksByEvent(hooks: readonly HookEntry[]): Map<string, Hook
   };
   const ordered = [...byEvent.keys()].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
   return new Map(ordered.map((e) => [e, byEvent.get(e)!]));
+}
+
+export class HookChangedError extends Error {}
+
+/**
+ * Set `enabled` on one hook in `.specify/extensions.yml`, preserving
+ * comments and formatting. The entry is located by event + list index and
+ * must still carry the expected command; if the file changed underneath
+ * (entry moved, removed or replaced) nothing is written and
+ * `HookChangedError` is thrown so the caller can refresh instead of
+ * editing the wrong hook.
+ */
+export function setHookEnabled(
+  workspaceRoot: string,
+  target: Pick<HookEntry, 'event' | 'index' | 'command'>,
+  enabled: boolean,
+): void {
+  const filePath = extensionsYmlPath(workspaceRoot);
+  const doc = YAML.parseDocument(fs.readFileSync(filePath, 'utf-8'));
+  if (doc.errors.length > 0) {
+    throw new Error(`${filePath} is not valid YAML: ${doc.errors[0].message}`);
+  }
+
+  const bucket = doc.getIn(['hooks', target.event], true);
+  let entryPath: Array<string | number>;
+  if (YAML.isSeq(bucket)) {
+    entryPath = ['hooks', target.event, target.index];
+  } else if (YAML.isMap(bucket) && target.index === 0) {
+    entryPath = ['hooks', target.event];
+  } else {
+    throw new HookChangedError(`hooks.${target.event}[${target.index}] no longer exists.`);
+  }
+
+  const command = doc.getIn([...entryPath, 'command']);
+  if (typeof command !== 'string' || command.trim() !== target.command) {
+    throw new HookChangedError(`hooks.${target.event}[${target.index}] is no longer ${target.command}.`);
+  }
+
+  doc.setIn([...entryPath, 'enabled'], enabled);
+  const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tmp, doc.toString(), 'utf-8');
+  try {
+    fs.renameSync(tmp, filePath);
+  } catch (err) {
+    try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+    throw err;
+  }
 }
