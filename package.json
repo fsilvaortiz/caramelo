@@ -336,6 +336,11 @@
           "default": true,
           "description": "Run tasks via a tool-calling agent loop (file_read / file_edit / grep / bash / …) when the active provider supports it. When false, Caramelo falls back to the legacy single-shot SEARCH/REPLACE text protocol. Leave this on unless you need to debug regressions against the legacy path."
         },
+        "caramelo.hooks.run": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run Spec Kit extension hooks from .specify/extensions.yml before and after Caramelo actions (specify, plan, tasks, implement, …). Mandatory hooks run automatically, optional hooks ask first; file writes and bash still go through the agent's approval prompts. Hooks never run in untrusted workspaces."
+        },
         "caramelo.enableBashTool": {
           "type": "boolean",
           "default": true,

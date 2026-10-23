@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { SpecWorkspace } from '../specs/workspace.js';
 import type { ProviderRegistry } from '../providers/registry.js';
+import { getCarameloChannel } from '../utils/output-channel.js';
 
 interface AnalysisFinding {
   severity: 'critical' | 'high' | 'medium' | 'low';
@@ -183,7 +184,7 @@ Review ALL the documents below and output the corrected version of EACH document
 
 Fix all issues. Ensure cross-document consistency. Do not change anything unrelated to the findings.`;
 
-  const channel = vscode.window.createOutputChannel('Caramelo');
+  const channel = getCarameloChannel();
   channel.show(true);
   channel.appendLine(`\n${'─'.repeat(60)}`);
   channel.appendLine(`▶ Fixing ${findings.length} consistency issues for ${specName}`);

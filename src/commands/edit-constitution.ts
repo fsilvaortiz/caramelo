@@ -3,20 +3,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { ProviderRegistry } from '../providers/registry.js';
 import { log } from '../utils/log.js';
+import { getCarameloChannel } from '../utils/output-channel.js';
 
-/**
- * Singleton — the prior implementation called
- * `vscode.window.createOutputChannel('Caramelo')` on every generation,
- * leaking a fresh channel each time. Reuse one for the whole extension
- * host's lifetime.
- */
-let constitutionChannel: vscode.OutputChannel | undefined;
-function getConstitutionChannel(): vscode.OutputChannel {
-  if (!constitutionChannel) {
-    constitutionChannel = vscode.window.createOutputChannel('Caramelo');
-  }
-  return constitutionChannel;
-}
+const getConstitutionChannel = getCarameloChannel;
 
 /**
  * Module-scoped lock so a stalled generation can't be re-entered while

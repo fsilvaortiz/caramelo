@@ -13,15 +13,9 @@ import { isToolCallingProvider } from '../agent/types.js';
 import type { AgentMessage } from '../agent/types.js';
 import type { LLMProvider } from '../providers/types.js';
 import { log } from '../utils/log.js';
+import { getCarameloChannel } from '../utils/output-channel.js';
 
-let phaseOutputChannel: vscode.OutputChannel | undefined;
-
-function getPhaseOutputChannel(): vscode.OutputChannel {
-  if (!phaseOutputChannel) {
-    phaseOutputChannel = vscode.window.createOutputChannel('Caramelo');
-  }
-  return phaseOutputChannel;
-}
+const getPhaseOutputChannel = getCarameloChannel;
 
 function isAgentLoopEnabled(): boolean {
   return vscode.workspace.getConfiguration().get<boolean>('caramelo.useAgentLoop', true);
