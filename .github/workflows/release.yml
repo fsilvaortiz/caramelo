@@ -1,10 +1,14 @@
 name: Release
 
-# Builds the .vsix on every `v*.*.*` tag push, verifies tag ↔ package.json
-# parity, runs lint/tests/type-check, and attaches the packaged extension
-# to the GitHub Release for the tag. Publishing to the Visual Studio
-# Marketplace remains a manual step (upload the attached .vsix at
-# https://marketplace.visualstudio.com/manage/publishers/fsilvaortiz).
+# On every `v*.*.*` tag: verify the tag points at main and matches
+# package.json, run lint/tests/type-check, package the .vsix, attach it to
+# the GitHub Release, and — when the VSCE_PAT secret is configured —
+# publish that same .vsix to the Visual Studio Marketplace.
+#
+# VSCE_PAT: Azure DevOps Personal Access Token, organisation "All accessible
+# organizations", scope Marketplace → Manage. Without it the publish step is
+# skipped and the .vsix can be uploaded manually at
+# https://marketplace.visualstudio.com/manage/publishers/fsilvaortiz.
 
 on:
   push:
@@ -16,8 +20,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write   # needed to attach the .vsix to the GitHub Release
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # needed to check the tag is on main
 
       - uses: actions/setup-node@v4
         with:
@@ -25,6 +33,13 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      - name: Verify tag is on main
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag $GITHUB_REF_NAME ($GITHUB_SHA) is not on main — refusing to release."
+            exit 1
+          fi
 
       - name: Verify tag matches package.json version
         run: |
@@ -55,3 +70,13 @@ jobs:
               --notes "See CHANGELOG.md for release notes."
           fi
           gh release upload "$GITHUB_REF_NAME" "$VSIX_NAME" --clobber
+
+      # Publishes the exact .vsix attached above. --skip-duplicate keeps a
+      # re-run of this workflow from failing once the version is live.
+      - name: Publish to Visual Studio Marketplace
+        if: env.VSCE_PAT != ''
+        run: npx vsce publish --packagePath "$VSIX_NAME" --skip-duplicate
+
+      - name: Marketplace publish skipped
+        if: env.VSCE_PAT == ''
+        run: echo "::notice::VSCE_PAT secret not set — upload $VSIX_NAME to the Marketplace manually."
