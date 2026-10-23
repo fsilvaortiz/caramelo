@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.0] - 2026-10-23
+
+**Central constitution.** A project can now follow a constitution kept in a Git repository — one source of truth for many projects, changed only through that repository.
+
+### Added
+
+- **Connect a project to a central constitution** from the Constitution editor (repository, file, branch or tag) or with the new settings `caramelo.constitution.repository`, `.path` and `.ref`, meant to be committed in `.vscode/settings.json` so the whole team follows the same source. `.specify/memory/constitution.md` becomes an exact copy of the central file, so Spec Kit, other agents and every Caramelo prompt keep reading the usual path. Connecting asks before replacing an existing constitution and backs it up to `constitution.local-backup.md`. (#50, #51, #52)
+- **One-click updates.** Caramelo checks the repository on startup and before generating a phase or running Converge, and offers to sync when the file changed or to restore it when `constitution.md` was edited by hand. Commits that don't touch the file are ignored; when the repository is unreachable, generation uses the last synced copy. (#51)
+- **Sidebar status** for the central constitution — synced commit and time, *update available*, *edited locally* or an error — with Sync / Restore / Retry; read-only editor view with Disconnect; command **Caramelo: Sync Central Constitution**. (#52)
+- Documentation: *Central constitution* in the Constitution guide. (#53)
+
+### Security
+
+- The repository URL comes from a file anyone can commit, so only `https://`, `ssh://`, `git@host:path`, `git://` and `file://` are accepted (never Git's `<transport>::` helpers, which execute commands), the file path and branch are validated, Git runs without a shell, without prompts and with a protocol allowlist, and nothing is fetched in untrusted workspaces. (#50)
+
 ## [0.2.0] - 2026-10-22
 
 Spec Kit extension hooks now **run**, Converge **inspects the code**, and several data-loss bugs are fixed. Also: CI on Node 22 with a VS Code 1.95 floor check, zero `npm audit` findings, and optional automatic Marketplace publishing.

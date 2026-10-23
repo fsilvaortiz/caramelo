@@ -6,6 +6,12 @@ Browse releases on GitHub: [github.com/fsilvaortiz/caramelo/releases](https://gi
 
 ## Latest
 
+### v0.3.0 — 2026-10-23
+
+**Central constitution.** Connect a project to a constitution kept in a Git repository (from the Constitution editor or by committing `caramelo.constitution.*` in `.vscode/settings.json`). `constitution.md` stays an exact copy; Caramelo checks for changes on startup and before generating, and offers a one-click sync or restore. Uses your existing Git credentials; strict URL validation and no Git in untrusted workspaces.
+
+[Full v0.3.0 notes](https://github.com/fsilvaortiz/caramelo/releases/tag/v0.3.0)
+
 ### v0.2.0 — 2026-10-22
 
 **Spec Kit hooks run and Converge inspects the code.** Hooks from `.specify/extensions.yml` now fire around every Caramelo action (mandatory automatically, optional on confirmation, conditions evaluated like Spec Kit), with Enable/Disable in the sidebar. Converge checks the code against spec, plan, tasks and constitution and appends a `Phase N: Convergence`. Fixes: the v0.1.4 hooks panel never showed real hooks, the Jira link was erased on the first phase transition, the spec description was ignored, and local smoke tests could stash your work. CI moves to Node 22 with a VS Code 1.95 floor check; tagged releases can publish to the Marketplace automatically.
