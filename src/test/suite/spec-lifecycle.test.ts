@@ -9,7 +9,6 @@ import {
   removeSpec,
   seedConstitution,
   seedSpec,
-  specFileExists,
   workspaceRoot,
 } from './helpers/workspace.js';
 
