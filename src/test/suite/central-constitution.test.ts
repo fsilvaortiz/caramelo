@@ -60,7 +60,8 @@ suite('Central constitution (functional, real git)', () => {
     setCentralConstitution(undefined);
     fs.rmSync(constitutionPath(), { force: true });
     fs.rmSync(metaPath(), { force: true });
-    fs.rmSync(tmp, { recursive: true, force: true });
+    const { removeTempDir } = await import('../../constitution/git-source.js');
+    removeTempDir(tmp);
   });
 
   test('"Sync Central Constitution" makes constitution.md an exact copy of the repository file', async function () {

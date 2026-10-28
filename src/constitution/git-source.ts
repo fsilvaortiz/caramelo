@@ -98,6 +98,34 @@ function gitEnv(): NodeJS.ProcessEnv {
   };
 }
 
+function makeWritable(dir: string): void {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, entry.name);
+    if (entry.isDirectory()) makeWritable(p);
+    else fs.chmodSync(p, 0o666);
+  }
+}
+
+/**
+ * Delete a temp clone without ever failing the caller. Git writes objects
+ * read-only, and the native `rmSync` in recent Node versions (VS Code's
+ * Electron among them) cannot delete read-only files on Windows: EPERM.
+ * So on failure, make everything writable and try again; whatever still
+ * remains is left in the OS temp folder.
+ */
+export function removeTempDir(dir: string): void {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch {
+    try {
+      makeWritable(dir);
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    } catch {
+      /* best effort */
+    }
+  }
+}
+
 interface RunResult { stdout: string; stderr: string }
 
 function runGit(args: string[], opts: { cwd?: string; timeoutMs: number; maxBuffer?: number }): Promise<RunResult> {
@@ -205,6 +233,6 @@ export async function fetchFile(source: GitSource): Promise<FetchedFile> {
       throw err instanceof GitSourceError ? err : classifyGitError(err, source);
     }
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeTempDir(dir);
   }
 }

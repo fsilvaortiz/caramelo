@@ -13,6 +13,7 @@ import {
   validateRepositoryUrl,
   GitSourceError,
   MAX_FILE_BYTES,
+  removeTempDir,
 } from '../git-source.js';
 
 describe('validateRepositoryUrl', () => {
@@ -172,6 +173,17 @@ describe('resolveRemoteCommit / fetchFile (real git)', () => {
     await fetchFile({ repository: url, path: 'nope.md' }).catch(() => undefined);
     const after = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('caramelo-constitution-')).length;
     expect(after).toBe(before);
+  });
+
+  it('removeTempDir deletes read-only files (git objects) and never throws', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'caramelo-rm-'));
+    fs.mkdirSync(path.join(dir, 'objects', 'ab'), { recursive: true });
+    const obj = path.join(dir, 'objects', 'ab', 'cdef');
+    fs.writeFileSync(obj, 'x');
+    fs.chmodSync(obj, 0o444);
+    removeTempDir(dir);
+    expect(fs.existsSync(dir)).toBe(false);
+    expect(() => removeTempDir(dir)).not.toThrow();
   });
 
   it('never runs git for an invalid URL (ext:: transport)', async () => {
