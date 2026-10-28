@@ -1,3 +1,7 @@
+---
+description: "How Caramelo works with GitHub Spec Kit: the shared specs/ layout, templates synced from Spec Kit releases, extension hooks and recommended settings."
+---
+
 # Spec Kit integration
 
 Caramelo speaks [GitHub Spec Kit](https://github.com/github/spec-kit)'s file layout and conventions, so a project can move between Caramelo and the `specify` CLI (or any agent Spec Kit supports) without conversion. This page covers what Caramelo reads from Spec Kit and how it behaves.

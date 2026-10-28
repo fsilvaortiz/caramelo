@@ -1,3 +1,7 @@
+---
+description: "The spec-driven flow in Caramelo: constitution, requirements, design, tasks, implementation and converge — each phase approved before the next."
+---
+
 # Spec-driven flow
 
 Every Caramelo feature lives under `specs/<slug>/` and walks through three approval-gated phases plus an implementation step.

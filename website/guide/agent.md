@@ -1,3 +1,7 @@
+---
+description: "How Caramelo’s tool-calling agent reads, searches and edits your code in VS Code: the seven workspace-sandboxed tools and how every write is approved."
+---
+
 # Agent loop & tools
 
 Caramelo's `/start-task`, `/plan`, and `/tasks` run through a **multi-turn tool-calling agent**. The LLM doesn't write a code edit and hope it lands — it reads files, greps the codebase, then emits surgical SEARCH/REPLACE blocks against the real content.

@@ -1,3 +1,7 @@
+---
+description: "Install the Caramelo VS Code extension, connect an LLM provider (GitHub Copilot, Claude, OpenAI, Ollama…) and run your first spec-driven feature."
+---
+
 # Getting started
 
 Install Caramelo, point it at an LLM provider, and run your first spec.

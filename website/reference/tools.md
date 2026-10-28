@@ -1,3 +1,7 @@
+---
+description: "Reference for each tool Caramelo’s agent can call — file_read, file_edit, file_write, list_dir, grep, glob and bash — with inputs and limits."
+---
+
 # Tool reference
 
 Every tool the agent can call. Inputs are validated against a JSON Schema (draft-07 subset) before dispatch — invalid arguments produce an `is_error` tool result the model can recover from.

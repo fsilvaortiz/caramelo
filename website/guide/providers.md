@@ -1,3 +1,7 @@
+---
+description: "Set up Claude, OpenAI, Gemini, Groq, GitHub Copilot, Ollama, LM Studio or any OpenAI-compatible endpoint in Caramelo, including behind corporate proxies."
+---
+
 # Configure providers
 
 Every LLM provider Caramelo talks to is a row in the **Providers** sidebar. Add as many as you like — they coexist under distinct aliases — and switch the active one by clicking its dot.
