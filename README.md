@@ -9,6 +9,7 @@
 </p>
 
 <p align="center">
+  <a href="https://caramelo.fsilvao.dev">Website &amp; docs</a> &bull;
   <a href="#features">Features</a> &bull;
   <a href="#installation">Installation</a> &bull;
   <a href="#quick-start">Quick Start</a> &bull;
