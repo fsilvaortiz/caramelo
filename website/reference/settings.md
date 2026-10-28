@@ -1,3 +1,7 @@
+---
+description: "Every Caramelo setting for VS Code: what it does and its default value."
+---
+
 # Settings
 
 Every Caramelo setting, what it does, and what it defaults to.

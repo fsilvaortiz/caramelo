@@ -1,3 +1,7 @@
+---
+description: "Write, generate with AI or sync from a Git repository the project constitution that every Caramelo generation follows (Spec Kit’s constitution.md)."
+---
+
 # Constitution
 
 The project constitution lives at `.specify/memory/constitution.md`. It's the highest-priority context Caramelo passes to every LLM generation — principles, constraints, and workflow rules that shape spec, plan, and task output.

@@ -1,3 +1,7 @@
+---
+description: "Release notes for every version of Caramelo, the spec-driven development extension for VS Code."
+---
+
 # Changelog
 
 The canonical changelog lives at [`CHANGELOG.md`](https://github.com/fsilvaortiz/caramelo/blob/main/CHANGELOG.md) in the repository — every release tag attaches the same notes plus a packaged `.vsix`.
