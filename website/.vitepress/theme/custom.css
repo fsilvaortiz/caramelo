@@ -1,0 +1,48 @@
+/* Caramelo palette, taken from the logo: caramel wordmark, espresso outline,
+   and the tabby's green eyes for "approved". */
+:root {
+  --cm-caramel: #e8873a;
+  --cm-caramel-deep: #b85a12;
+  --cm-espresso: #2a1a12;
+  --cm-eye: #9bb341;
+  --cm-eye-ink: #5e7a12;
+  --cm-paper: #ffffff;
+  --cm-wash: #fbf3ea;
+  --cm-line: #ecdccb;
+
+  --vp-c-brand-1: var(--cm-caramel-deep);
+  --vp-c-brand-2: #c9681b;
+  --vp-c-brand-3: var(--cm-caramel);
+  --vp-c-brand-soft: rgba(232, 135, 58, 0.16);
+
+  --vp-button-brand-bg: var(--cm-caramel);
+  --vp-button-brand-text: var(--cm-espresso);
+  --vp-button-brand-hover-bg: #f09a50;
+  --vp-button-brand-hover-text: var(--cm-espresso);
+  --vp-button-brand-active-bg: #d97a2e;
+  --vp-button-brand-active-text: var(--cm-espresso);
+
+  --cm-display: 'Bricolage Grotesque', var(--vp-font-family-base);
+  --vp-font-family-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+}
+
+.dark {
+  --cm-eye-ink: #b7cf5c;
+  --cm-paper: #17110d;
+  --cm-wash: #20170f;
+  --cm-line: #3a2a1d;
+
+  --vp-c-bg: #17110d;
+  --vp-c-bg-alt: #120d0a;
+  --vp-c-bg-soft: #20170f;
+  --vp-c-brand-1: #f3a65a;
+  --vp-c-brand-2: #e8873a;
+  --vp-c-brand-3: #e8873a;
+}
+
+.VPNavBarTitle .title,
+.vp-doc h1 {
+  font-family: var(--cm-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
