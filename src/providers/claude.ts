@@ -4,6 +4,7 @@ import { parseSSEEvents, parseSSEStream } from './sse.js';
 import { AuthError, NetworkError, ProviderError, isAbortError } from '../errors.js';
 import { getSseTimeoutMs } from '../utils/settings.js';
 import { sanitizeHeaderName, sanitizeHeaderPrefix } from '../utils/auth.js';
+import { createApiKeyHelper, type ApiKeyHelper } from '../utils/api-key-helper.js';
 import type {
   AgentEvent,
   AgentMessage,
@@ -20,12 +21,18 @@ export class ClaudeProvider implements LLMProvider {
   private readonly secrets: vscode.SecretStorage;
   private readonly authHeader: string;
   private readonly authPrefix: string;
+  private readonly keyHelper: ApiKeyHelper | null;
   private apiKey: string | null = null;
   private abortController: AbortController | null = null;
 
   constructor(
-    config: { id: string; name: string; endpoint: string; model: string; apiKeyId: string; authHeader?: string; authPrefix?: string },
-    secrets: vscode.SecretStorage
+    config: {
+      id: string; name: string; endpoint: string; model: string; apiKeyId: string;
+      authHeader?: string; authPrefix?: string;
+      apiKeyHelper?: string; apiKeyHelperTtlMs?: number;
+    },
+    secrets: vscode.SecretStorage,
+    keyHelper: ApiKeyHelper | null = createApiKeyHelper(config),
   ) {
     this.id = config.id;
     this.displayName = config.name;
@@ -35,9 +42,15 @@ export class ClaudeProvider implements LLMProvider {
     this.authHeader = sanitizeHeaderName(config.authHeader, 'x-api-key');
     this.authPrefix = sanitizeHeaderPrefix(config.authPrefix, '');
     this.secrets = secrets;
+    this.keyHelper = keyHelper;
   }
 
   async authenticate(): Promise<boolean> {
+    if (this.keyHelper) {
+      // The helper is the source of truth; never prompt for a static key.
+      this.apiKey = await this.keyHelper.getKey();
+      return true;
+    }
     const key = await this.secrets.get(this.apiKeyId);
     if (!key) {
       const input = await vscode.window.showInputBox({
@@ -72,7 +85,7 @@ export class ClaudeProvider implements LLMProvider {
   }
 
   async *chat(messages: LLMMessage[], options?: LLMOptions): AsyncIterable<string> {
-    if (!this.apiKey) throw new AuthError(`${this.displayName}: Not authenticated`);
+    if (!this.apiKey && !this.keyHelper) throw new AuthError(`${this.displayName}: Not authenticated`);
 
     // Abort any previous in-flight request before starting a new one.
     this.abortController?.abort();
@@ -94,31 +107,7 @@ export class ClaudeProvider implements LLMProvider {
     if (systemMessage) body.system = systemMessage.content;
     if (options?.temperature !== undefined) body.temperature = options.temperature;
 
-    let res: Response;
-    try {
-      res = await fetch(`${this.endpoint}/v1/messages`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          [this.authHeader]: this.authPrefix ? `${this.authPrefix} ${this.apiKey}` : this.apiKey!,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify(body),
-        signal,
-      });
-    } catch (err) {
-      if (isAbortError(err)) throw err;
-      throw new NetworkError(`${this.displayName}: request failed`, err);
-    }
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      const message = `${this.displayName}: ${res.status} ${res.statusText} - ${text}`;
-      if (res.status === 401 || res.status === 403) throw new AuthError(message);
-      throw new ProviderError(message, res.status);
-    }
-
-    if (!res.body) throw new ProviderError(`${this.displayName}: No response body`);
+    const res = await this.postMessages(body, signal);
 
     const reader = res.body.getReader();
     try {
@@ -141,6 +130,58 @@ export class ClaudeProvider implements LLMProvider {
     }
   }
 
+  /** Current key: from the apiKeyHelper (cached) or the one loaded by authenticate(). */
+  private async resolveApiKey(): Promise<string> {
+    if (this.keyHelper) {
+      this.apiKey = await this.keyHelper.getKey();
+      return this.apiKey;
+    }
+    if (!this.apiKey) throw new AuthError(`${this.displayName}: Not authenticated`);
+    return this.apiKey;
+  }
+
+  /**
+   * POST to /v1/messages and return a successful streaming response. When an
+   * apiKeyHelper is configured, a 401/403 refreshes the key once and retries
+   * (the token may have expired before the cache TTL).
+   */
+  private async postMessages(body: Record<string, unknown>, signal: AbortSignal): Promise<Response & { body: ReadableStream<Uint8Array> }> {
+    const send = async (): Promise<Response> => {
+      const key = await this.resolveApiKey();
+      try {
+        return await fetch(`${this.endpoint}/v1/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            [this.authHeader]: this.authPrefix ? `${this.authPrefix} ${key}` : key,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify(body),
+          signal,
+        });
+      } catch (err) {
+        if (isAbortError(err)) throw err;
+        throw new NetworkError(`${this.displayName}: request failed`, err);
+      }
+    };
+
+    let res = await send();
+    if ((res.status === 401 || res.status === 403) && this.keyHelper) {
+      await res.body?.cancel().catch(() => {});
+      this.keyHelper.invalidate();
+      res = await send();
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      const message = `${this.displayName}: ${res.status} ${res.statusText} - ${text}`;
+      if (res.status === 401 || res.status === 403) throw new AuthError(message);
+      throw new ProviderError(message, res.status);
+    }
+    if (!res.body) throw new ProviderError(`${this.displayName}: No response body`);
+    return res as Response & { body: ReadableStream<Uint8Array> };
+  }
+
   capabilities(): Set<Capability> {
     const caps = new Set<Capability>(['streaming']);
     // Tool-calling requires an authenticated session: the /v1/messages call
@@ -161,7 +202,7 @@ export class ClaudeProvider implements LLMProvider {
    *   content_block_stop  (tool_use block) → { kind:'tool_call', call }
    */
   async *chatWithTools(req: ProviderToolCallRequest): AsyncIterable<AgentEvent> {
-    if (!this.apiKey) throw new AuthError(`${this.displayName}: Not authenticated`);
+    if (!this.apiKey && !this.keyHelper) throw new AuthError(`${this.displayName}: Not authenticated`);
 
     this.abortController?.abort();
     const controller = new AbortController();
@@ -183,30 +224,7 @@ export class ClaudeProvider implements LLMProvider {
     if (req.system) body.system = req.system;
     if (req.temperature !== undefined) body.temperature = req.temperature;
 
-    let res: Response;
-    try {
-      res = await fetch(`${this.endpoint}/v1/messages`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          [this.authHeader]: this.authPrefix ? `${this.authPrefix} ${this.apiKey}` : this.apiKey!,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify(body),
-        signal,
-      });
-    } catch (err) {
-      if (isAbortError(err)) throw err;
-      throw new NetworkError(`${this.displayName}: request failed`, err);
-    }
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      const message = `${this.displayName}: ${res.status} ${res.statusText} - ${text}`;
-      if (res.status === 401 || res.status === 403) throw new AuthError(message);
-      throw new ProviderError(message, res.status);
-    }
-    if (!res.body) throw new ProviderError(`${this.displayName}: No response body`);
+    const res = await this.postMessages(body, signal);
 
     const reader = res.body.getReader();
     try {

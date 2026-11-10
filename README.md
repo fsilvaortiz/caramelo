@@ -46,6 +46,7 @@
 - **Auto-detect models** — available models fetched from provider API, or enter manually
 - **Inline editing** — click provider name, model, or auth settings to edit directly in the sidebar
 - **Custom auth headers** — configurable header name and prefix for corporate proxies (e.g. Azure API Manager)
+- **`apiKeyHelper`** — get the API key from a command (vault CLI, SSO gateway, short-lived tokens), like Claude Code's `apiKeyHelper` setting
 - **Model validation** — test request on model change, red indicator on failure
 - **Multiple instances** — add several providers of the same type with custom aliases
 - **Secure credential storage** via VS Code's native SecretStorage
@@ -211,8 +212,36 @@ API keys and Jira tokens are stored securely in VS Code's SecretStorage, never i
 | `caramelo.sse.timeoutMs` | `300000` | Max time (ms) to wait for a chunk of streaming output before giving up. Increase for slow local models. Minimum 5000. |
 | `authHeader` (per provider) | `Authorization` / `x-api-key` | HTTP header used to send the API key. Letters, digits, hyphens only. |
 | `authPrefix` (per provider) | `Bearer` / empty | Prefix prepended to the key. Letters, digits, hyphens only. Leave empty to send the raw key. |
+| `apiKeyHelper` (per provider) | — | Shell command that prints the API key on stdout. Used instead of the stored key. |
+| `apiKeyHelperTtlMs` (per provider) | `300000` | How long the helper's key is reused before the command runs again. |
 
 Invalid values for `authHeader` / `authPrefix` (e.g. containing spaces, colons, or CR/LF) are rejected at runtime and the default is used instead.
+
+### Getting the API key from a command (`apiKeyHelper`)
+
+Like Claude Code's [`apiKeyHelper`](https://docs.anthropic.com/en/docs/claude-code/settings), a provider can run a command whose output is the key, instead of storing a static key. Useful for short-lived tokens issued by a corporate gateway, a vault CLI, or `gcloud auth print-access-token`:
+
+```json
+{
+  "caramelo.providers": [
+    {
+      "id": "claude-gateway",
+      "name": "Claude (gateway)",
+      "type": "anthropic",
+      "endpoint": "https://llm-gateway.example.com",
+      "model": "claude-sonnet-4-5",
+      "authHeader": "Authorization",
+      "authPrefix": "Bearer",
+      "apiKeyHelper": "~/bin/get-llm-token.sh"
+    }
+  ]
+}
+```
+
+- The command runs through your shell from the workspace folder; its trimmed stdout (one line) is sent with `authHeader` / `authPrefix` as usual.
+- The key is reused for `apiKeyHelperTtlMs` (5 min by default). A `401`/`403` response runs the command again and retries the request once.
+- It can also be set from the sidebar: *Custom auth* in the Add Provider form, or the provider's `auth:` field.
+- It never runs in untrusted workspaces, and workspace-level values of `caramelo.providers` are ignored there.
 
 ## Troubleshooting
 
@@ -228,7 +257,7 @@ Setting it below 5000 ms is ignored — the default is used.
 
 ### "401" / "403" on generate
 
-The provider rejected your API key. Open the Providers panel, click the auth field next to the provider, and paste a fresh key. Keys are stored in VS Code SecretStorage, not `settings.json`. For corporate proxies, also verify `authHeader` / `authPrefix` match what your gateway expects.
+The provider rejected your API key. Open the Providers panel, click the auth field next to the provider, and paste a fresh key. Keys are stored in VS Code SecretStorage, not `settings.json`. For corporate proxies, also verify `authHeader` / `authPrefix` match what your gateway expects. With `apiKeyHelper`, run the command in a terminal and check it prints a valid key on a single line.
 
 ### The provider dot is green but generations fail
 

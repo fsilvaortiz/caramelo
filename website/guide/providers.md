@@ -20,6 +20,23 @@ Every LLM provider Caramelo talks to is a row in the **Providers** sidebar. Add 
 
 You can also add a custom OpenAI-compatible endpoint — useful for corporate proxies (Azure API Management, Databricks, etc.). Override the auth header name and prefix at the bottom of the Add Provider form.
 
+### Getting the key from a command (`apiKeyHelper`)
+
+Instead of a static key, a provider can run a command that prints the key — the same idea as Claude Code's `apiKeyHelper`. Set it under *Custom auth* in the Add Provider form, in the provider's `auth:` field, or in `settings.json`:
+
+```json
+{
+  "id": "gateway",
+  "name": "Gateway",
+  "type": "openai-compatible",
+  "endpoint": "https://llm-gateway.example.com/v1",
+  "model": "gpt-4o",
+  "apiKeyHelper": "vault read -field=token secret/llm"
+}
+```
+
+The command runs through your shell from the workspace folder, and its trimmed stdout is sent with the provider's auth header and prefix. The key is reused for `apiKeyHelperTtlMs` (5 minutes by default); a `401`/`403` runs the command again and retries once. It never runs in untrusted workspaces.
+
 ## Capability-driven dispatch
 
 Caramelo doesn't branch on provider type at runtime. Each provider declares a `capabilities()` set:
