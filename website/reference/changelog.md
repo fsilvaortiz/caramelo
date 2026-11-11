@@ -10,6 +10,12 @@ Browse releases on GitHub: [github.com/fsilvaortiz/caramelo/releases](https://gi
 
 ## Latest
 
+### v0.4.0 — 2026-11-11
+
+**API key from a command.** Claude and OpenAI-compatible providers accept an `apiKeyHelper`: a shell command whose output is the API key, like Claude Code's setting of the same name — for short-lived tokens from corporate gateways, vault CLIs or cloud SSO. The key is reused for 5 minutes (`apiKeyHelperTtlMs`) and refreshed on 401/403 with one retry. Set it in `settings.json` or from the sidebar. It never runs in untrusted workspaces, and `caramelo.providers` from an untrusted workspace's settings is ignored until you trust it.
+
+[Full v0.4.0 notes](https://github.com/fsilvaortiz/caramelo/releases/tag/v0.4.0)
+
 ### v0.3.0 — 2026-10-23
 
 **Central constitution.** Connect a project to a constitution kept in a Git repository (from the Constitution editor or by committing `caramelo.constitution.*` in `.vscode/settings.json`). `constitution.md` stays an exact copy; Caramelo checks for changes on startup and before generating, and offers a one-click sync or restore. Uses your existing Git credentials; strict URL validation and no Git in untrusted workspaces.
