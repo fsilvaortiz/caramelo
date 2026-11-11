@@ -61,6 +61,10 @@ export interface ProviderConfig {
   // When set, it replaces the key stored in SecretStorage.
   apiKeyHelper?: string;
   apiKeyHelperTtlMs?: number; // How long the helper's key is reused (default 5 min)
+  // Send the helper output in its own header (e.g. "Authorization" + "Bearer") while
+  // the stored key keeps going in authHeader (e.g. Azure APIM's Ocp-Apim-Subscription-Key).
+  apiKeyHelperHeader?: string;
+  apiKeyHelperPrefix?: string;
   // Jira-specific fields
   instanceUrl?: string;
   boardId?: string;

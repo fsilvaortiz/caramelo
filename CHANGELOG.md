@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.0] - 2026-11-11
+
+**Subscription key and token together.** Gateways such as Azure API Management can now receive the stored key and the `apiKeyHelper` token in separate headers.
+
+### Added
+
+- **Stored key and `apiKeyHelper` token together.** New per-provider `apiKeyHelperHeader` / `apiKeyHelperPrefix`: when set to a header other than `authHeader`, both are sent — the stored key in `authHeader` (e.g. Azure API Management's `Ocp-Apim-Subscription-Key`) and the command output in its own header (e.g. `Authorization: Bearer <token>`). A `401`/`403` refreshes only the token. Configurable from the sidebar (*Send command output in*), which previews the headers that will be sent. Existing configurations behave as before.
+
 ## [0.4.1] - 2026-11-11
 
 Easier-to-find and readable provider auth settings in the sidebar.

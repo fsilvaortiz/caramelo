@@ -37,6 +37,19 @@ Instead of a static key, a provider can run a command that prints the key — th
 
 The command runs through your shell (`/bin/sh` on macOS/Linux, `cmd.exe` on Windows, where `~` is not expanded) from the workspace folder, and its trimmed stdout is sent with the provider's auth header and prefix. The key is reused for `apiKeyHelperTtlMs` (5 minutes by default); a `401`/`403` runs the command again and retries once. It never runs in untrusted workspaces.
 
+**Stored key and token together.** Gateways such as Azure API Management often expect a subscription key *and* a bearer token. Set `apiKeyHelperHeader` (in the sidebar: *Send command output in*) to a header different from the auth header; the stored key keeps going in the auth header and the command output goes in the new one:
+
+```json
+{
+  "authHeader": "Ocp-Apim-Subscription-Key",
+  "authPrefix": "",
+  "apiKeyHelper": "~/bin/get-entra-token.sh",
+  "apiKeyHelperHeader": "Authorization"
+}
+```
+
+This sends `Ocp-Apim-Subscription-Key: <stored key>` and `Authorization: Bearer <command output>` (`apiKeyHelperPrefix` defaults to `Bearer` for `Authorization`). On `401`/`403` only the command output is refreshed.
+
 ## Capability-driven dispatch
 
 Caramelo doesn't branch on provider type at runtime. Each provider declares a `capabilities()` set:

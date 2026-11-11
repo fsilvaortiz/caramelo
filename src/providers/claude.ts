@@ -3,7 +3,13 @@ import type { Capability, LLMMessage, LLMOptions, LLMProvider } from './types.js
 import { parseSSEEvents, parseSSEStream } from './sse.js';
 import { AuthError, NetworkError, ProviderError, isAbortError } from '../errors.js';
 import { getSseTimeoutMs } from '../utils/settings.js';
-import { sanitizeHeaderName, sanitizeHeaderPrefix } from '../utils/auth.js';
+import {
+  buildAuthHeaders,
+  resolveHelperHeaderTarget,
+  sanitizeHeaderName,
+  sanitizeHeaderPrefix,
+  type HelperHeaderTarget,
+} from '../utils/auth.js';
 import { createApiKeyHelper, type ApiKeyHelper } from '../utils/api-key-helper.js';
 import type {
   AgentEvent,
@@ -22,7 +28,11 @@ export class ClaudeProvider implements LLMProvider {
   private readonly authHeader: string;
   private readonly authPrefix: string;
   private readonly keyHelper: ApiKeyHelper | null;
+  private readonly helperTarget: HelperHeaderTarget | null;
+  /** Key stored in SecretStorage. */
   private apiKey: string | null = null;
+  /** Latest apiKeyHelper output. */
+  private helperToken: string | null = null;
   private abortController: AbortController | null = null;
 
   constructor(
@@ -30,6 +40,7 @@ export class ClaudeProvider implements LLMProvider {
       id: string; name: string; endpoint: string; model: string; apiKeyId: string;
       authHeader?: string; authPrefix?: string;
       apiKeyHelper?: string; apiKeyHelperTtlMs?: number;
+      apiKeyHelperHeader?: string; apiKeyHelperPrefix?: string;
     },
     secrets: vscode.SecretStorage,
     keyHelper: ApiKeyHelper | null = createApiKeyHelper(config),
@@ -43,13 +54,15 @@ export class ClaudeProvider implements LLMProvider {
     this.authPrefix = sanitizeHeaderPrefix(config.authPrefix, '');
     this.secrets = secrets;
     this.keyHelper = keyHelper;
+    this.helperTarget = keyHelper ? resolveHelperHeaderTarget(config, this.authHeader) : null;
   }
 
   async authenticate(): Promise<boolean> {
     if (this.keyHelper) {
-      // The helper is the source of truth; never prompt for a static key.
-      this.apiKey = await this.keyHelper.getKey();
-      return true;
+      this.helperToken = await this.keyHelper.getKey();
+      // Helper output replaces the stored key: never prompt for one.
+      if (!this.helperTarget) return true;
+      // Otherwise the stored key goes in its own header next to the helper's.
     }
     const key = await this.secrets.get(this.apiKeyId);
     if (!key) {
@@ -67,7 +80,7 @@ export class ClaudeProvider implements LLMProvider {
   }
 
   async isAvailable(): Promise<boolean> {
-    if (!this.apiKey) return false;
+    if (!this.apiKey && !this.helperToken) return false;
     try {
       // Exercise the same code path as chat() so the result reflects what a
       // real generation will see: model exists, credentials accepted by the
@@ -130,14 +143,18 @@ export class ClaudeProvider implements LLMProvider {
     }
   }
 
-  /** Current key: from the apiKeyHelper (cached) or the one loaded by authenticate(). */
-  private async resolveApiKey(): Promise<string> {
-    if (this.keyHelper) {
-      this.apiKey = await this.keyHelper.getKey();
-      return this.apiKey;
-    }
-    if (!this.apiKey) throw new AuthError(`${this.displayName}: Not authenticated`);
-    return this.apiKey;
+  /** Auth headers from the stored key and/or the apiKeyHelper output (cached). */
+  private async resolveAuthHeaders(): Promise<Record<string, string>> {
+    if (this.keyHelper) this.helperToken = await this.keyHelper.getKey();
+    const headers = buildAuthHeaders({
+      authHeader: this.authHeader,
+      authPrefix: this.authPrefix,
+      helperTarget: this.helperTarget,
+      storedKey: this.apiKey,
+      helperToken: this.helperToken,
+    });
+    if (Object.keys(headers).length === 0) throw new AuthError(`${this.displayName}: Not authenticated`);
+    return headers;
   }
 
   /**
@@ -147,13 +164,13 @@ export class ClaudeProvider implements LLMProvider {
    */
   private async postMessages(body: Record<string, unknown>, signal: AbortSignal): Promise<Response & { body: ReadableStream<Uint8Array> }> {
     const send = async (): Promise<Response> => {
-      const key = await this.resolveApiKey();
+      const authHeaders = await this.resolveAuthHeaders();
       try {
         return await fetch(`${this.endpoint}/v1/messages`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            [this.authHeader]: this.authPrefix ? `${this.authPrefix} ${key}` : key,
+            ...authHeaders,
             'anthropic-version': '2023-06-01',
           },
           body: JSON.stringify(body),
@@ -187,7 +204,7 @@ export class ClaudeProvider implements LLMProvider {
     // Tool-calling requires an authenticated session: the /v1/messages call
     // only works with a valid API key. Advertising it while unauthenticated
     // would let the agent loop start and fail mid-turn.
-    if (this.apiKey) caps.add('tool-calling');
+    if (this.apiKey || this.helperToken) caps.add('tool-calling');
     return caps;
   }
 
