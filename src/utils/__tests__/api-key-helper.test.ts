@@ -81,12 +81,18 @@ describe('createApiKeyHelper', () => {
 });
 
 describe('runShellCommand', () => {
+  // Commands must work in both /bin/sh and cmd.exe (Windows CI): `&&` chaining
+  // proves the string goes through a shell, and node stands in for anything
+  // that needs stderr + an exit code.
+  const node = `"${process.execPath}"`;
+
   it('runs through the shell and returns stdout', async () => {
-    const out = await runShellCommand('echo hello-$((1+1))', { cwd: process.cwd(), timeoutMs: 10_000 });
-    expect(out.trim()).toBe('hello-2');
+    const out = await runShellCommand('echo hello&& echo world', { cwd: process.cwd(), timeoutMs: 10_000 });
+    expect(out.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)).toEqual(['hello', 'world']);
   });
 
   it('rejects with stderr detail on non-zero exit', async () => {
-    await expect(runShellCommand('echo boom >&2; exit 3', { cwd: process.cwd(), timeoutMs: 10_000 })).rejects.toThrow(/boom/);
+    const cmd = `${node} -e "process.stderr.write('boom');process.exit(3)"`;
+    await expect(runShellCommand(cmd, { cwd: process.cwd(), timeoutMs: 10_000 })).rejects.toThrow(/boom/);
   });
 });

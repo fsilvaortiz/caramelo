@@ -238,7 +238,7 @@ Like Claude Code's [`apiKeyHelper`](https://docs.anthropic.com/en/docs/claude-co
 }
 ```
 
-- The command runs through your shell from the workspace folder; its trimmed stdout (one line) is sent with `authHeader` / `authPrefix` as usual.
+- The command runs through your shell (`/bin/sh` on macOS/Linux, `cmd.exe` on Windows — use a full path there, `~` is not expanded) from the workspace folder; its trimmed stdout (one line) is sent with `authHeader` / `authPrefix` as usual.
 - The key is reused for `apiKeyHelperTtlMs` (5 min by default). A `401`/`403` response runs the command again and retries the request once.
 - It can also be set from the sidebar: *Get the key from a command (apiKeyHelper)* in the Add Provider form, or — for an existing provider — click its `auth:` line (or *key: ●●●●* → *Get the key from a command instead*).
 - It never runs in untrusted workspaces, and workspace-level values of `caramelo.providers` are ignored there.

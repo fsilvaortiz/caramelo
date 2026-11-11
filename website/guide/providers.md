@@ -35,7 +35,7 @@ Instead of a static key, a provider can run a command that prints the key — th
 }
 ```
 
-The command runs through your shell from the workspace folder, and its trimmed stdout is sent with the provider's auth header and prefix. The key is reused for `apiKeyHelperTtlMs` (5 minutes by default); a `401`/`403` runs the command again and retries once. It never runs in untrusted workspaces.
+The command runs through your shell (`/bin/sh` on macOS/Linux, `cmd.exe` on Windows, where `~` is not expanded) from the workspace folder, and its trimmed stdout is sent with the provider's auth header and prefix. The key is reused for `apiKeyHelperTtlMs` (5 minutes by default); a `401`/`403` runs the command again and retries once. It never runs in untrusted workspaces.
 
 ## Capability-driven dispatch
 
