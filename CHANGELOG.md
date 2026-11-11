@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [0.5.0] - 2026-11-11
+
+**Subscription key and token together.** Gateways such as Azure API Management can now receive the stored key and the `apiKeyHelper` token in separate headers.
 
 ### Added
 

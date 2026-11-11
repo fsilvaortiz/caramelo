@@ -10,6 +10,12 @@ Browse releases on GitHub: [github.com/fsilvaortiz/caramelo/releases](https://gi
 
 ## Latest
 
+### v0.5.0 — 2026-11-11
+
+**Subscription key and token together.** With `apiKeyHelperHeader` set to a header other than the auth header, Caramelo sends both: the stored key in the auth header (e.g. Azure API Management's `Ocp-Apim-Subscription-Key`) and the `apiKeyHelper` output in its own header (e.g. `Authorization: Bearer <token>`). A 401/403 refreshes only the token. The sidebar's auth panel and Add Provider form gain *Send command output in* and preview every header that will be sent. Existing configurations behave as before.
+
+[Full v0.5.0 notes](https://github.com/fsilvaortiz/caramelo/releases/tag/v0.5.0)
+
 ### v0.4.1 — 2026-11-11
 
 **Readable provider auth settings.** The auth editor is now a labelled panel (Header, Prefix, API key command) with a live preview of the header that will be sent, and `apiKeyHelper` has its own section in the Add Provider form and a link from the API key editor. Provider details, inputs and buttons use readable sizes instead of 8–9 px text.
