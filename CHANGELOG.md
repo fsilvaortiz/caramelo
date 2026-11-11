@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- `apiKeyHelper` is easier to find in the sidebar: its own *Get the key from a command* section right under the API key in the Add Provider form (also for keyless presets like Ollama), a link from the API key editor, and a labelled field in the provider's `auth:` editor.
+
 ## [0.4.0] - 2026-11-11
 
 **API key from a command.** Providers can obtain their key by running a command (`apiKeyHelper`), like Claude Code — for short-lived tokens from corporate gateways, vault CLIs or cloud SSO.

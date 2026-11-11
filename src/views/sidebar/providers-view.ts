@@ -696,7 +696,8 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
                        onclick="msg('saveApiKey',{id:'${p.id}',apiKey:document.getElementById('editApiKey-${p.id}').value})">Save</button>
                      <button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px"
                        onclick="msg('cancelEdit')">Cancel</button>
-                   </div>`
+                   </div>
+                   <a class="provider-link" onclick="msg('editAuth',{id:'${p.id}'})">Get the key from a command instead (apiKeyHelper)…</a>`
                 : config.apiKeyHelper
                   ? `<span class="provider-key" onclick="msg('editAuth',{id:'${p.id}'})" title="The API key is obtained by running apiKeyHelper: ${esc(config.apiKeyHelper)}">key: from apiKeyHelper</span>`
                   : `<span class="provider-key" onclick="msg('editApiKey',{id:'${p.id}'})" title="Click to set or replace the API key (stored in SecretStorage)">key: ●●●●  <em style="opacity:0.6">(click to replace)</em></span>`
@@ -704,9 +705,9 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
             ${this.editingState?.type === 'auth' && this.editingState.providerId === p.id
               ? `<input class="input" style="font-size:0.8em;margin:2px 0" id="editAuthHeader-${p.id}" value="${esc(config?.authHeader ?? (config?.type === 'anthropic' ? 'x-api-key' : 'Authorization'))}" placeholder="Header name (e.g. Authorization)" />
                  <input class="input" style="font-size:0.8em;margin:2px 0" id="editAuthPrefix-${p.id}" value="${esc(config?.authPrefix ?? (config?.type === 'anthropic' ? '' : 'Bearer'))}" placeholder="Prefix (e.g. Bearer)" />
-                 ${config?.type !== 'copilot' ? `<input class="input" style="font-size:0.8em;margin:2px 0" id="editApiKeyHelper-${p.id}" value="${esc(config?.apiKeyHelper ?? '')}" placeholder="apiKeyHelper: command that prints the key (optional)" title="Shell command whose stdout is the API key. Replaces the stored key when set." />` : ''}
+                 ${config?.type !== 'copilot' ? `<label class="provider-label" for="editApiKeyHelper-${p.id}">apiKeyHelper (command that prints the key, empty = use stored key)</label><input class="input" style="font-size:0.8em;margin:2px 0" id="editApiKeyHelper-${p.id}" value="${esc(config?.apiKeyHelper ?? '')}" placeholder="apiKeyHelper: command that prints the key (optional)" title="Shell command whose stdout is the API key. Replaces the stored key when set." />` : ''}
                  <div style="display:flex;gap:4px;margin:2px 0"><button class="phase-btn approve" style="font-size:0.75em;padding:2px 8px" onclick="msg('saveAuth',{id:'${p.id}',authHeader:document.getElementById('editAuthHeader-${p.id}').value,authPrefix:document.getElementById('editAuthPrefix-${p.id}').value,apiKeyHelper:document.getElementById('editApiKeyHelper-${p.id}')?.value})">Save</button><button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px" onclick="msg('cancelEdit')">Cancel</button></div>`
-              : `<span class="provider-auth" onclick="msg('editAuth',{id:'${p.id}'})" title="Click to edit auth settings">auth: ${esc(config?.authHeader ? `${config.authHeader} ${config.authPrefix || ''}`.trim() : 'default')}${config?.apiKeyHelper ? ' · apiKeyHelper' : ''}</span>`}
+              : `<span class="provider-auth" onclick="msg('editAuth',{id:'${p.id}'})" title="Click to edit the auth header, prefix and apiKeyHelper">auth: ${esc(config?.authHeader ? `${config.authHeader} ${config.authPrefix || ''}`.trim() : 'default')}${config?.apiKeyHelper ? ' · apiKeyHelper' : ''}</span>`}
           </div>
           <button class="provider-delete" onclick="event.stopPropagation(); msg('deleteProvider',{id:'${p.id}'})" title="Delete">×</button>
         </div>
@@ -779,12 +780,15 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
         addSection = `<div class="add-form">
           <div class="add-header">${preset.icon} ${preset.label}<button class="btn-cancel" onclick="msg('cancelAdd')">×</button></div>
           <input id="addEndpoint" class="input" value="${preset.endpoint}" placeholder="Endpoint URL" />
-          ${preset.needsKey ? `<input id="addApiKey" class="input" type="password" placeholder="API Key" />
-          <details class="auth-details"><summary>Custom auth (optional)</summary>
+          ${preset.needsKey ? `<input id="addApiKey" class="input" type="password" placeholder="API Key" />` : ''}
+          <details class="auth-details"><summary>Get the key from a command (apiKeyHelper)</summary>
+            <input id="addApiKeyHelper" class="input" placeholder="e.g. ~/bin/get-llm-token.sh" title="Shell command whose stdout is the API key (like Claude Code's apiKeyHelper). Used instead of a static key." />
+            <p class="form-hint">Runs through your shell; its output is sent as the API key. Reused for 5 min and refreshed on 401/403. Press Enter or leave the field to load models.</p>
+          </details>
+          <details class="auth-details"><summary>Custom auth header (optional)</summary>
             <input id="addAuthHeader" class="input" placeholder="Header name (default: ${preset.type === 'anthropic' ? 'x-api-key' : 'Authorization'})" />
             <input id="addAuthPrefix" class="input" placeholder="Value prefix (default: ${preset.type === 'anthropic' ? 'none' : 'Bearer'})" />
-            <input id="addApiKeyHelper" class="input" placeholder="apiKeyHelper: command that prints the key" title="Shell command whose stdout is the API key (like Claude Code's apiKeyHelper). Used instead of a static key." />
-          </details>` : ''}
+          </details>
           <div id="modelSection" style="display:none">
             <select id="addModel" class="input"><option>Loading models...</option></select>
           </div>
@@ -870,6 +874,18 @@ if (keyInput) {
 } else {
   // No key needed — fetch models immediately
   setTimeout(triggerFetchModels, 300);
+}
+
+// A helper command replaces the static key
+const helperInput = document.getElementById('addApiKeyHelper');
+if (helperInput && keyInput) {
+  helperInput.addEventListener('input', () => {
+    const hasHelper = helperInput.value.trim() !== '';
+    keyInput.disabled = hasHelper;
+    keyInput.placeholder = hasHelper ? 'API Key (not needed: using apiKeyHelper)' : 'API Key';
+    if (btnAdd && btnAdd.disabled && hasHelper) btnAdd.textContent = 'Press Enter to load models';
+  });
+  helperInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') triggerFetchModels(); });
 }
 
 // Re-fetch models when auth header fields change
@@ -1092,6 +1108,9 @@ body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); 
   cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .provider-key:hover { opacity: 1; color: var(--vscode-textLink-foreground); }
+.provider-link { display: block; font-size: 0.75em; margin: 2px 0; cursor: pointer; color: var(--vscode-textLink-foreground); }
+.provider-link:hover { text-decoration: underline; }
+.provider-label { display: block; font-size: 0.72em; color: var(--vscode-descriptionForeground); margin-top: 4px; }
 .provider-delete {
   background: none; border: none; color: var(--vscode-descriptionForeground); cursor: pointer;
   font-size: 1.2em; padding: 0 2px; opacity: 0; transition: opacity 0.15s;
