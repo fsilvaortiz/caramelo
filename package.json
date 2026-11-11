@@ -303,6 +303,16 @@
                 "pattern": "^[A-Za-z0-9-]*$",
                 "maxLength": 16,
                 "description": "Value prefix prepended to the API key (e.g. Bearer, Basic). Leave empty to send the raw key."
+              },
+              "apiKeyHelper": {
+                "type": "string",
+                "description": "Shell command that prints the API key on stdout (like Claude Code's apiKeyHelper), e.g. \"~/bin/get-llm-token.sh\". When set, it is used instead of the stored API key. Runs from the workspace folder; disabled in untrusted workspaces."
+              },
+              "apiKeyHelperTtlMs": {
+                "type": "number",
+                "minimum": 0,
+                "default": 300000,
+                "description": "How long (ms) the key returned by apiKeyHelper is reused before running the command again. A 401/403 response always refreshes it."
               }
             },
             "required": [
@@ -391,7 +401,10 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "Specs can be browsed but LLM execution is blocked in untrusted workspaces"
+      "description": "Specs can be browsed but LLM execution is blocked in untrusted workspaces",
+      "restrictedConfigurations": [
+        "caramelo.providers"
+      ]
     }
   },
   "scripts": {

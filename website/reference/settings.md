@@ -10,7 +10,7 @@ Every Caramelo setting, what it does, and what it defaults to.
 
 | Setting | Type | Default | Notes |
 |---|---|---|---|
-| `caramelo.providers` | array | `[]` | Configured providers (id, name, type, endpoint, model, optional `authHeader` / `authPrefix`). Edited inline through the Providers sidebar — direct JSON edits work too. |
+| `caramelo.providers` | array | `[]` | Configured providers (id, name, type, endpoint, model, optional `authHeader` / `authPrefix`, `apiKeyHelper` / `apiKeyHelperTtlMs`). Edited inline through the Providers sidebar — direct JSON edits work too. |
 | `caramelo.activeProvider` | string | `""` | ID of the active provider. Click the dot beside a provider to switch. |
 | `caramelo.sse.timeoutMs` | number | `300000` | Maximum wait for a single streaming chunk before aborting. Raise for slow local models. Minimum 5000. |
 

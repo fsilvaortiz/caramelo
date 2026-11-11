@@ -57,6 +57,10 @@ export interface ProviderConfig {
   // Optional custom auth header (e.g. "Authorization" with "Bearer" prefix instead of "x-api-key")
   authHeader?: string;   // Header name, e.g. "Authorization", "x-api-key", "Ocp-Apim-Subscription-Key"
   authPrefix?: string;   // Value prefix, e.g. "Bearer", "Basic", "" (empty for raw token)
+  // Shell command whose stdout is the API key (like Claude Code's `apiKeyHelper`).
+  // When set, it replaces the key stored in SecretStorage.
+  apiKeyHelper?: string;
+  apiKeyHelperTtlMs?: number; // How long the helper's key is reused (default 5 min)
   // Jira-specific fields
   instanceUrl?: string;
   boardId?: string;

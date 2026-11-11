@@ -4,6 +4,7 @@ import { parseSSEEvents, parseSSEStream } from './sse.js';
 import { AuthError, NetworkError, ProviderError, isAbortError } from '../errors.js';
 import { getSseTimeoutMs } from '../utils/settings.js';
 import { sanitizeHeaderName, sanitizeHeaderPrefix } from '../utils/auth.js';
+import { createApiKeyHelper, type ApiKeyHelper } from '../utils/api-key-helper.js';
 import type {
   AgentEvent,
   AgentMessage,
@@ -20,12 +21,18 @@ export class OpenAICompatibleProvider implements LLMProvider {
   private readonly secrets: vscode.SecretStorage;
   private readonly authHeader: string;
   private readonly authPrefix: string;
+  private readonly keyHelper: ApiKeyHelper | null;
   private apiKey: string | null = null;
   private abortController: AbortController | null = null;
 
   constructor(
-    config: { id: string; name: string; endpoint: string; model: string; apiKeyId?: string; authHeader?: string; authPrefix?: string },
-    secrets: vscode.SecretStorage
+    config: {
+      id: string; name: string; endpoint: string; model: string; apiKeyId?: string;
+      authHeader?: string; authPrefix?: string;
+      apiKeyHelper?: string; apiKeyHelperTtlMs?: number;
+    },
+    secrets: vscode.SecretStorage,
+    keyHelper: ApiKeyHelper | null = createApiKeyHelper(config),
   ) {
     this.id = config.id;
     this.displayName = config.name;
@@ -35,9 +42,15 @@ export class OpenAICompatibleProvider implements LLMProvider {
     this.authHeader = sanitizeHeaderName(config.authHeader, 'Authorization');
     this.authPrefix = sanitizeHeaderPrefix(config.authPrefix, 'Bearer');
     this.secrets = secrets;
+    this.keyHelper = keyHelper;
   }
 
   async authenticate(): Promise<boolean> {
+    if (this.keyHelper) {
+      // The helper is the source of truth; never prompt for a static key.
+      this.apiKey = await this.keyHelper.getKey();
+      return true;
+    }
     if (!this.apiKeyId) return true;
     const key = await this.secrets.get(this.apiKeyId);
     if (!key) {
@@ -81,9 +94,6 @@ export class OpenAICompatibleProvider implements LLMProvider {
       ? anySignal(options.signal, controller.signal)
       : controller.signal;
 
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (this.apiKey) headers[this.authHeader] = this.authPrefix ? `${this.authPrefix} ${this.apiKey}` : this.apiKey;
-
     const body = JSON.stringify({
       model: options?.model ?? this.model,
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
@@ -92,27 +102,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       temperature: options?.temperature ?? 0.7,
     });
 
-    let res: Response;
-    try {
-      res = await fetch(`${this.endpoint}/chat/completions`, {
-        method: 'POST',
-        headers,
-        body,
-        signal,
-      });
-    } catch (err) {
-      if (isAbortError(err)) throw err;
-      throw new NetworkError(`${this.displayName}: request failed`, err);
-    }
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      const message = `${this.displayName}: ${res.status} ${res.statusText} - ${text}`;
-      if (res.status === 401 || res.status === 403) throw new AuthError(message);
-      throw new ProviderError(message, res.status);
-    }
-
-    if (!res.body) throw new ProviderError(`${this.displayName}: No response body`);
+    const res = await this.postCompletions(body, signal);
 
     const reader = res.body.getReader();
     try {
@@ -132,13 +122,59 @@ export class OpenAICompatibleProvider implements LLMProvider {
     }
   }
 
+  /**
+   * Auth headers for the next request: from the apiKeyHelper (cached) when
+   * configured, else the key loaded by authenticate() (none for keyless
+   * local endpoints).
+   */
+  private async buildHeaders(): Promise<Record<string, string>> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (this.keyHelper) this.apiKey = await this.keyHelper.getKey();
+    if (this.apiKey) {
+      headers[this.authHeader] = this.authPrefix ? `${this.authPrefix} ${this.apiKey}` : this.apiKey;
+    }
+    return headers;
+  }
+
+  /**
+   * POST to /chat/completions and return a successful streaming response.
+   * With an apiKeyHelper, a 401/403 refreshes the key once and retries.
+   */
+  private async postCompletions(body: string, signal: AbortSignal): Promise<Response & { body: ReadableStream<Uint8Array> }> {
+    const send = async (): Promise<Response> => {
+      const headers = await this.buildHeaders();
+      try {
+        return await fetch(`${this.endpoint}/chat/completions`, { method: 'POST', headers, body, signal });
+      } catch (err) {
+        if (isAbortError(err)) throw err;
+        throw new NetworkError(`${this.displayName}: request failed`, err);
+      }
+    };
+
+    let res = await send();
+    if ((res.status === 401 || res.status === 403) && this.keyHelper) {
+      await res.body?.cancel().catch(() => {});
+      this.keyHelper.invalidate();
+      res = await send();
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      const message = `${this.displayName}: ${res.status} ${res.statusText} - ${text}`;
+      if (res.status === 401 || res.status === 403) throw new AuthError(message);
+      throw new ProviderError(message, res.status);
+    }
+    if (!res.body) throw new ProviderError(`${this.displayName}: No response body`);
+    return res as Response & { body: ReadableStream<Uint8Array> };
+  }
+
   capabilities(): Set<Capability> {
     const caps = new Set<Capability>(['streaming']);
     // tool-calling advertises when either (a) an API key is loaded, or
     // (b) no key is needed (local endpoints like Ollama/LM Studio). The
     // actual endpoint may still refuse tool_calls; an error then
     // surfaces via the runtime's fallback-notification path.
-    if (this.apiKey !== null || this.apiKeyId === null) {
+    if (this.apiKey !== null || (this.apiKeyId === null && !this.keyHelper)) {
       caps.add('tool-calling');
     }
     return caps;
@@ -152,11 +188,6 @@ export class OpenAICompatibleProvider implements LLMProvider {
       ? anySignal(req.signal, controller.signal)
       : controller.signal;
 
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (this.apiKey) {
-      headers[this.authHeader] = this.authPrefix ? `${this.authPrefix} ${this.apiKey}` : this.apiKey;
-    }
-
     const body: Record<string, unknown> = {
       model: req.model ?? this.model,
       messages: buildOpenAIMessages(req.system, req.messages),
@@ -166,26 +197,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     };
     if (req.temperature !== undefined) body.temperature = req.temperature;
 
-    let res: Response;
-    try {
-      res = await fetch(`${this.endpoint}/chat/completions`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-        signal,
-      });
-    } catch (err) {
-      if (isAbortError(err)) throw err;
-      throw new NetworkError(`${this.displayName}: request failed`, err);
-    }
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      const message = `${this.displayName}: ${res.status} ${res.statusText} - ${text}`;
-      if (res.status === 401 || res.status === 403) throw new AuthError(message);
-      throw new ProviderError(message, res.status);
-    }
-    if (!res.body) throw new ProviderError(`${this.displayName}: No response body`);
+    const res = await this.postCompletions(JSON.stringify(body), signal);
 
     // Accumulate partial tool calls by delta `index`. First chunk for each
     // index carries id + function.name; subsequent chunks append to

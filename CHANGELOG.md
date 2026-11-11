@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **`apiKeyHelper`** per provider (Claude and OpenAI-compatible): a shell command whose stdout is the API key, like Claude Code's `apiKeyHelper` setting. The key is cached for `apiKeyHelperTtlMs` (5 min by default) and refreshed on `401`/`403` with one retry. Configurable in `settings.json` or from the sidebar (Add Provider → *Custom auth*, or the provider's `auth:` field).
+
+### Security
+
+- `apiKeyHelper` never runs in untrusted workspaces, and `caramelo.providers` is now a restricted configuration, so workspace-level values are ignored until the workspace is trusted.
+
 ## [0.3.0] - 2026-10-23
 
 **Central constitution.** A project can now follow a constitution kept in a Git repository — one source of truth for many projects, changed only through that repository.
