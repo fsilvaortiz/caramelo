@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.1] - 2026-11-11
+
+Easier-to-find and readable provider auth settings in the sidebar.
+
+### Changed
+
+- `apiKeyHelper` is easier to find in the sidebar: its own *Get the key from a command* section right under the API key in the Add Provider form (also for keyless presets like Ollama), a link from the API key editor, and a labelled field in the provider's `auth:` editor.
+- Larger, clearer provider settings in the sidebar: the auth editor is a labelled panel (Header, Prefix, API key command) with a live preview of the header that will be sent; secondary lines, inputs and buttons use readable sizes instead of 8–9 px text.
+
 ## [0.4.0] - 2026-11-11
 
 **API key from a command.** Providers can obtain their key by running a command (`apiKeyHelper`), like Claude Code — for short-lived tokens from corporate gateways, vault CLIs or cloud SSO.

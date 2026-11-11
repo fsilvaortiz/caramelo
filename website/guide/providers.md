@@ -22,7 +22,7 @@ You can also add a custom OpenAI-compatible endpoint — useful for corporate pr
 
 ### Getting the key from a command (`apiKeyHelper`)
 
-Instead of a static key, a provider can run a command that prints the key — the same idea as Claude Code's `apiKeyHelper`. Set it under *Custom auth* in the Add Provider form, in the provider's `auth:` field, or in `settings.json`:
+Instead of a static key, a provider can run a command that prints the key — the same idea as Claude Code's `apiKeyHelper`. Set it under *Get the key from a command (apiKeyHelper)* in the Add Provider form; for an existing provider, click its `auth:` line (or *key: ●●●●* → *Get the key from a command instead*); or in `settings.json`:
 
 ```json
 {

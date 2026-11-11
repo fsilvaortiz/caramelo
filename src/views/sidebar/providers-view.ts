@@ -574,8 +574,8 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     if (models === null) {
       // Loading
       return `<div style="font-size:0.8em;color:var(--vscode-descriptionForeground);margin:2px 0">Loading models...</div>
-        <input class="input" style="font-size:0.8em;margin:2px 0" id="editModel-${providerId}" value="${esc(currentModel)}" placeholder="Model name" onkeydown="if(event.key==='Enter')msg('setModel',{id:'${providerId}',model:this.value}); if(event.key==='Escape')msg('cancelEdit')" />
-        <div style="display:flex;gap:4px;margin:2px 0"><button class="phase-btn approve" style="font-size:0.75em;padding:2px 8px" onclick="msg('setModel',{id:'${providerId}',model:document.getElementById('editModel-${providerId}').value})">Save</button><button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px" onclick="msg('cancelEdit')">Cancel</button></div>`;
+        <input class="input" id="editModel-${providerId}" value="${esc(currentModel)}" placeholder="Model name" onkeydown="if(event.key==='Enter')msg('setModel',{id:'${providerId}',model:this.value}); if(event.key==='Escape')msg('cancelEdit')" />
+        <div class="edit-actions"><button class="edit-btn primary" onclick="msg('setModel',{id:'${providerId}',model:document.getElementById('editModel-${providerId}').value})">Save</button><button class="edit-btn" onclick="msg('cancelEdit')">Cancel</button></div>`;
     }
 
     if (models && models.length > 0) {
@@ -583,13 +583,13 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
       const options = models.map((m) =>
         `<option value="${esc(m.id)}" ${m.id === currentModel ? 'selected' : ''}>${esc(m.name)}</option>`
       ).join('');
-      return `<select class="input" style="font-size:0.8em;margin:2px 0" id="editModel-${providerId}">${options}</select>
-        <div style="display:flex;gap:4px;margin:2px 0"><button class="phase-btn approve" style="font-size:0.75em;padding:2px 8px" onclick="msg('setModel',{id:'${providerId}',model:document.getElementById('editModel-${providerId}').value})">Save</button><button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px" onclick="msg('cancelEdit')">Cancel</button></div>`;
+      return `<select class="input" id="editModel-${providerId}">${options}</select>
+        <div class="edit-actions"><button class="edit-btn primary" onclick="msg('setModel',{id:'${providerId}',model:document.getElementById('editModel-${providerId}').value})">Save</button><button class="edit-btn" onclick="msg('cancelEdit')">Cancel</button></div>`;
     }
 
     // Manual input
-    return `<input class="input" style="font-size:0.8em;margin:2px 0" id="editModel-${providerId}" value="${esc(currentModel)}" placeholder="Model name" onkeydown="if(event.key==='Enter')msg('setModel',{id:'${providerId}',model:this.value}); if(event.key==='Escape')msg('cancelEdit')" />
-      <div style="display:flex;gap:4px;margin:2px 0"><button class="phase-btn approve" style="font-size:0.75em;padding:2px 8px" onclick="msg('setModel',{id:'${providerId}',model:document.getElementById('editModel-${providerId}').value})">Save</button><button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px" onclick="msg('cancelEdit')">Cancel</button></div>`;
+    return `<input class="input" id="editModel-${providerId}" value="${esc(currentModel)}" placeholder="Model name" onkeydown="if(event.key==='Enter')msg('setModel',{id:'${providerId}',model:this.value}); if(event.key==='Escape')msg('cancelEdit')" />
+      <div class="edit-actions"><button class="edit-btn primary" onclick="msg('setModel',{id:'${providerId}',model:document.getElementById('editModel-${providerId}').value})">Save</button><button class="edit-btn" onclick="msg('cancelEdit')">Cancel</button></div>`;
   }
 
   private async fetchModelsFromAPI(type: string, endpoint: string, apiKey?: string, customAuthHeader?: string, customAuthPrefix?: string): Promise<ModelInfo[]> {
@@ -665,10 +665,10 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
               ? `<input class="input" id="editName-${p.id}" value="${esc(p.displayName)}" placeholder="Provider name" autofocus
                    onkeydown="if(event.key==='Enter'){msg('saveName',{id:'${p.id}',name:this.value});}else if(event.key==='Escape'){msg('cancelEdit');}"
                    onload="this.select()" />
-                 <div style="display:flex;gap:4px;margin:2px 0">
-                   <button class="phase-btn approve" style="font-size:0.75em;padding:2px 8px"
+                 <div class="edit-actions">
+                   <button class="edit-btn primary"
                      onclick="msg('saveName',{id:'${p.id}',name:document.getElementById('editName-${p.id}').value})">Save</button>
-                   <button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px"
+                   <button class="edit-btn"
                      onclick="msg('cancelEdit')">Cancel</button>
                  </div>`
               : `<span class="provider-name" onclick="event.stopPropagation(); msg('renameProvider',{id:'${p.id}'})" title="Click to rename">${esc(p.displayName)}</span>`}
@@ -677,36 +677,54 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
               : `<span class="provider-model" id="model-${p.id}" onclick="msg('changeModel',{id:'${p.id}'})" title="Click to change model">${esc(config?.model ?? '')}</span>`}
             ${config && config.type !== 'copilot' ? (
               this.editingState?.type === 'endpoint' && this.editingState.providerId === p.id
-                ? `<input class="input" style="font-size:0.8em;margin:2px 0" id="editEndpoint-${p.id}" value="${esc(config.endpoint)}" placeholder="Endpoint URL" autofocus
+                ? `<input class="input" id="editEndpoint-${p.id}" value="${esc(config.endpoint)}" placeholder="Endpoint URL" autofocus
                      onkeydown="if(event.key==='Enter'){msg('saveEndpoint',{id:'${p.id}',endpoint:this.value});}else if(event.key==='Escape'){msg('cancelEdit');}" />
-                   <div style="display:flex;gap:4px;margin:2px 0">
-                     <button class="phase-btn approve" style="font-size:0.75em;padding:2px 8px"
+                   <div class="edit-actions">
+                     <button class="edit-btn primary"
                        onclick="msg('saveEndpoint',{id:'${p.id}',endpoint:document.getElementById('editEndpoint-${p.id}').value})">Save</button>
-                     <button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px"
+                     <button class="edit-btn"
                        onclick="msg('cancelEdit')">Cancel</button>
                    </div>`
                 : `<span class="provider-endpoint" onclick="msg('editEndpoint',{id:'${p.id}'})" title="Click to edit endpoint URL">${esc(truncateUrl(config.endpoint))}</span>`
             ) : ''}
             ${config && config.type !== 'copilot' ? (
               this.editingState?.type === 'apiKey' && this.editingState.providerId === p.id
-                ? `<input class="input" type="password" style="font-size:0.8em;margin:2px 0" id="editApiKey-${p.id}" placeholder="API key (paste new value to replace)" autofocus
+                ? `<input class="input" type="password" id="editApiKey-${p.id}" placeholder="API key (paste new value to replace)" autofocus
                      onkeydown="if(event.key==='Enter'){msg('saveApiKey',{id:'${p.id}',apiKey:this.value});}else if(event.key==='Escape'){msg('cancelEdit');}" />
-                   <div style="display:flex;gap:4px;margin:2px 0">
-                     <button class="phase-btn approve" style="font-size:0.75em;padding:2px 8px"
+                   <div class="edit-actions">
+                     <button class="edit-btn primary"
                        onclick="msg('saveApiKey',{id:'${p.id}',apiKey:document.getElementById('editApiKey-${p.id}').value})">Save</button>
-                     <button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px"
+                     <button class="edit-btn"
                        onclick="msg('cancelEdit')">Cancel</button>
-                   </div>`
+                   </div>
+                   <a class="provider-link" onclick="msg('editAuth',{id:'${p.id}'})">Get the key from a command instead (apiKeyHelper)…</a>`
                 : config.apiKeyHelper
                   ? `<span class="provider-key" onclick="msg('editAuth',{id:'${p.id}'})" title="The API key is obtained by running apiKeyHelper: ${esc(config.apiKeyHelper)}">key: from apiKeyHelper</span>`
                   : `<span class="provider-key" onclick="msg('editApiKey',{id:'${p.id}'})" title="Click to set or replace the API key (stored in SecretStorage)">key: ●●●●  <em style="opacity:0.6">(click to replace)</em></span>`
             ) : ''}
             ${this.editingState?.type === 'auth' && this.editingState.providerId === p.id
-              ? `<input class="input" style="font-size:0.8em;margin:2px 0" id="editAuthHeader-${p.id}" value="${esc(config?.authHeader ?? (config?.type === 'anthropic' ? 'x-api-key' : 'Authorization'))}" placeholder="Header name (e.g. Authorization)" />
-                 <input class="input" style="font-size:0.8em;margin:2px 0" id="editAuthPrefix-${p.id}" value="${esc(config?.authPrefix ?? (config?.type === 'anthropic' ? '' : 'Bearer'))}" placeholder="Prefix (e.g. Bearer)" />
-                 ${config?.type !== 'copilot' ? `<input class="input" style="font-size:0.8em;margin:2px 0" id="editApiKeyHelper-${p.id}" value="${esc(config?.apiKeyHelper ?? '')}" placeholder="apiKeyHelper: command that prints the key (optional)" title="Shell command whose stdout is the API key. Replaces the stored key when set." />` : ''}
-                 <div style="display:flex;gap:4px;margin:2px 0"><button class="phase-btn approve" style="font-size:0.75em;padding:2px 8px" onclick="msg('saveAuth',{id:'${p.id}',authHeader:document.getElementById('editAuthHeader-${p.id}').value,authPrefix:document.getElementById('editAuthPrefix-${p.id}').value,apiKeyHelper:document.getElementById('editApiKeyHelper-${p.id}')?.value})">Save</button><button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px" onclick="msg('cancelEdit')">Cancel</button></div>`
-              : `<span class="provider-auth" onclick="msg('editAuth',{id:'${p.id}'})" title="Click to edit auth settings">auth: ${esc(config?.authHeader ? `${config.authHeader} ${config.authPrefix || ''}`.trim() : 'default')}${config?.apiKeyHelper ? ' · apiKeyHelper' : ''}</span>`}
+              ? `<div class="edit-panel" onclick="event.stopPropagation()">
+                   <div class="edit-title">Authentication</div>
+                   <div class="field-row">
+                     <label class="field"><span class="field-label">Header</span>
+                       <input class="input" id="editAuthHeader-${p.id}" value="${esc(config?.authHeader ?? (config?.type === 'anthropic' ? 'x-api-key' : 'Authorization'))}" placeholder="Authorization" /></label>
+                     <label class="field field-narrow"><span class="field-label">Prefix</span>
+                       <input class="input" id="editAuthPrefix-${p.id}" value="${esc(config?.authPrefix ?? (config?.type === 'anthropic' ? '' : 'Bearer'))}" placeholder="none" /></label>
+                   </div>
+                   <div class="field-preview">Sends: <code id="authPreview-${p.id}"></code></div>
+                   ${config?.type !== 'copilot' ? `<label class="field"><span class="field-label">API key command <span class="field-tag">apiKeyHelper</span></span>
+                     <input class="input input-mono" id="editApiKeyHelper-${p.id}" value="${esc(config?.apiKeyHelper ?? '')}" placeholder="e.g. ~/bin/get-llm-token.sh" /></label>
+                   <div class="field-hint">Its output is used as the API key. Leave empty to use the stored key.</div>` : ''}
+                   <div class="edit-actions"><button class="edit-btn primary" onclick="msg('saveAuth',{id:'${p.id}',authHeader:document.getElementById('editAuthHeader-${p.id}').value,authPrefix:document.getElementById('editAuthPrefix-${p.id}').value,apiKeyHelper:document.getElementById('editApiKeyHelper-${p.id}')?.value})">Save</button><button class="edit-btn" onclick="msg('cancelEdit')">Cancel</button></div>
+                 </div>
+                 <script>(() => {
+                   const h = document.getElementById('editAuthHeader-${p.id}');
+                   const pr = document.getElementById('editAuthPrefix-${p.id}');
+                   const out = document.getElementById('authPreview-${p.id}');
+                   const upd = () => { out.textContent = (h.value.trim() || 'Authorization') + ': ' + (pr.value.trim() ? pr.value.trim() + ' ' : '') + '<key>'; };
+                   h.addEventListener('input', upd); pr.addEventListener('input', upd); upd();
+                 })();</script>`
+              : `<span class="provider-auth" onclick="msg('editAuth',{id:'${p.id}'})" title="Click to edit the auth header, prefix and apiKeyHelper">⚙ auth: ${esc(config?.authHeader ? `${config.authHeader} ${config.authPrefix || ''}`.trim() : 'default')}${config?.apiKeyHelper ? ' · apiKeyHelper' : ''}</span>`}
           </div>
           <button class="provider-delete" onclick="event.stopPropagation(); msg('deleteProvider',{id:'${p.id}'})" title="Delete">×</button>
         </div>
@@ -722,13 +740,13 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
           <div class="provider-main">
             <span class="provider-icon">📋</span>
             <div class="provider-info" style="width:100%">
-              <input class="input" style="font-size:0.8em;margin:2px 0" id="editJiraName-${c.id}" value="${esc(c.name)}" placeholder="Provider name" />
-              <input class="input" style="font-size:0.8em;margin:2px 0" id="editJiraUrl-${c.id}" value="${esc(c.instanceUrl ?? '')}" placeholder="Jira URL" />
-              <input class="input" style="font-size:0.8em;margin:2px 0" id="editJiraEmail-${c.id}" value="${esc(c.email ?? '')}" placeholder="Email" />
-              <input class="input" style="font-size:0.8em;margin:2px 0" id="editJiraBoard-${c.id}" value="${esc(c.boardName ?? '')}" placeholder="Board name" />
-              <div style="display:flex;gap:4px;margin:2px 0">
-                <button class="phase-btn approve" style="font-size:0.75em;padding:2px 8px" onclick="msg('saveJira',{id:'${c.id}',name:document.getElementById('editJiraName-${c.id}').value,instanceUrl:document.getElementById('editJiraUrl-${c.id}').value,email:document.getElementById('editJiraEmail-${c.id}').value,boardName:document.getElementById('editJiraBoard-${c.id}').value})">Save</button>
-                <button class="phase-btn-sm" style="font-size:0.75em;padding:2px 8px" onclick="msg('cancelEdit')">Cancel</button>
+              <input class="input" id="editJiraName-${c.id}" value="${esc(c.name)}" placeholder="Provider name" />
+              <input class="input" id="editJiraUrl-${c.id}" value="${esc(c.instanceUrl ?? '')}" placeholder="Jira URL" />
+              <input class="input" id="editJiraEmail-${c.id}" value="${esc(c.email ?? '')}" placeholder="Email" />
+              <input class="input" id="editJiraBoard-${c.id}" value="${esc(c.boardName ?? '')}" placeholder="Board name" />
+              <div class="edit-actions">
+                <button class="edit-btn primary" onclick="msg('saveJira',{id:'${c.id}',name:document.getElementById('editJiraName-${c.id}').value,instanceUrl:document.getElementById('editJiraUrl-${c.id}').value,email:document.getElementById('editJiraEmail-${c.id}').value,boardName:document.getElementById('editJiraBoard-${c.id}').value})">Save</button>
+                <button class="edit-btn" onclick="msg('cancelEdit')">Cancel</button>
               </div>
             </div>
           </div>
@@ -779,12 +797,20 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
         addSection = `<div class="add-form">
           <div class="add-header">${preset.icon} ${preset.label}<button class="btn-cancel" onclick="msg('cancelAdd')">×</button></div>
           <input id="addEndpoint" class="input" value="${preset.endpoint}" placeholder="Endpoint URL" />
-          ${preset.needsKey ? `<input id="addApiKey" class="input" type="password" placeholder="API Key" />
-          <details class="auth-details"><summary>Custom auth (optional)</summary>
-            <input id="addAuthHeader" class="input" placeholder="Header name (default: ${preset.type === 'anthropic' ? 'x-api-key' : 'Authorization'})" />
-            <input id="addAuthPrefix" class="input" placeholder="Value prefix (default: ${preset.type === 'anthropic' ? 'none' : 'Bearer'})" />
-            <input id="addApiKeyHelper" class="input" placeholder="apiKeyHelper: command that prints the key" title="Shell command whose stdout is the API key (like Claude Code's apiKeyHelper). Used instead of a static key." />
-          </details>` : ''}
+          ${preset.needsKey ? `<input id="addApiKey" class="input" type="password" placeholder="API Key" />` : ''}
+          <details class="auth-details"><summary>Get the key from a command (apiKeyHelper)</summary>
+            <input id="addApiKeyHelper" class="input input-mono" placeholder="e.g. ~/bin/get-llm-token.sh" title="Shell command whose stdout is the API key (like Claude Code's apiKeyHelper). Used instead of a static key." />
+            <p class="form-hint">Runs through your shell; its output is sent as the API key. Reused for 5 min and refreshed on 401/403. Press Enter or leave the field to load models.</p>
+          </details>
+          <details class="auth-details"><summary>Custom auth header (optional)</summary>
+            <div class="field-row">
+              <label class="field"><span class="field-label">Header</span>
+                <input id="addAuthHeader" class="input" placeholder="${preset.type === 'anthropic' ? 'x-api-key' : 'Authorization'}" /></label>
+              <label class="field field-narrow"><span class="field-label">Prefix</span>
+                <input id="addAuthPrefix" class="input" placeholder="${preset.type === 'anthropic' ? 'none' : 'Bearer'}" /></label>
+            </div>
+            <p class="form-hint">For corporate gateways, e.g. <code>Ocp-Apim-Subscription-Key</code> with no prefix.</p>
+          </details>
           <div id="modelSection" style="display:none">
             <select id="addModel" class="input"><option>Loading models...</option></select>
           </div>
@@ -870,6 +896,18 @@ if (keyInput) {
 } else {
   // No key needed — fetch models immediately
   setTimeout(triggerFetchModels, 300);
+}
+
+// A helper command replaces the static key
+const helperInput = document.getElementById('addApiKeyHelper');
+if (helperInput && keyInput) {
+  helperInput.addEventListener('input', () => {
+    const hasHelper = helperInput.value.trim() !== '';
+    keyInput.disabled = hasHelper;
+    keyInput.placeholder = hasHelper ? 'API Key (not needed: using apiKeyHelper)' : 'API Key';
+    if (btnAdd && btnAdd.disabled && hasHelper) btnAdd.textContent = 'Press Enter to load models';
+  });
+  helperInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') triggerFetchModels(); });
 }
 
 // Re-fetch models when auth header fields change
@@ -1057,8 +1095,8 @@ body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); 
 .provider-item.active { border-left-color: #4CAF50; background: rgba(76,175,80,0.06); }
 .provider-item.jira { border-left-color: #0052CC; cursor: default; }
 
-.provider-main { display: flex; align-items: center; gap: 6px; }
-.provider-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--vscode-descriptionForeground); opacity: 0.3; flex-shrink: 0; }
+.provider-main { display: flex; align-items: flex-start; gap: 6px; }
+.provider-dot { width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--vscode-descriptionForeground); opacity: 0.3; flex-shrink: 0; }
 .provider-dot.on { background: #4CAF50; opacity: 1; box-shadow: 0 0 4px rgba(76,175,80,0.5); }
 .provider-dot.warn { background: #f9a825; opacity: 1; box-shadow: 0 0 4px rgba(249,168,37,0.5); }
 .provider-dot.error { background: #f44336; opacity: 1; box-shadow: 0 0 4px rgba(244,67,54,0.5); }
@@ -1071,27 +1109,57 @@ body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); 
 .provider-name { display: block; font-weight: 600; font-size: 0.9em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .provider-name:hover { color: var(--vscode-textLink-foreground); }
 .provider-auth {
-  display: block; font-size: 0.7em; color: var(--vscode-descriptionForeground); opacity: 0.6;
+  display: block; font-size: 11px; color: var(--vscode-descriptionForeground); opacity: 0.85; margin-top: 1px;
   cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .provider-auth:hover { opacity: 1; color: var(--vscode-textLink-foreground); }
 .model-picker-slot { width: 100%; }
 .model-picker-slot select, .model-picker-slot input { width: 100%; }
 .provider-model {
-  display: block; font-size: 0.78em; color: var(--vscode-descriptionForeground);
+  display: block; font-size: 11px; color: var(--vscode-descriptionForeground);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;
 }
 .provider-model:hover { color: var(--vscode-textLink-foreground); text-decoration: underline; }
 .provider-endpoint {
-  display: block; font-size: 0.72em; color: var(--vscode-descriptionForeground); opacity: 0.7;
+  display: block; font-size: 11px; color: var(--vscode-descriptionForeground); opacity: 0.85;
   cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .provider-endpoint:hover { opacity: 1; color: var(--vscode-textLink-foreground); }
 .provider-key {
-  display: block; font-size: 0.7em; color: var(--vscode-descriptionForeground); opacity: 0.6;
+  display: block; font-size: 11px; color: var(--vscode-descriptionForeground); opacity: 0.85;
   cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .provider-key:hover { opacity: 1; color: var(--vscode-textLink-foreground); }
+.provider-link { display: block; font-size: 11px; margin: 4px 0 2px; cursor: pointer; color: var(--vscode-textLink-foreground); }
+.provider-link:hover { text-decoration: underline; }
+
+/* Inline editors */
+.edit-panel {
+  margin: 6px 0 2px; padding: 8px; border-radius: 4px; cursor: default;
+  border: 1px solid var(--vscode-widget-border, rgba(255,255,255,0.12));
+  background: var(--vscode-editorWidget-background, rgba(255,255,255,0.03));
+}
+.edit-title { font-weight: 600; font-size: 12px; margin-bottom: 6px; }
+.field { display: block; flex: 1; min-width: 0; margin-bottom: 6px; }
+.field-narrow { flex: 0 0 34%; }
+.field-row { display: flex; gap: 6px; }
+.field-label { display: block; font-size: 11px; color: var(--vscode-descriptionForeground); margin-bottom: 2px; }
+.field-tag { font-family: var(--vscode-editor-font-family, monospace); opacity: 0.8; }
+.field .input { margin-bottom: 0; }
+.field-hint { font-size: 11px; color: var(--vscode-descriptionForeground); margin: -2px 0 6px; }
+.field-preview { font-size: 11px; color: var(--vscode-descriptionForeground); margin: -2px 0 8px; overflow-wrap: anywhere; }
+code { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; }
+.input-mono { font-family: var(--vscode-editor-font-family, monospace); }
+.edit-actions { display: flex; gap: 6px; margin: 4px 0 2px; }
+.edit-btn {
+  padding: 3px 12px; border-radius: 3px; cursor: pointer; font-size: 12px; font-family: inherit;
+  border: 1px solid var(--vscode-button-border, var(--vscode-widget-border, #555));
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+}
+.edit-btn:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground)); }
+.edit-btn.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-color: transparent; }
+.edit-btn.primary:hover { background: var(--vscode-button-hoverBackground); }
 .provider-delete {
   background: none; border: none; color: var(--vscode-descriptionForeground); cursor: pointer;
   font-size: 1.2em; padding: 0 2px; opacity: 0; transition: opacity 0.15s;
@@ -1120,21 +1188,21 @@ body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); 
   width: 100%; padding: 4px 8px; margin-bottom: 5px;
   background: var(--vscode-input-background); color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border, #555); border-radius: 3px;
-  font-family: inherit; font-size: 0.9em;
+  font-family: inherit; font-size: 12px;
 }
 .input:focus { outline: none; border-color: var(--vscode-focusBorder); }
 select.input { appearance: auto; }
 .btn-primary {
   width: 100%; padding: 5px; border: none; border-radius: 3px; cursor: pointer;
   background: var(--vscode-button-background); color: var(--vscode-button-foreground);
-  font-weight: 600; font-size: 0.85em;
+  font-weight: 600; font-size: 12px;
 }
 .btn-primary:hover { background: var(--vscode-button-hoverBackground); }
 .btn-primary:disabled { opacity: 0.5; cursor: default; }
-.form-hint { font-size: 0.8em; color: var(--vscode-descriptionForeground); margin-bottom: 6px; }
+.form-hint { font-size: 11px; color: var(--vscode-descriptionForeground); margin-bottom: 6px; }
 .form-status { font-size: 0.8em; margin-top: 4px; font-weight: 500; }
-.auth-details { margin: 4px 0; font-size: 0.85em; }
-.auth-details summary { cursor: pointer; color: var(--vscode-descriptionForeground); font-size: 0.85em; }
+.auth-details { margin: 6px 0; }
+.auth-details summary { cursor: pointer; color: var(--vscode-descriptionForeground); font-size: 12px; padding: 2px 0; }
 .auth-details summary:hover { color: var(--vscode-foreground); }
 .auth-details .input { margin-top: 4px; }
 </style>`;
