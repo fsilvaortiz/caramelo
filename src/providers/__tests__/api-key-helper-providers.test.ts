@@ -111,3 +111,50 @@ describe('OpenAICompatibleProvider with apiKeyHelper', () => {
     expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe('Bearer new');
   });
 });
+
+describe('apiKeyHelper in its own header (Azure APIM + Bearer token)', () => {
+  const apim = {
+    authHeader: 'Ocp-Apim-Subscription-Key',
+    authPrefix: '',
+    apiKeyHelperHeader: 'Authorization',
+  };
+
+  it('Claude sends the stored subscription key and the helper token as Bearer', async () => {
+    const { helper } = makeHelper(['tok']);
+    const stored = { ...secrets, get: vi.fn().mockResolvedValue('sub-key') } as unknown as import('vscode').SecretStorage;
+    const provider = new ClaudeProvider(
+      { id: 'c', name: 'Claude', endpoint: 'https://apim.example', model: 'm', apiKeyId: 'k', ...apim },
+      stored,
+      helper,
+    );
+    const fetchMock = vi.fn().mockResolvedValue(claudeOk());
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    expect(await provider.authenticate()).toBe(true);
+    expect(await drain(provider.chat([{ role: 'user', content: 'x' }]))).toBe('hi');
+    const headers = fetchMock.mock.calls[0][1].headers;
+    expect(headers['Ocp-Apim-Subscription-Key']).toBe('sub-key');
+    expect(headers.Authorization).toBe('Bearer tok');
+    expect(headers['x-api-key']).toBeUndefined();
+  });
+
+  it('OpenAI-compatible sends both headers and refreshes only the token on 401', async () => {
+    const { run, helper } = makeHelper(['old', 'new']);
+    const stored = { ...secrets, get: vi.fn().mockResolvedValue('sub-key') } as unknown as import('vscode').SecretStorage;
+    const provider = new OpenAICompatibleProvider(
+      { id: 'o', name: 'GW', endpoint: 'https://apim.example/v1', model: 'm', apiKeyId: 'k', ...apim, apiKeyHelperPrefix: 'Bearer' },
+      stored,
+      helper,
+    );
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('expired', { status: 401 }))
+      .mockResolvedValueOnce(openaiOk());
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await provider.authenticate();
+    expect(await drain(provider.chat([{ role: 'user', content: 'x' }]))).toBe('hi');
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][1].headers).toMatchObject({ 'Ocp-Apim-Subscription-Key': 'sub-key', Authorization: 'Bearer old' });
+    expect(fetchMock.mock.calls[1][1].headers).toMatchObject({ 'Ocp-Apim-Subscription-Key': 'sub-key', Authorization: 'Bearer new' });
+  });
+});

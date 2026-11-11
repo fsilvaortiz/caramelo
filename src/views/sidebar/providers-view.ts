@@ -7,6 +7,27 @@ import { SETTINGS_KEYS } from '../../constants.js';
 import type { ProviderConfig } from '../../constants.js';
 import { log } from '../../utils/log.js';
 import { createApiKeyHelper } from '../../utils/api-key-helper.js';
+import { buildAuthHeaders, resolveHelperHeaderTarget, sanitizeHeaderName, sanitizeHeaderPrefix } from '../../utils/auth.js';
+
+interface AuthInputs {
+  authHeader?: string;
+  authPrefix?: string;
+  apiKeyHelperHeader?: string;
+  apiKeyHelperPrefix?: string;
+}
+
+function defaultAuthHeader(type: string): string {
+  return type === 'anthropic' ? 'x-api-key' : 'Authorization';
+}
+
+function defaultAuthPrefix(type: string): string {
+  return type === 'anthropic' ? '' : 'Bearer';
+}
+
+/** Where the apiKeyHelper output goes for this config, or null when it replaces the stored key. */
+function helperTargetFor(type: string, auth: AuthInputs) {
+  return resolveHelperHeaderTarget(auth, sanitizeHeaderName(auth.authHeader, defaultAuthHeader(type)));
+}
 
 interface ModelInfo { id: string; name: string }
 
@@ -175,7 +196,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     this.view.webview.html = this.getHtml(addingPresetIndex);
   }
 
-  private async handleAdd(msg: { name: string; type: string; endpoint: string; model: string; apiKey?: string; authHeader?: string; authPrefix?: string; apiKeyHelper?: string }): Promise<void> {
+  private async handleAdd(msg: { name: string; type: string; endpoint: string; model: string; apiKey?: string; authHeader?: string; authPrefix?: string; apiKeyHelper?: string; apiKeyHelperHeader?: string; apiKeyHelperPrefix?: string }): Promise<void> {
     const baseId = msg.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const existingIds = new Set((vscode.workspace.getConfiguration().get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? []).map((c) => c.id));
     let id = baseId;
@@ -195,6 +216,9 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
       ...(msg.authHeader ? { authHeader: msg.authHeader } : {}),
       ...(msg.authPrefix !== undefined && msg.authPrefix !== '' ? { authPrefix: msg.authPrefix } : {}),
       ...(msg.apiKeyHelper?.trim() ? { apiKeyHelper: msg.apiKeyHelper.trim() } : {}),
+      ...(msg.apiKeyHelper?.trim() && msg.apiKeyHelperHeader?.trim() ? { apiKeyHelperHeader: msg.apiKeyHelperHeader.trim() } : {}),
+      ...(msg.apiKeyHelper?.trim() && msg.apiKeyHelperHeader?.trim() && msg.apiKeyHelperPrefix !== undefined && msg.apiKeyHelperPrefix !== ''
+        ? { apiKeyHelperPrefix: msg.apiKeyHelperPrefix.trim() } : {}),
     };
 
     let provider: import('../../providers/types.js').LLMProvider;
@@ -234,22 +258,22 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     this.refresh();
   }
 
-  private async handleFetchModels(msg: { type: string; endpoint: string; apiKey?: string; authHeader?: string; authPrefix?: string; apiKeyHelper?: string }): Promise<void> {
+  private async handleFetchModels(msg: { type: string; endpoint: string; apiKey?: string; authHeader?: string; authPrefix?: string; apiKeyHelper?: string; apiKeyHelperHeader?: string; apiKeyHelperPrefix?: string }): Promise<void> {
     let models: ModelInfo[];
     if (msg.type === 'copilot') {
       const copilotModels = await getCopilotModels();
       models = copilotModels.map((m) => ({ id: m.family, name: m.name }));
     } else {
-      let apiKey = msg.apiKey;
-      const helper = apiKey ? null : createApiKeyHelper({ name: 'New provider', apiKeyHelper: msg.apiKeyHelper });
+      let helperToken: string | undefined;
+      const helper = createApiKeyHelper({ name: 'New provider', apiKeyHelper: msg.apiKeyHelper });
       if (helper) {
         try {
-          apiKey = await helper.getKey();
+          helperToken = await helper.getKey();
         } catch (err) {
           vscode.window.showWarningMessage((err as Error).message);
         }
       }
-      models = await this.fetchModelsFromAPI(msg.type, msg.endpoint, apiKey, msg.authHeader, msg.authPrefix);
+      models = await this.fetchModelsFromAPI(msg.type, msg.endpoint, msg, msg.apiKey, helperToken);
     }
     this.view?.webview.postMessage({ command: 'modelsLoaded', models });
   }
@@ -357,10 +381,9 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
           models = copilotModels.map((m) => ({ id: m.family, name: m.name }));
         } else {
           const helper = createApiKeyHelper(config);
-          const apiKey = helper
-            ? await helper.getKey()
-            : await this.secrets.get(`caramelo.provider.${id}.apiKey`);
-          models = await this.fetchModelsFromAPI(config.type, config.endpoint, apiKey ?? undefined, config.authHeader, config.authPrefix);
+          const helperToken = helper ? await helper.getKey() : undefined;
+          const storedKey = await this.secrets.get(`caramelo.provider.${id}.apiKey`);
+          models = await this.fetchModelsFromAPI(config.type, config.endpoint, config, storedKey ?? undefined, helperToken);
         }
       } catch { /* ignore */ }
 
@@ -519,7 +542,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     this.refresh();
   }
 
-  private async handleSaveAuth(msg: { id: string; authHeader: string; authPrefix: string; apiKeyHelper?: string }): Promise<void> {
+  private async handleSaveAuth(msg: { id: string; authHeader: string; authPrefix: string; apiKeyHelper?: string; apiKeyHelperHeader?: string; apiKeyHelperPrefix?: string }): Promise<void> {
     const vsConfig = vscode.workspace.getConfiguration();
     const configs = vsConfig.get<ProviderConfig[]>(SETTINGS_KEYS.providers) ?? [];
     const config = configs.find((c) => c.id === msg.id);
@@ -528,6 +551,9 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
     config.authHeader = msg.authHeader || undefined;
     config.authPrefix = msg.authPrefix || undefined;
     config.apiKeyHelper = msg.apiKeyHelper?.trim() || undefined;
+    config.apiKeyHelperHeader = (config.apiKeyHelper && msg.apiKeyHelperHeader?.trim()) || undefined;
+    // Empty prefix = default (Bearer for Authorization, none otherwise).
+    config.apiKeyHelperPrefix = (config.apiKeyHelperHeader && msg.apiKeyHelperPrefix?.trim()) || undefined;
     await vsConfig.update(SETTINGS_KEYS.providers, configs, vscode.ConfigurationTarget.Global);
 
     // Re-register provider with new auth
@@ -592,19 +618,23 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
       <div class="edit-actions"><button class="edit-btn primary" onclick="msg('setModel',{id:'${providerId}',model:document.getElementById('editModel-${providerId}').value})">Save</button><button class="edit-btn" onclick="msg('cancelEdit')">Cancel</button></div>`;
   }
 
-  private async fetchModelsFromAPI(type: string, endpoint: string, apiKey?: string, customAuthHeader?: string, customAuthPrefix?: string): Promise<ModelInfo[]> {
+  private async fetchModelsFromAPI(type: string, endpoint: string, auth: AuthInputs, storedKey?: string, helperToken?: string): Promise<ModelInfo[]> {
     // Try fetching from API first
     try {
       const url = type === 'anthropic'
         ? `${endpoint.replace(/\/+$/, '')}/v1/models`
         : `${endpoint.replace(/\/+$/, '')}/models`;
 
-      const headers: Record<string, string> = { 'Accept': 'application/json' };
-      if (apiKey) {
-        const headerName = customAuthHeader || (type === 'anthropic' ? 'x-api-key' : 'Authorization');
-        const prefix = customAuthPrefix ?? (type === 'anthropic' ? '' : 'Bearer');
-        headers[headerName] = prefix ? `${prefix} ${apiKey}` : apiKey;
-      }
+      const headers: Record<string, string> = {
+        'Accept': 'application/json',
+        ...buildAuthHeaders({
+          authHeader: sanitizeHeaderName(auth.authHeader || undefined, defaultAuthHeader(type)),
+          authPrefix: sanitizeHeaderPrefix(auth.authPrefix ?? undefined, defaultAuthPrefix(type)),
+          helperTarget: helperToken ? helperTargetFor(type, auth) : null,
+          storedKey,
+          helperToken,
+        }),
+      };
       if (type === 'anthropic') {
         headers['anthropic-version'] = '2023-06-01';
       }
@@ -698,7 +728,7 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
                        onclick="msg('cancelEdit')">Cancel</button>
                    </div>
                    <a class="provider-link" onclick="msg('editAuth',{id:'${p.id}'})">Get the key from a command instead (apiKeyHelper)…</a>`
-                : config.apiKeyHelper
+                : config.apiKeyHelper && !helperTargetFor(config.type, config)
                   ? `<span class="provider-key" onclick="msg('editAuth',{id:'${p.id}'})" title="The API key is obtained by running apiKeyHelper: ${esc(config.apiKeyHelper)}">key: from apiKeyHelper</span>`
                   : `<span class="provider-key" onclick="msg('editApiKey',{id:'${p.id}'})" title="Click to set or replace the API key (stored in SecretStorage)">key: ●●●●  <em style="opacity:0.6">(click to replace)</em></span>`
             ) : ''}
@@ -711,20 +741,42 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
                      <label class="field field-narrow"><span class="field-label">Prefix</span>
                        <input class="input" id="editAuthPrefix-${p.id}" value="${esc(config?.authPrefix ?? (config?.type === 'anthropic' ? '' : 'Bearer'))}" placeholder="none" /></label>
                    </div>
-                   <div class="field-preview">Sends: <code id="authPreview-${p.id}"></code></div>
                    ${config?.type !== 'copilot' ? `<label class="field"><span class="field-label">API key command <span class="field-tag">apiKeyHelper</span></span>
                      <input class="input input-mono" id="editApiKeyHelper-${p.id}" value="${esc(config?.apiKeyHelper ?? '')}" placeholder="e.g. ~/bin/get-llm-token.sh" /></label>
-                   <div class="field-hint">Its output is used as the API key. Leave empty to use the stored key.</div>` : ''}
-                   <div class="edit-actions"><button class="edit-btn primary" onclick="msg('saveAuth',{id:'${p.id}',authHeader:document.getElementById('editAuthHeader-${p.id}').value,authPrefix:document.getElementById('editAuthPrefix-${p.id}').value,apiKeyHelper:document.getElementById('editApiKeyHelper-${p.id}')?.value})">Save</button><button class="edit-btn" onclick="msg('cancelEdit')">Cancel</button></div>
+                   <div class="field-row" id="helperHeaderRow-${p.id}">
+                     <label class="field"><span class="field-label">Send command output in</span>
+                       <input class="input" id="editHelperHeader-${p.id}" value="${esc(config?.apiKeyHelperHeader ?? '')}" placeholder="same header" /></label>
+                     <label class="field field-narrow"><span class="field-label">Prefix</span>
+                       <input class="input" id="editHelperPrefix-${p.id}" value="${esc(config?.apiKeyHelperPrefix ?? '')}" placeholder="Bearer" /></label>
+                   </div>
+                   <div class="field-hint">Empty: the output replaces the stored key. A different header (e.g. Authorization): both are sent — the stored key in the header above (e.g. Azure APIM) and the output here.</div>` : ''}
+                   <div class="field-preview">Sends:<br><code id="authPreview-${p.id}"></code></div>
+                   <div class="edit-actions"><button class="edit-btn primary" onclick="msg('saveAuth',{id:'${p.id}',authHeader:document.getElementById('editAuthHeader-${p.id}').value,authPrefix:document.getElementById('editAuthPrefix-${p.id}').value,apiKeyHelper:document.getElementById('editApiKeyHelper-${p.id}')?.value,apiKeyHelperHeader:document.getElementById('editHelperHeader-${p.id}')?.value,apiKeyHelperPrefix:document.getElementById('editHelperPrefix-${p.id}')?.value})">Save</button><button class="edit-btn" onclick="msg('cancelEdit')">Cancel</button></div>
                  </div>
                  <script>(() => {
-                   const h = document.getElementById('editAuthHeader-${p.id}');
-                   const pr = document.getElementById('editAuthPrefix-${p.id}');
+                   const val = (id) => (document.getElementById(id + '-${p.id}')?.value || '').trim();
                    const out = document.getElementById('authPreview-${p.id}');
-                   const upd = () => { out.textContent = (h.value.trim() || 'Authorization') + ': ' + (pr.value.trim() ? pr.value.trim() + ' ' : '') + '<key>'; };
-                   h.addEventListener('input', upd); pr.addEventListener('input', upd); upd();
+                   const row = document.getElementById('helperHeaderRow-${p.id}');
+                   const upd = () => {
+                     const h = val('editAuthHeader') || '${config?.type === 'anthropic' ? 'x-api-key' : 'Authorization'}';
+                     const pr = val('editAuthPrefix');
+                     const cmd = val('editApiKeyHelper');
+                     const hh = val('editHelperHeader');
+                     const separate = cmd && hh && hh.toLowerCase() !== h.toLowerCase();
+                     const hp = document.getElementById('editHelperPrefix-${p.id}')?.value.trim() ?? '';
+                     const helperPrefix = hp || (hh.toLowerCase() === 'authorization' ? 'Bearer' : '');
+                     const line = (name, prefix, what) => name + ': ' + (prefix ? prefix + ' ' : '') + what;
+                     if (row) row.style.display = cmd ? '' : 'none';
+                     out.textContent = '';
+                     const lines = !cmd ? [line(h, pr, '<stored key>')]
+                       : !separate ? [line(h, pr, '<command output>')]
+                       : [line(h, pr, '<stored key>'), line(hh, helperPrefix, '<command output>')];
+                     lines.forEach((l, i) => { if (i) out.appendChild(document.createElement('br')); out.appendChild(document.createTextNode(l)); });
+                   };
+                   ['editAuthHeader','editAuthPrefix','editApiKeyHelper','editHelperHeader','editHelperPrefix'].forEach((id) => document.getElementById(id + '-${p.id}')?.addEventListener('input', upd));
+                   upd();
                  })();</script>`
-              : `<span class="provider-auth" onclick="msg('editAuth',{id:'${p.id}'})" title="Click to edit the auth header, prefix and apiKeyHelper">⚙ auth: ${esc(config?.authHeader ? `${config.authHeader} ${config.authPrefix || ''}`.trim() : 'default')}${config?.apiKeyHelper ? ' · apiKeyHelper' : ''}</span>`}
+              : `<span class="provider-auth" onclick="msg('editAuth',{id:'${p.id}'})" title="Click to edit the auth header, prefix and apiKeyHelper">⚙ auth: ${esc(config?.authHeader ? `${config.authHeader} ${config.authPrefix || ''}`.trim() : 'default')}${config?.apiKeyHelper ? (config.apiKeyHelperHeader && helperTargetFor(config.type, config) ? ` + ${esc(config.apiKeyHelperHeader)} (apiKeyHelper)` : ' · apiKeyHelper') : ''}</span>`}
           </div>
           <button class="provider-delete" onclick="event.stopPropagation(); msg('deleteProvider',{id:'${p.id}'})" title="Delete">×</button>
         </div>
@@ -800,7 +852,13 @@ export class ProvidersViewProvider implements vscode.WebviewViewProvider {
           ${preset.needsKey ? `<input id="addApiKey" class="input" type="password" placeholder="API Key" />` : ''}
           <details class="auth-details"><summary>Get the key from a command (apiKeyHelper)</summary>
             <input id="addApiKeyHelper" class="input input-mono" placeholder="e.g. ~/bin/get-llm-token.sh" title="Shell command whose stdout is the API key (like Claude Code's apiKeyHelper). Used instead of a static key." />
-            <p class="form-hint">Runs through your shell; its output is sent as the API key. Reused for 5 min and refreshed on 401/403. Press Enter or leave the field to load models.</p>
+            <div class="field-row">
+              <label class="field"><span class="field-label">Send output in (optional)</span>
+                <input id="addHelperHeader" class="input" placeholder="same header" /></label>
+              <label class="field field-narrow"><span class="field-label">Prefix</span>
+                <input id="addHelperPrefix" class="input" placeholder="Bearer" /></label>
+            </div>
+            <p class="form-hint">Runs through your shell; its output is sent as the API key, reused for 5 min and refreshed on 401/403. To send it <em>next to</em> the API key (e.g. Azure APIM subscription key + <code>Authorization: Bearer</code> token), put the key above, its header under <em>Custom auth header</em>, and <code>Authorization</code> here. Press Enter to load models.</p>
           </details>
           <details class="auth-details"><summary>Custom auth header (optional)</summary>
             <div class="field-row">
@@ -877,6 +935,8 @@ function triggerFetchModels() {
   const authHeader = document.getElementById('addAuthHeader')?.value || '';
   const authPrefix = document.getElementById('addAuthPrefix')?.value || '';
   const apiKeyHelper = (document.getElementById('addApiKeyHelper')?.value || '').trim();
+  const apiKeyHelperHeader = (document.getElementById('addHelperHeader')?.value || '').trim();
+  const apiKeyHelperPrefix = document.getElementById('addHelperPrefix')?.value || '';
   if (keyInput && apiKey.length < 10 && !apiKeyHelper) return;
   debounce = setTimeout(() => {
     if (btnAdd) { btnAdd.textContent = 'Loading models...'; btnAdd.disabled = true; }
@@ -886,7 +946,9 @@ function triggerFetchModels() {
       apiKey: apiKey || undefined,
       authHeader: authHeader || undefined,
       authPrefix: authPrefix || undefined,
-      apiKeyHelper: apiKeyHelper || undefined
+      apiKeyHelper: apiKeyHelper || undefined,
+      apiKeyHelperHeader: apiKeyHelperHeader || undefined,
+      apiKeyHelperPrefix: apiKeyHelperPrefix || undefined
     });
   }, 500);
 }
@@ -900,18 +962,27 @@ if (keyInput) {
 
 // A helper command replaces the static key
 const helperInput = document.getElementById('addApiKeyHelper');
-if (helperInput && keyInput) {
-  helperInput.addEventListener('input', () => {
-    const hasHelper = helperInput.value.trim() !== '';
-    keyInput.disabled = hasHelper;
-    keyInput.placeholder = hasHelper ? 'API Key (not needed: using apiKeyHelper)' : 'API Key';
-    if (btnAdd && btnAdd.disabled && hasHelper) btnAdd.textContent = 'Press Enter to load models';
-  });
+const helperHeaderInput = document.getElementById('addHelperHeader');
+function syncKeyInput() {
+  if (!helperInput || !keyInput) return;
+  const hasHelper = helperInput.value.trim() !== '';
+  // With its own header the helper output is sent next to the key, so the key is still needed.
+  const replacesKey = hasHelper && !(helperHeaderInput?.value.trim());
+  keyInput.disabled = replacesKey;
+  keyInput.placeholder = replacesKey ? 'API Key (not needed: using apiKeyHelper)' : 'API Key';
+  if (btnAdd && btnAdd.disabled && hasHelper) btnAdd.textContent = 'Press Enter to load models';
+}
+if (helperInput) {
+  helperInput.addEventListener('input', syncKeyInput);
   helperInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') triggerFetchModels(); });
+}
+if (helperHeaderInput) {
+  helperHeaderInput.addEventListener('input', syncKeyInput);
+  helperHeaderInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') triggerFetchModels(); });
 }
 
 // Re-fetch models when auth header fields change
-['addAuthHeader', 'addAuthPrefix', 'addApiKeyHelper'].forEach(id => {
+['addAuthHeader', 'addAuthPrefix', 'addApiKeyHelper', 'addHelperHeader', 'addHelperPrefix'].forEach(id => {
   const el = document.getElementById(id);
   if (el) el.addEventListener('change', triggerFetchModels);
 });
@@ -1079,7 +1150,10 @@ function submitAdd(name, type) {
   const authHeader = document.getElementById('addAuthHeader')?.value || undefined;
   const authPrefix = document.getElementById('addAuthPrefix')?.value ?? undefined;
   const apiKeyHelper = (document.getElementById('addApiKeyHelper')?.value || '').trim() || undefined;
-  msg('addProvider', { name, type, endpoint, model, apiKey: apiKey || undefined, authHeader, authPrefix, apiKeyHelper });
+  const apiKeyHelperHeader = (document.getElementById('addHelperHeader')?.value || '').trim() || undefined;
+  const apiKeyHelperPrefix = document.getElementById('addHelperPrefix')?.value || undefined;
+  const keyEl = document.getElementById('addApiKey');
+  msg('addProvider', { name, type, endpoint, model, apiKey: (!keyEl?.disabled && apiKey) || undefined, authHeader, authPrefix, apiKeyHelper, apiKeyHelperHeader, apiKeyHelperPrefix });
 }
 </script>`;
 
@@ -1110,7 +1184,7 @@ body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); 
 .provider-name:hover { color: var(--vscode-textLink-foreground); }
 .provider-auth {
   display: block; font-size: 11px; color: var(--vscode-descriptionForeground); opacity: 0.85; margin-top: 1px;
-  cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: pointer; overflow-wrap: anywhere;
 }
 .provider-auth:hover { opacity: 1; color: var(--vscode-textLink-foreground); }
 .model-picker-slot { width: 100%; }

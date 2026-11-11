@@ -313,6 +313,18 @@
                 "minimum": 0,
                 "default": 300000,
                 "description": "How long (ms) the key returned by apiKeyHelper is reused before running the command again. A 401/403 response always refreshes it."
+              },
+              "apiKeyHelperHeader": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9-]*$",
+                "maxLength": 64,
+                "description": "Send the apiKeyHelper output in this header instead of authHeader (e.g. Authorization). The stored API key is then still sent in authHeader, so both go out — e.g. Ocp-Apim-Subscription-Key for Azure API Management plus Authorization: Bearer <token>. Leave empty for the helper output to replace the stored key."
+              },
+              "apiKeyHelperPrefix": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9-]*$",
+                "maxLength": 16,
+                "description": "Prefix for the apiKeyHelper output when apiKeyHelperHeader is set. Defaults to Bearer for the Authorization header, none otherwise."
               }
             },
             "required": [

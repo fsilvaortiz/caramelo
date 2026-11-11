@@ -214,6 +214,7 @@ API keys and Jira tokens are stored securely in VS Code's SecretStorage, never i
 | `authPrefix` (per provider) | `Bearer` / empty | Prefix prepended to the key. Letters, digits, hyphens only. Leave empty to send the raw key. |
 | `apiKeyHelper` (per provider) | — | Shell command that prints the API key on stdout. Used instead of the stored key. |
 | `apiKeyHelperTtlMs` (per provider) | `300000` | How long the helper's key is reused before the command runs again. |
+| `apiKeyHelperHeader` / `apiKeyHelperPrefix` (per provider) | — / `Bearer` for `Authorization` | Send the helper output in its own header, next to the stored key in `authHeader`. Empty = the output replaces the stored key. |
 
 Invalid values for `authHeader` / `authPrefix` (e.g. containing spaces, colons, or CR/LF) are rejected at runtime and the default is used instead.
 
@@ -240,6 +241,18 @@ Like Claude Code's [`apiKeyHelper`](https://docs.anthropic.com/en/docs/claude-co
 
 - The command runs through your shell (`/bin/sh` on macOS/Linux, `cmd.exe` on Windows — use a full path there, `~` is not expanded) from the workspace folder; its trimmed stdout (one line) is sent with `authHeader` / `authPrefix` as usual.
 - The key is reused for `apiKeyHelperTtlMs` (5 min by default). A `401`/`403` response runs the command again and retries the request once.
+- **Two headers at once** (e.g. Azure API Management in front of the API): set `apiKeyHelperHeader` to a different header than `authHeader`. The stored API key is then still sent in `authHeader` and the command output goes in `apiKeyHelperHeader`, with `apiKeyHelperPrefix` (default `Bearer` for `Authorization`):
+
+  ```json
+  {
+    "authHeader": "Ocp-Apim-Subscription-Key",
+    "authPrefix": "",
+    "apiKeyHelper": "~/bin/get-entra-token.sh",
+    "apiKeyHelperHeader": "Authorization"
+  }
+  ```
+
+  sends `Ocp-Apim-Subscription-Key: <stored key>` and `Authorization: Bearer <command output>`. A `401`/`403` refreshes only the command output.
 - It can also be set from the sidebar: *Get the key from a command (apiKeyHelper)* in the Add Provider form, or — for an existing provider — click its `auth:` line (or *key: ●●●●* → *Get the key from a command instead*).
 - It never runs in untrusted workspaces, and workspace-level values of `caramelo.providers` are ignored there.
 

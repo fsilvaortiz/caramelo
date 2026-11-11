@@ -3,7 +3,13 @@ import type { Capability, LLMMessage, LLMOptions, LLMProvider } from './types.js
 import { parseSSEEvents, parseSSEStream } from './sse.js';
 import { AuthError, NetworkError, ProviderError, isAbortError } from '../errors.js';
 import { getSseTimeoutMs } from '../utils/settings.js';
-import { sanitizeHeaderName, sanitizeHeaderPrefix } from '../utils/auth.js';
+import {
+  buildAuthHeaders,
+  resolveHelperHeaderTarget,
+  sanitizeHeaderName,
+  sanitizeHeaderPrefix,
+  type HelperHeaderTarget,
+} from '../utils/auth.js';
 import { createApiKeyHelper, type ApiKeyHelper } from '../utils/api-key-helper.js';
 import type {
   AgentEvent,
@@ -22,7 +28,11 @@ export class OpenAICompatibleProvider implements LLMProvider {
   private readonly authHeader: string;
   private readonly authPrefix: string;
   private readonly keyHelper: ApiKeyHelper | null;
+  private readonly helperTarget: HelperHeaderTarget | null;
+  /** Key stored in SecretStorage (none for keyless local endpoints). */
   private apiKey: string | null = null;
+  /** Latest apiKeyHelper output. */
+  private helperToken: string | null = null;
   private abortController: AbortController | null = null;
 
   constructor(
@@ -30,6 +40,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       id: string; name: string; endpoint: string; model: string; apiKeyId?: string;
       authHeader?: string; authPrefix?: string;
       apiKeyHelper?: string; apiKeyHelperTtlMs?: number;
+      apiKeyHelperHeader?: string; apiKeyHelperPrefix?: string;
     },
     secrets: vscode.SecretStorage,
     keyHelper: ApiKeyHelper | null = createApiKeyHelper(config),
@@ -43,13 +54,15 @@ export class OpenAICompatibleProvider implements LLMProvider {
     this.authPrefix = sanitizeHeaderPrefix(config.authPrefix, 'Bearer');
     this.secrets = secrets;
     this.keyHelper = keyHelper;
+    this.helperTarget = keyHelper ? resolveHelperHeaderTarget(config, this.authHeader) : null;
   }
 
   async authenticate(): Promise<boolean> {
     if (this.keyHelper) {
-      // The helper is the source of truth; never prompt for a static key.
-      this.apiKey = await this.keyHelper.getKey();
-      return true;
+      this.helperToken = await this.keyHelper.getKey();
+      // Helper output replaces the stored key: never prompt for one.
+      if (!this.helperTarget) return true;
+      // Otherwise the stored key goes in its own header next to the helper's.
     }
     if (!this.apiKeyId) return true;
     const key = await this.secrets.get(this.apiKeyId);
@@ -123,17 +136,22 @@ export class OpenAICompatibleProvider implements LLMProvider {
   }
 
   /**
-   * Auth headers for the next request: from the apiKeyHelper (cached) when
-   * configured, else the key loaded by authenticate() (none for keyless
-   * local endpoints).
+   * Headers for the next request: the stored key and/or the apiKeyHelper
+   * output (cached), routed per `buildAuthHeaders`. No auth header for
+   * keyless local endpoints.
    */
   private async buildHeaders(): Promise<Record<string, string>> {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (this.keyHelper) this.apiKey = await this.keyHelper.getKey();
-    if (this.apiKey) {
-      headers[this.authHeader] = this.authPrefix ? `${this.authPrefix} ${this.apiKey}` : this.apiKey;
-    }
-    return headers;
+    if (this.keyHelper) this.helperToken = await this.keyHelper.getKey();
+    return {
+      'Content-Type': 'application/json',
+      ...buildAuthHeaders({
+        authHeader: this.authHeader,
+        authPrefix: this.authPrefix,
+        helperTarget: this.helperTarget,
+        storedKey: this.apiKey,
+        helperToken: this.helperToken,
+      }),
+    };
   }
 
   /**
@@ -174,7 +192,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     // (b) no key is needed (local endpoints like Ollama/LM Studio). The
     // actual endpoint may still refuse tool_calls; an error then
     // surfaces via the runtime's fallback-notification path.
-    if (this.apiKey !== null || (this.apiKeyId === null && !this.keyHelper)) {
+    if (this.apiKey !== null || this.helperToken !== null || (this.apiKeyId === null && !this.keyHelper)) {
       caps.add('tool-calling');
     }
     return caps;
