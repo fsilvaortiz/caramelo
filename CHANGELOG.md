@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [0.4.0] - 2026-11-11
+
+**API key from a command.** Providers can obtain their key by running a command (`apiKeyHelper`), like Claude Code — for short-lived tokens from corporate gateways, vault CLIs or cloud SSO.
 
 ### Added
 
