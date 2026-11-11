@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [0.4.1] - 2026-11-11
+
+Easier-to-find and readable provider auth settings in the sidebar.
 
 ### Changed
 

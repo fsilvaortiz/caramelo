@@ -10,6 +10,12 @@ Browse releases on GitHub: [github.com/fsilvaortiz/caramelo/releases](https://gi
 
 ## Latest
 
+### v0.4.1 — 2026-11-11
+
+**Readable provider auth settings.** The auth editor is now a labelled panel (Header, Prefix, API key command) with a live preview of the header that will be sent, and `apiKeyHelper` has its own section in the Add Provider form and a link from the API key editor. Provider details, inputs and buttons use readable sizes instead of 8–9 px text.
+
+[Full v0.4.1 notes](https://github.com/fsilvaortiz/caramelo/releases/tag/v0.4.1)
+
 ### v0.4.0 — 2026-11-11
 
 **API key from a command.** Claude and OpenAI-compatible providers accept an `apiKeyHelper`: a shell command whose output is the API key, like Claude Code's setting of the same name — for short-lived tokens from corporate gateways, vault CLIs or cloud SSO. The key is reused for 5 minutes (`apiKeyHelperTtlMs`) and refreshed on 401/403 with one retry. Set it in `settings.json` or from the sidebar. It never runs in untrusted workspaces, and `caramelo.providers` from an untrusted workspace's settings is ignored until you trust it.
