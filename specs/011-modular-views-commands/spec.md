@@ -1,13 +1,13 @@
 # Feature Specification: Modular Views & Declarative Command Registration
 
-**Feature Branch**: `005-modular-views-commands`  
+**Feature Branch**: `011-modular-views-commands`  
 **Created**: 2026-11-13  
 **Status**: Draft  
 **Input**: User description: "Split the monolithic sidebar webviews (providers-view ~1280 lines, workflow-view ~1150) and large command modules (edit-constitution ~840, start-task ~650) into testable state/render/asset pieces, register commands from a declarative table with a test that keeps it in sync with package.json, and update CONTRIBUTING.md to the real project structure. No user-visible behavior change."
 
 ## Context
 
-The two sidebar views mix state, message handling, HTML templates, CSS and client script in one file, so most of their logic is untested (see feature 004) and every change risks side effects. `extension.ts` registers 28 commands by hand while `package.json` declares 35, with nothing ensuring they match. CONTRIBUTING.md describes a structure that predates `agent/`, `constitution/` and `utils/`. This is a pure refactor: users must not notice any difference.
+The two sidebar views mix state, message handling, HTML templates, CSS and client script in one file, so most of their logic is untested (see feature 010) and every change risks side effects. `extension.ts` registers 28 commands by hand while `package.json` declares 35, with nothing ensuring they match. CONTRIBUTING.md describes a structure that predates `agent/`, `constitution/` and `utils/`. This is a pure refactor: users must not notice any difference.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -68,7 +68,7 @@ A new contributor reads CONTRIBUTING.md and finds the current directory layout, 
 
 ### Edge Cases
 
-- Webview static assets moved to files must still load offline and under the strict policy from feature 001.
+- Webview static assets moved to files must still load offline and under the strict policy from feature 007.
 - Views with `retainContextWhenHidden` must keep their state across hide/show after the split.
 - Commands registered conditionally (e.g. depending on workspace trust) must be represented in the table.
 
@@ -96,5 +96,5 @@ A new contributor reads CONTRIBUTING.md and finds the current directory layout, 
 
 ## Assumptions
 
-- Depends on feature 001 (shared webview builder) and benefits from 004 (coverage reporting); should be sequenced after them.
+- Depends on feature 007 (shared webview builder) and benefits from 010 (coverage reporting); should be sequenced after them.
 - No UI framework is introduced; rendering stays template-string based to respect the bundle budget.

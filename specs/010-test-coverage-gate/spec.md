@@ -1,6 +1,6 @@
 # Feature Specification: Test Coverage Gate
 
-**Feature Branch**: `004-test-coverage-gate`  
+**Feature Branch**: `010-test-coverage-gate`  
 **Created**: 2026-11-13  
 **Status**: Draft  
 **Input**: User description: "Measure unit-test coverage in CI, prevent it from dropping, and add tests for the non-trivial modules that currently have none (analyze, select-provider, create-spec-from-jira, run/approve phase, task-edits diff preview and prompt, codelens providers, specs workspace, templates, jira provider, openai-compatible provider)."
@@ -29,7 +29,7 @@ A maintainer opening a pull request sees the overall and per-directory coverage 
 
 ### User Story 2 - Risky untested modules gain tests (Priority: P2)
 
-The modules that parse LLM output, compute CodeLens ranges, choose providers or import Jira issues get dedicated tests, so refactors (feature 005) can proceed safely.
+The modules that parse LLM output, compute CodeLens ranges, choose providers or import Jira issues get dedicated tests, so refactors (feature 011) can proceed safely.
 
 **Why this priority**: These modules hold the logic most likely to regress silently.
 

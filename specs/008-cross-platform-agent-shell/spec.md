@@ -1,6 +1,6 @@
 # Feature Specification: Cross-Platform Agent Shell Tool
 
-**Feature Branch**: `002-cross-platform-agent-shell`  
+**Feature Branch**: `008-cross-platform-agent-shell`  
 **Created**: 2026-11-13  
 **Status**: Draft  
 **Input**: User description: "The agent's bash tool always runs `/bin/sh -c`, which does not exist on Windows. Make the shell tool work on Windows, macOS and Linux with the same safety guarantees (approval prompt, workspace-confined cwd, timeout, output truncation)."

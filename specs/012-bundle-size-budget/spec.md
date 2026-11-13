@@ -1,6 +1,6 @@
 # Feature Specification: Bundle Size & Activation Budget
 
-**Feature Branch**: `006-bundle-size-budget`  
+**Feature Branch**: `012-bundle-size-budget`  
 **Created**: 2026-11-13  
 **Status**: Draft  
 **Input**: User description: "The compiled extension bundle is ~740 KB unminified while the constitution targets ≤ 250 KB. Minify production builds, enforce a size budget in CI, measure activation time, and lazy-load heavy subsystems so Caramelo starts fast."

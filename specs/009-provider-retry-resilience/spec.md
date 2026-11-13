@@ -1,6 +1,6 @@
 # Feature Specification: Provider Retry & Error Resilience
 
-**Feature Branch**: `003-provider-retry-resilience`  
+**Feature Branch**: `009-provider-retry-resilience`  
 **Created**: 2026-11-13  
 **Status**: Draft  
 **Input**: User description: "LLM providers fail immediately on rate limits (429) and transient server errors (5xx, network resets). Add automatic, bounded retries with backoff that respect Retry-After and cancellation, shared by all providers, and show actionable error messages when retries are exhausted."

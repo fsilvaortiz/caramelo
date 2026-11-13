@@ -1,6 +1,6 @@
 # Feature Specification: Webview Content Security Hardening
 
-**Feature Branch**: `001-webview-csp-hardening`  
+**Feature Branch**: `007-webview-csp-hardening`  
 **Created**: 2026-11-13  
 **Status**: Draft  
 **Input**: User description: "Apply a strict Content Security Policy to every Caramelo webview (Providers sidebar, Workflow DAG, Constitution editor) and remove inline event handlers so that no injected markup can execute script, especially in the view that handles API keys."
