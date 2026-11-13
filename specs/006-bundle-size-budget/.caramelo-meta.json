@@ -1,0 +1,8 @@
+{
+  "phases": {
+    "requirements": "pending-approval",
+    "design": "pending",
+    "tasks": "pending"
+  },
+  "description": "The compiled extension bundle is ~740 KB unminified while the constitution targets ≤ 250 KB. Minify production builds, enforce a size budget in CI, measure activation time, and lazy-load heavy subsystems so Caramelo starts fast."
+}

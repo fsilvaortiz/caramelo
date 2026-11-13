@@ -1,0 +1,8 @@
+{
+  "phases": {
+    "requirements": "pending-approval",
+    "design": "pending",
+    "tasks": "pending"
+  },
+  "description": "The agent's bash tool always runs `/bin/sh -c`, which does not exist on Windows. Make the shell tool work on Windows, macOS and Linux with the same safety guarantees (approval prompt, workspace-confined cwd, timeout, output truncation)."
+}
