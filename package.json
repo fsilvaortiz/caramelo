@@ -388,7 +388,18 @@
         "caramelo.enableBashTool": {
           "type": "boolean",
           "default": true,
-          "description": "Expose a bash/exec tool to the agent. Every bash call requires an explicit approval prompt that shows the literal command. Disable to remove bash entirely from the tool list advertised to the model."
+          "description": "Expose a bash/exec tool to the agent. Bash calls require an approval prompt that shows the literal command, unless allowed by caramelo.agent.bashAllowList, caramelo.agent.autoApproveReadOnlyBash or \"don't ask again this session\". Disable to remove bash entirely from the tool list advertised to the model."
+        },
+        "caramelo.agent.bashAllowList": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "markdownDescription": "Command prefixes the agent may run without asking, e.g. `npm test`, `npm run build`, `npx vitest`. A command is allowed when it equals a rule or starts with the rule followed by a space; in `a && b` every part must be allowed. Commands with `$(...)`, backticks or file redirection always ask. Filled by the **Always allow** button of the approval dialog."
+        },
+        "caramelo.agent.autoApproveReadOnlyBash": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Run read-only commands (`ls`, `cat`, `grep`, `find` without `-exec`/`-delete`, `git status`/`diff`/`log`/`show`, …) without asking, as long as they only use paths inside the workspace. Every auto-approved command is logged to the Caramelo Output channel."
         },
         "caramelo.agent.maxIterations": {
           "type": "number",
@@ -405,7 +416,7 @@
             "auto-all"
           ],
           "default": "auto-reads-batched-writes",
-          "description": "How write/bash tool calls are approved. auto-reads-batched-writes: reads auto-run, bash always prompts, writes are batched per turn. per-call: every non-read prompts individually. auto-all: no prompts — relies on the git safety stash to recover."
+          "description": "How write/bash tool calls are approved. auto-reads-batched-writes: reads auto-run, writes are batched per turn. per-call: every non-read prompts individually. auto-all: writes run without prompts — relies on the git safety stash to recover. In every mode bash prompts unless allowed by caramelo.agent.bashAllowList, caramelo.agent.autoApproveReadOnlyBash or the session choice."
         }
       }
     }

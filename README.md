@@ -70,6 +70,7 @@
 - **Caramelo editor menu** — grouped contextual actions under a single cat icon (adapts to dark/light themes)
 - **Task CodeLens** — Run Task / Run All Tasks inline in tasks.md
 - **Parallel task execution** — tasks marked `[P]` run concurrently
+- **Fewer approval prompts** — read-only shell commands (`ls`, `grep`, `git status`…) inside the workspace run without asking; the shell prompt offers **Always allow** (saves a rule like `npm test` to `caramelo.agent.bashAllowList`) and **Don't ask again this session**. Every auto-approved command is logged to the Output channel
 - **Non-intrusive progress** — status bar spinner instead of notification popups
 - **Auxiliary files** — research.md, data-model.md, analysis.md, checklists shown under each phase
 

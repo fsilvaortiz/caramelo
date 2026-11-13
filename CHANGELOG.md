@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Fewer shell approval prompts.** The agent's shell approval dialog now offers **Always allow "<rule>"** — saves a prefix rule such as `npm test`, `npm run build` or `npx vitest` to the workspace setting `caramelo.agent.bashAllowList`, so matching commands stop asking — and **Run — don't ask again this session**. Read-only commands (`ls`, `cat`, `grep`, `find` without `-exec`/`-delete`, `git status`/`diff`/`log`/`show`, …) whose paths stay inside the workspace run without a prompt (`caramelo.agent.autoApproveReadOnlyBash`, default on). Compound commands need every part allowed; command substitution, file redirection and multi-line scripts always ask. Every auto-approved command is logged to the Caramelo Output channel with the reason. Constitution amended to 1.1.0 (Principle VII).
+
 ### Fixed
 
 - **Parallel `[P]` tasks no longer cancel each other.** The Claude and OpenAI-compatible providers aborted any in-flight request whenever a new one started on the same provider, so running tasks in parallel failed with `agent error: This operation was aborted` for every task but the last. Each request now has its own cancellation; cancelling a task (or `dispose()`) only stops its own request(s).

@@ -1,6 +1,27 @@
 <!--
-SYNC IMPACT REPORT
-==================
+SYNC IMPACT REPORT (1.1.0)
+==========================
+Version change: 1.0.0 → 1.1.0 (MINOR — materially expands Principle VII
+guidance; first amendment after public release).
+
+Modified principles:
+  - VII. Tool Calling as First-Class
+      → "No code path may silently auto-execute `bash`" replaced by an
+        explicit list of user-granted exceptions (saved prefix rules,
+        session-wide approval, read-only commands confined to the
+        workspace), each logged to the Output Channel.
+
+Modified sections:
+  - Additional Constraints → Agent approval defaults: documents
+    `caramelo.agent.autoApproveReadOnlyBash` (default true) and
+    `caramelo.agent.bashAllowList` (default empty).
+
+Templates requiring updates: none (spec/plan/tasks templates unaffected).
+
+Follow-up TODOs: none.
+
+PREVIOUS REPORT
+===============
 Version change: 1.0.0 → 1.0.0 (no bump — still within initial ratification
 window, product not yet released; additions fold into the founding set per
 project-owner direction).
@@ -203,7 +224,16 @@ Tool-calling rules:
   migration note in the PR.
 - Approval policy is a user-facing setting (`caramelo.agent.approval`),
   with `auto-reads-batched-writes` as the default and `auto-all` strictly
-  opt-in. No code path may silently auto-execute `bash`.
+  opt-in. `bash` MUST prompt with the literal command unless the user
+  granted the call in advance through one of these, and only these:
+  (a) a prefix rule saved in `caramelo.agent.bashAllowList` (offered as
+  "Always allow" in the prompt; compound commands need every part
+  allowed), (b) "don't ask again this session" (reset on reload), or
+  (c) `caramelo.agent.autoApproveReadOnlyBash` for known read-only
+  commands whose arguments stay inside the workspace. Commands with
+  command/process substitution, file redirection or multiple lines MUST
+  always prompt. Every call run without a prompt MUST be logged to the
+  Output Channel with the reason; none may run silently.
 - Tool arguments and results MUST pass through the redacting logger
   (Principle III) and be visible in the Output Channel (Principle IX).
 - Providers without native tool-calling MUST inform the user (status bar
@@ -294,7 +324,10 @@ running the command by hand.
 - **Agent approval defaults.** `caramelo.agent.approval` defaults to
   `auto-reads-batched-writes`; `caramelo.useAgentLoop` defaults to
   `true`; `caramelo.enableBashTool` defaults to `true` with per-call
-  prompts; `caramelo.agent.maxIterations` defaults to 15 with a hard
+  prompts (subject to Principle VII's user-granted exceptions);
+  `caramelo.agent.autoApproveReadOnlyBash` defaults to `true`;
+  `caramelo.agent.bashAllowList` defaults to empty;
+  `caramelo.agent.maxIterations` defaults to 15 with a hard
   ceiling of 50. Changing any default requires an amendment PR.
 - **Capability registry.** The authoritative list of provider
   capabilities (and the providers that declare them) lives under
@@ -372,4 +405,4 @@ and rejected. Runtime development guidance lives in `CLAUDE.md` (auto-
 generated) and `CONTRIBUTING.md`; both must stay consistent with this
 file.
 
-**Version**: 1.0.0 | **Ratified**: 2026-04-23 | **Last Amended**: 2026-04-23
+**Version**: 1.1.0 | **Ratified**: 2026-04-23 | **Last Amended**: 2026-11-13
