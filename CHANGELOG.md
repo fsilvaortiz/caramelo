@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Parallel `[P]` tasks no longer cancel each other.** The Claude and OpenAI-compatible providers aborted any in-flight request whenever a new one started on the same provider, so running tasks in parallel failed with `agent error: This operation was aborted` for every task but the last. Each request now has its own cancellation; cancelling a task (or `dispose()`) only stops its own request(s).
+
 ## [0.5.0] - 2026-11-11
 
 **Subscription key and token together.** Gateways such as Azure API Management can now receive the stored key and the `apiKeyHelper` token in separate headers.
