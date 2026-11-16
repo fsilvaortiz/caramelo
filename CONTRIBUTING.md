@@ -13,6 +13,13 @@ npm run build
 
 Press **F5** in VS Code to launch the Extension Development Host for testing.
 
+### Tests
+
+- `npm test` — unit tests (Vitest, `src/**/__tests__/`).
+- `npm run test:smoke` — end-to-end tests in a real VS Code (`src/test/suite/`). On a headless Linux box run it as `xvfb-run -a npm run test:smoke`.
+  - `helpers/mock-provider.ts` replaces the provider object; use it for flows that only need canned LLM text.
+  - `helpers/mock-llm-server.ts` is a local HTTP server speaking the Anthropic Messages SSE API; point a real `ClaudeProvider` at it to cover request building, streaming, tool calls and cancellation end to end (see `agent-real-provider.test.ts`).
+
 ## Project Structure
 
 ```
