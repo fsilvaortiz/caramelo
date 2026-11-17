@@ -9,6 +9,8 @@
 
 Only two of Caramelo's webviews (Workflow sidebar, Central constitution editor) declare a Content Security Policy today. The Providers sidebar — which displays and edits provider names, endpoints, model ids, auth header settings and the `apiKeyHelper` command — the Workflow DAG panel and the Constitution editor declare none, and the Providers sidebar wires interactions through inline `onclick`/`onkeydown` attributes that interpolate identifiers into script strings. A single escaping mistake in any of these views would let workspace- or provider-controlled text run script with access to the extension message channel. This feature closes that class of defect (Constitution Principle III, "Secrets Stay Secret").
 
+**Update 2026-11-17**: the Workflow DAG view was fixed ahead of this spec — it rendered spec folder names unescaped (a concrete injection, not just a missing safeguard). It now escapes names, declares a strict nonce-based CSP, has no inline handlers and opens files by render index only. The remaining scope is the Providers sidebar and the Constitution editor, plus the shared builder and the regression test across all views.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Providers view cannot execute injected content (Priority: P1)

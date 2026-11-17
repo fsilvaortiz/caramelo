@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- **Workflow Map could run script from a spec folder name.** The DAG view inserted spec folder names into its HTML unescaped and had no Content Security Policy, so a repository with a folder such as `specs/<img src=x onerror=…>` ran that code when the map was opened. Names are now escaped, the view has a strict CSP (only its own nonced script runs), inline `onclick` handlers are gone, and the webview can only ask to open the phase files it was rendered with — it no longer sends file paths the extension would open blindly.
 - **Parallel `[P]` tasks no longer cancel each other.** The Claude and OpenAI-compatible providers aborted any in-flight request whenever a new one started on the same provider, so running tasks in parallel failed with `agent error: This operation was aborted` for every task but the last. Each request now has its own cancellation; cancelling a task (or `dispose()`) only stops its own request(s).
 
 ## [0.5.0] - 2026-11-11
