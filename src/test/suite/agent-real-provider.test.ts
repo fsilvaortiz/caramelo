@@ -22,6 +22,7 @@ suite('Agent loop with a real provider against a mock LLM server', () => {
   let providerId: string;
   let previousActive: string | undefined;
   const cfg = () => vscode.workspace.getConfiguration();
+  let savedAgentLoop: unknown;
 
   // The agent's shell tool runs `/bin/sh -c`, which does not exist on
   // Windows yet (spec 008-cross-platform-agent-shell).
@@ -51,12 +52,13 @@ suite('Agent loop with a real provider against a mock LLM server', () => {
     api.registry.register(provider);
     await api.registry.setActive(providerId);
 
+    savedAgentLoop = cfg().inspect('caramelo.useAgentLoop')?.workspaceValue;
     await cfg().update('caramelo.useAgentLoop', true, vscode.ConfigurationTarget.Workspace);
     seedConstitution();
   });
 
   suiteTeardown(async () => {
-    await cfg().update('caramelo.useAgentLoop', undefined, vscode.ConfigurationTarget.Workspace);
+    await cfg().update('caramelo.useAgentLoop', savedAgentLoop, vscode.ConfigurationTarget.Workspace);
     await cfg().update('caramelo.agent.bashAllowList', undefined, vscode.ConfigurationTarget.Workspace);
     try { api.registry.unregister(providerId); } catch { /* ignore */ }
     if (previousActive) await api.registry.setActive(previousActive).catch(() => { /* ignore */ });

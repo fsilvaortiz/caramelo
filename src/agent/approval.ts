@@ -54,19 +54,22 @@ export interface ApprovalHooks {
  *    user allowed it — see `defaultConfirmBash`)
  *  - other writes batched into a single per-turn approval
  *
- * Honours `caramelo.autoApplyEdits` (treated as "allow all writes this
- * run" without a prompt) and a session-scoped override set by the
- * "don't ask again this session" QuickPick option. Auto-apply NEVER
+ * By default the write approval is the one shared by every agent run in
+ * the window (tasks, phase generation, hooks): `caramelo.autoApplyEdits`
+ * or the "don't ask again this session" choice — see
+ * `isWriteAutoApproved`. Tests can inject their own. Auto-apply NEVER
  * upgrades bash approvals.
  */
 export function readOnlyAutoBatchedWritesPolicy(opts: {
-  isAutoApplyEnabled(): boolean;
-  setSessionAutoApply(v: boolean): void;
+  isAutoApplyEnabled?(): boolean;
+  setSessionAutoApply?(v: boolean): void;
   hooks?: Partial<ApprovalHooks>;
   /** Override to include non-bash tools in the always-prompt set. */
   alwaysPromptTools?: Set<string>;
-}): ApprovalPolicy {
-  const hooks = resolveHooks(opts.hooks, opts);
+} = {}): ApprovalPolicy {
+  const isAutoApplyEnabled = opts.isAutoApplyEnabled ?? isWriteAutoApproved;
+  const setSessionAutoApply = opts.setSessionAutoApply ?? setSessionWriteApproval;
+  const hooks = resolveHooks(opts.hooks, { setSessionAutoApply });
   const alwaysPrompt = opts.alwaysPromptTools ?? new Set(['bash']);
 
   return {
@@ -90,7 +93,7 @@ export function readOnlyAutoBatchedWritesPolicy(opts: {
 
       if (writes.length === 0) return out;
 
-      if (opts.isAutoApplyEnabled()) {
+      if (isAutoApplyEnabled()) {
         for (const w of writes) out[w.call.id] = 'allow';
         return out;
       }
@@ -177,8 +180,49 @@ function resolveHooks(
   };
 }
 
+// --- Shared write approval ---------------------------------------------
+
+export const AUTO_APPLY_SETTING = 'caramelo.autoApplyEdits';
+
+/**
+ * Set by "Don't ask again this session" on any write prompt (tasks, phase
+ * generation, hooks, legacy task review). Resets on reload; the
+ * persistent switch is `caramelo.autoApplyEdits`.
+ */
+let sessionAllowWrites = false;
+
+/** Whether agent/task writes may be applied without a prompt right now. */
+export function isWriteAutoApproved(): boolean {
+  return sessionAllowWrites ||
+    vscode.workspace.getConfiguration().get<boolean>(AUTO_APPLY_SETTING, false) === true;
+}
+
+export function setSessionWriteApproval(v: boolean): void {
+  sessionAllowWrites = v;
+}
+
+/** "Always allow in this workspace": sets `caramelo.autoApplyEdits` for the workspace. */
+export async function allowWritesInWorkspace(): Promise<void> {
+  const hasWorkspace = (vscode.workspace.workspaceFolders?.length ?? 0) > 0;
+  const target = hasWorkspace ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+  sessionAllowWrites = true;
+  try {
+    await vscode.workspace.getConfiguration().update(AUTO_APPLY_SETTING, true, target);
+    getCarameloChannel().appendLine(`↪ ${AUTO_APPLY_SETTING} enabled for this ${hasWorkspace ? 'workspace' : 'user'}: writes are applied without asking.`);
+  } catch (err) {
+    getCarameloChannel().appendLine(`✗ could not save ${AUTO_APPLY_SETTING}: ${String(err)} — allowed for this session only.`);
+  }
+}
+
+/** Test hook: forget every session-scoped approval (writes and bash). */
+export function resetSessionApprovals(): void {
+  sessionAllowWrites = false;
+  sessionAllowAllBash = false;
+}
+
 const APPLY_ALL = 'Apply all';
 const APPLY_ALL_SESSION = "Don't ask again this session";
+export const APPLY_ALWAYS = 'Always allow in this workspace';
 const CANCEL_RUN = 'Cancel run';
 
 function defaultConfirmWrites(opts: {
@@ -197,16 +241,19 @@ function defaultConfirmWrites(opts: {
         modal: true,
         detail:
           `${detail}\n\n` +
-          `Tip: set caramelo.autoApplyEdits=true to skip this prompt permanently.`,
+          `"${APPLY_ALWAYS}" sets ${AUTO_APPLY_SETTING} for this workspace. ` +
+          `Your work stays recoverable through the git safety stash.`,
       },
       APPLY_ALL,
       APPLY_ALL_SESSION,
+      APPLY_ALWAYS,
       CANCEL_RUN,
     );
     if (!choice || choice === CANCEL_RUN) {
       return Object.fromEntries(writes.map((w) => [w.call.id, 'abort'] as const));
     }
     if (choice === APPLY_ALL_SESSION) opts.setSessionAutoApply(true);
+    if (choice === APPLY_ALWAYS) await allowWritesInWorkspace();
     return Object.fromEntries(writes.map((w) => [w.call.id, 'allow'] as const));
   };
 }

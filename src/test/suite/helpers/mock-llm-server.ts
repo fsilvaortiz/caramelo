@@ -28,6 +28,8 @@ export interface MockTurn {
   text?: string;
   /** A single tool call. */
   toolUse?: { name: string; input: Record<string, unknown> };
+  /** Several tool calls in the same turn (after `toolUse`, if both are set). */
+  toolUses?: Array<{ name: string; input: Record<string, unknown> }>;
   /** Keep the stream open this long before answering (forces overlap between parallel requests). */
   delayMs?: number;
 }
@@ -105,17 +107,29 @@ export class MockAnthropicServer {
       send('content_block_stop', { index });
       index++;
     }
-    if (turn.toolUse) {
+    const calls = [...(turn.toolUse ? [turn.toolUse] : []), ...(turn.toolUses ?? [])];
+    for (const call of calls) {
       const id = `toolu_${++this.toolSeq}`;
-      send('content_block_start', { index, content_block: { type: 'tool_use', id, name: turn.toolUse.name, input: {} } });
-      send('content_block_delta', { index, delta: { type: 'input_json_delta', partial_json: JSON.stringify(turn.toolUse.input) } });
+      send('content_block_start', { index, content_block: { type: 'tool_use', id, name: call.name, input: {} } });
+      send('content_block_delta', { index, delta: { type: 'input_json_delta', partial_json: JSON.stringify(call.input) } });
       send('content_block_stop', { index });
+      index++;
     }
-    send('message_delta', { delta: { stop_reason: turn.toolUse ? 'tool_use' : 'end_turn' } });
+    send('message_delta', { delta: { stop_reason: calls.length > 0 ? 'tool_use' : 'end_turn' } });
     send('message_stop', {});
     finished = true;
     res.end();
   }
+}
+
+/** All user-message text of a request, joined. */
+export function userText(body: MessagesRequestBody): string {
+  return body.messages
+    .filter((m) => m.role === 'user')
+    .map((m) => (typeof m.content === 'string'
+      ? m.content
+      : m.content.map((b) => (typeof b.text === 'string' ? b.text : '')).join('')))
+    .join('\n');
 }
 
 /** First line of the first user message — `Task: T1 …` for task runs. */

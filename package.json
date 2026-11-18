@@ -355,7 +355,7 @@
         "caramelo.autoApplyEdits": {
           "type": "boolean",
           "default": false,
-          "description": "When true, task edits are written to disk without a diff preview or confirmation dialog. Leave this off unless you have a reliable git safety net — Caramelo creates one automatically when the workspace is a git repo."
+          "description": "When true, agent and task edits (task runs, phase generation, Spec Kit hooks) are written to disk without a diff preview or confirmation dialog. Set for the workspace by the \"Always allow in this workspace\" button of the write prompt. Caramelo creates a git safety stash before each task when the workspace is a git repo."
         },
         "caramelo.useAgentLoop": {
           "type": "boolean",
@@ -383,7 +383,13 @@
         "caramelo.hooks.run": {
           "type": "boolean",
           "default": true,
-          "description": "Run Spec Kit extension hooks from .specify/extensions.yml before and after Caramelo actions (specify, plan, tasks, implement, …). Mandatory hooks run automatically, optional hooks ask first; file writes and bash still go through the agent's approval prompts. Hooks never run in untrusted workspaces."
+          "description": "Run Spec Kit extension hooks from .specify/extensions.yml before and after Caramelo actions (specify, plan, tasks, implement, …). Mandatory hooks run automatically, optional hooks ask first (unless listed in caramelo.hooks.alwaysRun); file writes and bash still go through the agent's approval prompts. Hooks never run in untrusted workspaces."
+        },
+        "caramelo.hooks.alwaysRun": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "markdownDescription": "Optional Spec Kit hooks that run without asking, as `<event>:<command>` (e.g. `after_tasks:speckit.lint.check`). Filled by the **Always run** button of the hook prompt."
         },
         "caramelo.enableBashTool": {
           "type": "boolean",

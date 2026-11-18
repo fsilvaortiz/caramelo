@@ -1,10 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as vscode from 'vscode';
 import {
+  AUTO_APPLY_SETTING,
   autoAllAllPolicy,
   BASH_ALLOW_LIST_SETTING,
   BASH_READ_ONLY_SETTING,
+  readOnlyAutoBatchedWritesPolicy,
   resetBashSessionApproval,
+  resetSessionApprovals,
 } from '../approval.js';
 import type { Tool, ToolCallApproval } from '../types.js';
 
@@ -35,7 +38,7 @@ let update: ReturnType<typeof vi.fn>;
 let prompt: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
-  resetBashSessionApproval();
+  resetSessionApprovals();
   settings = {};
   workspaceValues = {};
   lines.length = 0;
@@ -124,5 +127,79 @@ describe('default bash approval dialog', () => {
   it('closing the dialog aborts the run', async () => {
     prompt.mockResolvedValue(undefined);
     expect(await decide('npm test')).toBe('abort');
+  });
+});
+
+const editTool: Tool = {
+  name: 'file_edit',
+  description: 'edit',
+  readOnly: false,
+  inputSchema: { type: 'object', properties: {} },
+  async execute() {
+    return { summary: '', content: '' };
+  },
+};
+const edit = (id: string): ToolCallApproval => ({
+  call: { id, name: 'file_edit', arguments: { path: 'src/a.ts', search: 'a', replace: 'b' } },
+  tool: editTool,
+});
+
+describe('default write approval (shared by tasks, phase generation and hooks)', () => {
+  let info: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    info = vi.fn();
+    vi.spyOn(vscode.window, 'showInformationMessage').mockImplementation(info as never);
+  });
+
+  const decideWrite = async () => (await readOnlyAutoBatchedWritesPolicy().decide([edit('e')], ctx)).e;
+
+  it('offers Apply all, session, always and cancel', async () => {
+    info.mockResolvedValue('Apply all');
+    expect(await decideWrite()).toBe('allow');
+    expect(info.mock.calls[0].slice(2)).toEqual([
+      'Apply all',
+      "Don't ask again this session",
+      'Always allow in this workspace',
+      'Cancel run',
+    ]);
+  });
+
+  it('"Don\'t ask again this session" stops asking for every later policy instance', async () => {
+    info.mockResolvedValue("Don't ask again this session");
+    expect(await decideWrite()).toBe('allow');
+    info.mockClear();
+    // A new policy — e.g. the next phase generation or a hook — shares the choice.
+    expect(await decideWrite()).toBe('allow');
+    expect(info).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('"Always allow in this workspace" sets caramelo.autoApplyEdits for the workspace', async () => {
+    info.mockResolvedValue('Always allow in this workspace');
+    expect(await decideWrite()).toBe('allow');
+    expect(update).toHaveBeenCalledWith(AUTO_APPLY_SETTING, true, vscode.ConfigurationTarget.Workspace);
+    resetSessionApprovals();
+    info.mockClear();
+    expect(await decideWrite()).toBe('allow');
+    expect(info).not.toHaveBeenCalled();
+  });
+
+  it('honours caramelo.autoApplyEdits without prompting', async () => {
+    settings[AUTO_APPLY_SETTING] = true;
+    expect(await decideWrite()).toBe('allow');
+    expect(info).not.toHaveBeenCalled();
+  });
+
+  it('cancel aborts the run', async () => {
+    info.mockResolvedValue('Cancel run');
+    expect(await decideWrite()).toBe('abort');
+  });
+
+  it('write approval never upgrades bash', async () => {
+    settings[AUTO_APPLY_SETTING] = true;
+    prompt.mockResolvedValue('Skip');
+    const out = await readOnlyAutoBatchedWritesPolicy().decide([edit('e'), bash('b', 'npm test')], ctx);
+    expect(out).toEqual({ e: 'allow', b: 'deny' });
+    expect(prompt).toHaveBeenCalledTimes(1);
   });
 });

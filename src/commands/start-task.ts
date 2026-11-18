@@ -18,9 +18,12 @@ import { formatPrologue, pipeToOutputChannel } from '../agent/events.js';
 import { decideTaskOutcome } from './task-outcome.js';
 import { getCarameloChannel } from '../utils/output-channel.js';
 import {
+  allowWritesInWorkspace,
   autoAllAllPolicy,
+  isWriteAutoApproved,
   perCallPolicy,
   readOnlyAutoBatchedWritesPolicy,
+  setSessionWriteApproval,
 } from '../agent/approval.js';
 import { isToolCallingProvider } from '../agent/types.js';
 import type { ApprovalPolicy } from '../agent/types.js';
@@ -47,23 +50,17 @@ const interactiveLock = new AsyncMutex();
  */
 let sessionAllowNoGit = false;
 
-/**
- * Per-session dismissal of the Apply/Review QuickPick. Set when the user
- * clicks "Apply all — don't ask again this session". Resets on reload.
- * The permanent switch is `caramelo.autoApplyEdits`.
- */
-let sessionAutoApply = false;
 
 function isAllowWithoutGitEnabled(): boolean {
   return vscode.workspace.getConfiguration().get<boolean>('caramelo.tasks.allowWithoutGit', false);
 }
 
-function isAutoApplyEnabled(): boolean {
-  return (
-    sessionAutoApply ||
-    vscode.workspace.getConfiguration().get<boolean>('caramelo.autoApplyEdits', false)
-  );
-}
+/**
+ * Write approval shared with phase generation and hooks: the
+ * `caramelo.autoApplyEdits` setting or a "don't ask again this session"
+ * choice made in any write prompt.
+ */
+const isAutoApplyEnabled = isWriteAutoApproved;
 
 function isAgentLoopEnabled(): boolean {
   return vscode.workspace.getConfiguration().get<boolean>('caramelo.useAgentLoop', true);
@@ -93,12 +90,7 @@ function buildApprovalPolicy(): ApprovalPolicy {
   if (mode === 'per-call') return perCallPolicy({});
   return readOnlyAutoBatchedWritesPolicy({
     isAutoApplyEnabled,
-    // `session-auto-apply` mirrors the legacy path's
-    // `sessionAutoApply` flag so the user's "don't ask again this
-    // session" choice spans both paths within the same window.
-    setSessionAutoApply: (v) => {
-      sessionAutoApply = v;
-    },
+    setSessionAutoApply: setSessionWriteApproval,
   });
 }
 
@@ -124,12 +116,36 @@ const AGENT_SYSTEM_PROMPT =
   `- If a tool returns an error, read the error message and recover; do NOT repeat ` +
   `the same failing call verbatim.`;
 
+export interface StartTaskOptions {
+  /**
+   * Batch mode (Run All Tasks): no per-task toasts and no editor jumps —
+   * the caller reports one summary. Everything still goes to the
+   * Caramelo output channel.
+   */
+  quiet?: boolean;
+}
+
+interface Notifier {
+  info(message: string): void;
+  warn(message: string): void;
+  error(message: string): void;
+}
+
+const toastNotifier: Notifier = {
+  info: (m) => { void vscode.window.showInformationMessage(m); },
+  warn: (m) => { void vscode.window.showWarningMessage(m); },
+  error: (m) => { void vscode.window.showErrorMessage(m); },
+};
+const silentNotifier: Notifier = { info: () => {}, warn: () => {}, error: () => {} };
+
 export async function startTask(
   lineNumber: number,
   taskText: string,
   docUri: vscode.Uri,
   registry: ProviderRegistry,
+  opts: StartTaskOptions = {},
 ): Promise<void> {
+  const notify = opts.quiet ? silentNotifier : toastNotifier;
   const provider = registry.activeProvider;
   if (!provider) {
     vscode.window.showWarningMessage('No active LLM provider configured.');
@@ -232,6 +248,7 @@ export async function startTask(
         docUri,
         lineNumber,
         safety,
+        notify,
       });
     } finally {
       hideProgress();
@@ -271,7 +288,7 @@ export async function startTask(
       }
       const msg = err instanceof Error ? err.message : String(err);
       channel.appendLine(`\n\n✗ Error: ${msg}`);
-      vscode.window.showErrorMessage(`Task failed: ${msg}`);
+      notify.error(`Task failed: ${msg}`);
       return;
     }
 
@@ -283,14 +300,14 @@ export async function startTask(
     } catch (err) {
       if (err instanceof LegacyFormatError) {
         channel.appendLine(`\n\n✗ ${err.message}`);
-        vscode.window.showErrorMessage(
+        notify.error(
           'Caramelo rejected an out-of-protocol response (legacy whole-file format). Nothing was written. See the Caramelo output channel for details.',
         );
         return;
       }
       if (err instanceof ParseError) {
         channel.appendLine(`\n\n✗ Malformed edit protocol: ${err.message}`);
-        vscode.window.showErrorMessage(
+        notify.error(
           'Caramelo could not parse the proposed edits. Nothing was written. See the Caramelo output channel for details.',
         );
         return;
@@ -301,7 +318,7 @@ export async function startTask(
 
     if (edits.length === 0) {
       channel.appendLine('\n\n⚠ No edits detected in LLM output. Nothing to apply.');
-      vscode.window.showInformationMessage('No edits proposed by the LLM.');
+      notify.info('No edits proposed by the LLM.');
       return;
     }
 
@@ -320,8 +337,11 @@ export async function startTask(
           channel.appendLine('✗ Task cancelled by user at review step.');
           return;
         }
+        if (choice === 'apply-all-always') {
+          await allowWritesInWorkspace();
+        }
         if (choice === 'apply-all-session') {
-          sessionAutoApply = true;
+          setSessionWriteApproval(true);
           channel.appendLine('↪ Auto-apply enabled for this session.');
         }
         if (choice === 'file-by-file') {
@@ -471,9 +491,9 @@ export async function startTask(
       if (applied > 0) {
         await markTaskComplete(docUri, lineNumber, taskText);
         channel.appendLine(`✓ Task complete. ${applied} file(s) changed.`);
-        vscode.window.showInformationMessage(`Task complete. ${applied} file(s) changed.`);
+        notify.info(`Task complete. ${applied} file(s) changed.`);
         const first = outcomes.find((o) => o.wrote);
-        if (first) {
+        if (first && !opts.quiet) {
           const abs = path.isAbsolute(first.filePath)
             ? first.filePath
             : path.join(workspaceRoot, first.filePath);
@@ -484,7 +504,7 @@ export async function startTask(
         const hint = safety.kind === 'stashed'
           ? ` Your work is safe in stash "${safety.stashName}".`
           : '';
-        vscode.window.showWarningMessage(
+        notify.warn(
           `Task "${taskText.slice(0, 50)}" produced no applicable edits.${hint} See the Caramelo output channel for details.`,
         );
       }
@@ -563,6 +583,7 @@ interface AgentRunArgs {
   docUri: vscode.Uri;
   lineNumber: number;
   safety: { kind: 'no-git' | 'clean' | 'stashed'; message: string; stashName?: string };
+  notify: Notifier;
 }
 
 async function runTaskWithAgent(args: AgentRunArgs): Promise<void> {
@@ -576,6 +597,7 @@ async function runTaskWithAgent(args: AgentRunArgs): Promise<void> {
     docUri,
     lineNumber,
     safety,
+    notify,
   } = args;
 
   const tools = buildDefaultToolSet({ enableBash: isBashToolEnabled() });
@@ -618,7 +640,7 @@ async function runTaskWithAgent(args: AgentRunArgs): Promise<void> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     channel.appendLine(`\n✗ agent runtime error: ${msg}`);
-    vscode.window.showErrorMessage(`Task failed: ${msg}`);
+    notify.error(`Task failed: ${msg}`);
     return;
   }
 
@@ -634,13 +656,13 @@ async function runTaskWithAgent(args: AgentRunArgs): Promise<void> {
     // the `_exh: never` line until this dispatch is updated.
     switch (outcome.toast.severity) {
       case 'info':
-        vscode.window.showInformationMessage(outcome.toast.message);
+        notify.info(outcome.toast.message);
         break;
       case 'warning':
-        vscode.window.showWarningMessage(outcome.toast.message);
+        notify.warn(outcome.toast.message);
         break;
       case 'error':
-        vscode.window.showErrorMessage(outcome.toast.message);
+        notify.error(outcome.toast.message);
         break;
       default: {
         const _exh: never = outcome.toast.severity;

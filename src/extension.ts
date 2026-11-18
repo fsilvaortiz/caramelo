@@ -18,6 +18,7 @@ import { runPhase } from './commands/run-phase.js';
 import { convergeTasks } from './commands/converge.js';
 import { approvePhase } from './commands/approve-phase.js';
 import { startTask } from './commands/start-task.js';
+import { runAllTasks } from './commands/run-all-tasks.js';
 import { syncTemplates } from './commands/sync-templates.js';
 import { applyVsCodeSettings } from './commands/apply-vscode-settings.js';
 import { editConstitution } from './commands/edit-constitution.js';
@@ -27,9 +28,7 @@ import { AnalysisCodeLensProvider } from './views/codelens/analysis-codelens.js'
 import { createSpecFromJira } from './commands/create-spec-from-jira.js';
 import { generateChecklist } from './commands/generate-checklist.js';
 import { TemplateSync } from './speckit/sync.js';
-import { beginActionHooks } from './speckit/hook-runner-vscode.js';
 import { CentralConstitution, setCentralConstitution } from './constitution/central-vscode.js';
-import { findSpecForFile } from './specs/spec.js';
 import { COMMAND_IDS, SETTINGS_KEYS } from './constants.js';
 import { initProgressBar } from './progress.js';
 import { log } from './utils/log.js';
@@ -331,129 +330,13 @@ export function activate(context: vscode.ExtensionContext): CarameloApi {
     vscode.commands.registerCommand('caramelo.runAllTasks', async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
-      const doc = editor.document;
-
-      // Collect all pending tasks with parallel info
-      interface PendingTask { line: number; text: string; isParallel: boolean }
-      const collectPending = (d: vscode.TextDocument): PendingTask[] => {
-        const out: PendingTask[] = [];
-        for (let i = 0; i < d.lineCount; i++) {
-          const text = d.lineAt(i).text.trimStart();
-          if (/^- \[ \] /.test(text)) {
-            const taskText = text.replace(/^- \[ \] /, '').trim();
-            out.push({ line: i, text: taskText, isParallel: /\[P\]/.test(taskText) });
-          }
-        }
-        return out;
-      };
-      let pendingTasks = collectPending(doc);
-
-      if (pendingTasks.length === 0) {
-        vscode.window.showInformationMessage('All tasks are already complete!');
-        return;
-      }
-
-      // Count parallel groups
-      const parallelCount = pendingTasks.filter(t => t.isParallel).length;
-      const seqCount = pendingTasks.length - parallelCount;
-      const msg = parallelCount > 0
-        ? `Run ${pendingTasks.length} tasks? (${parallelCount} parallel, ${seqCount} sequential)`
-        : `Run all ${pendingTasks.length} tasks sequentially?`;
-
-      const confirm = await vscode.window.showInformationMessage(msg, 'Run All', 'Cancel');
-      if (confirm !== 'Run All') return;
-
-      const specName = specWorkspace ? findSpecForFile(doc.uri.fsPath, specWorkspace.getSpecsRoot())?.specName : undefined;
-      const hooks = await beginActionHooks('implement', specName, registry);
-      if (!hooks) return;
-      // before_implement hooks may have edited tasks.md.
-      pendingTasks = collectPending(await vscode.workspace.openTextDocument(doc.uri));
-      if (pendingTasks.length === 0) {
-        vscode.window.showInformationMessage('All tasks are already complete!');
-        await hooks.after();
-        return;
-      }
-
-      // Group consecutive [P] tasks into batches
-      const batches: PendingTask[][] = [];
-      let currentBatch: PendingTask[] = [];
-      let lastWasParallel = false;
-
-      for (const task of pendingTasks) {
-        if (task.isParallel) {
-          if (!lastWasParallel && currentBatch.length > 0) {
-            batches.push(currentBatch);
-            currentBatch = [];
-          }
-          currentBatch.push(task);
-          lastWasParallel = true;
-        } else {
-          if (lastWasParallel && currentBatch.length > 0) {
-            batches.push(currentBatch);
-            currentBatch = [];
-          }
-          currentBatch.push(task);
-          lastWasParallel = false;
-        }
-      }
-      if (currentBatch.length > 0) batches.push(currentBatch);
-
-      // Execute batches
-      let completed = 0;
-      for (const batch of batches) {
-        const isParallelBatch = batch[0].isParallel;
-
-        if (isParallelBatch && batch.length > 1) {
-          // Run parallel tasks concurrently. Use allSettled so one failing
-          // task does not abort the whole batch and discard the work of
-          // siblings that have already written to disk.
-          vscode.window.showInformationMessage(
-            `Running ${batch.length} tasks in parallel (${completed + 1}-${completed + batch.length}/${pendingTasks.length})`
-          );
-
-          const results = await Promise.allSettled(batch.map(async (task) => {
-            const freshDoc = await vscode.workspace.openTextDocument(doc.uri);
-            const currentLine = findTaskLine(freshDoc, task.text);
-            if (currentLine >= 0) {
-              await startTask(currentLine, task.text, doc.uri, registry);
-            }
-          }));
-          completed += batch.length;
-
-          const failed: Array<{ task: PendingTask; reason: string }> = [];
-          for (let i = 0; i < results.length; i++) {
-            const r = results[i];
-            if (r.status === 'rejected') {
-              const reason = r.reason instanceof Error ? r.reason.message : String(r.reason);
-              failed.push({ task: batch[i], reason });
-              log.warn(`[runAllTasks] parallel task failed: "${batch[i].text.slice(0, 60)}" — ${reason}`);
-            }
-          }
-          if (failed.length > 0) {
-            vscode.window.showWarningMessage(
-              `${failed.length}/${batch.length} parallel task(s) failed. See Caramelo output for details. Continuing with the remaining batches.`
-            );
-          }
-        } else {
-          // Run sequential tasks one by one
-          for (const task of batch) {
-            completed++;
-            vscode.window.showInformationMessage(
-              `Running task ${completed}/${pendingTasks.length}: ${task.text.slice(0, 50)}...`
-            );
-            const freshDoc = await vscode.workspace.openTextDocument(doc.uri);
-            const currentLine = findTaskLine(freshDoc, task.text);
-            if (currentLine >= 0) {
-              await startTask(currentLine, task.text, doc.uri, registry);
-            }
-          }
-        }
-      }
-
-      vscode.window.showInformationMessage(`All ${pendingTasks.length} tasks executed!`);
-      editorContext.update();
-      workflowView.refresh();
-      await hooks.after();
+      await runAllTasks(editor.document.uri, registry, {
+        specsRoot: specWorkspace?.getSpecsRoot(),
+        onFinished: () => {
+          editorContext.update();
+          workflowView.refresh();
+        },
+      });
     }),
     vscode.commands.registerCommand('caramelo.showLockedMessage', (reason: string) =>
       vscode.window.showInformationMessage(reason ?? 'Previous phase must be approved first')
@@ -470,17 +353,6 @@ export function activate(context: vscode.ExtensionContext): CarameloApi {
 
 export function deactivate(): void {
   // Cleanup handled by disposables
-}
-
-function findTaskLine(doc: vscode.TextDocument, taskText: string): number {
-  const searchStr = taskText.slice(0, 30);
-  for (let j = 0; j < doc.lineCount; j++) {
-    const lineText = doc.lineAt(j).text.trimStart();
-    if (/^- \[ \] /.test(lineText) && lineText.includes(searchStr)) {
-      return j;
-    }
-  }
-  return -1;
 }
 
 function extractSpecArgs(
