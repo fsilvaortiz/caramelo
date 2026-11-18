@@ -10,6 +10,12 @@ Browse releases on GitHub: [github.com/fsilvaortiz/caramelo/releases](https://gi
 
 ## Latest
 
+### v0.5.1 — 2026-11-18
+
+**Run the whole spec-driven flow without repeated questions.** Parallel `[P]` tasks no longer fail with *This operation was aborted* — requests on the same provider no longer cancel each other. Each kind of question is asked once and has an "always" answer: shell commands get **Always allow** (saved as a rule such as `npm test`; read-only commands like `ls`, `grep` or `git status` never ask), file writes get **Always allow in this workspace**, and optional Spec Kit hooks get **Always run**; *Don't ask again this session* now also works during phase generation and hooks. *Run All Tasks* starts without a confirmation and reports one summary instead of a toast per task. Security: the Workflow Map escapes spec folder names and runs under a strict Content Security Policy.
+
+[Full v0.5.1 notes](https://github.com/fsilvaortiz/caramelo/releases/tag/v0.5.1)
+
 ### v0.5.0 — 2026-11-11
 
 **Subscription key and token together.** With `apiKeyHelperHeader` set to a header other than the auth header, Caramelo sends both: the stored key in the auth header (e.g. Azure API Management's `Ocp-Apim-Subscription-Key`) and the `apiKeyHelper` output in its own header (e.g. `Authorization: Bearer <token>`). A 401/403 refreshes only the token. The sidebar's auth panel and Add Provider form gain *Send command output in* and preview every header that will be sent. Existing configurations behave as before.
