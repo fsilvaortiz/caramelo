@@ -62,6 +62,35 @@ La base es sana. Las mejoras se concentran en **seguridad de webviews**, **porta
 
 ---
 
+## Fase 6 — Adopción y enterprise (añadida 2026-11-18)
+
+Estado al empezar esta fase: v0.5.1 (tareas paralelas arregladas, flujo SDD sin preguntas repetidas, DAG con CSP). Specs en `specs/013`–`017`.
+
+### Adopción: que cualquier developer la pruebe y se quede
+
+| Mejora | Spec | Por qué |
+|---|---|---|
+| **Quick Spec**: descripción → spec + plan + tareas en un paso, una sola aprobación | `013-quick-spec` | El flujo de 3 fases es excesivo para bugfixes y cambios pequeños, que son la mayoría del trabajo |
+| Publicar en **Open VSX** | — (cambio en `release.yml`) | Cursor, Windsurf, VSCodium y Gitpod no pueden instalarla hoy |
+| **Cero configuración con Copilot** si está instalado + **walkthrough** de bienvenida | — | Primera spec sin API key ni configuración |
+| **Verificación con tests** tras cada tarea y botón **Undo task** | — | "Tarea completada" debe significar "funciona" |
+| **Caramelo como servidor MCP** | — | Ser la capa de specs para cualquier agente (Claude Code, Copilot, Cursor) |
+
+### Enterprise: que seguridad y compliance digan que sí
+
+| Mejora | Spec | Qué resuelve |
+|---|---|---|
+| **Política de organización y plantillas centrales** (repo Git, mismo mecanismo que la constitución central) | `014-org-policy-central-templates` | Proveedores/endpoints permitidos, aprobaciones que no se pueden relajar, hooks obligatorios, plantillas de empresa |
+| **Registro de auditoría** (JSONL local, exportable, envío opcional a SIEM) | `015-audit-trail` | Quién aprobó qué, qué se ejecutó sin preguntar y por qué, qué salió hacia el LLM |
+| **Conectividad enterprise**: Azure OpenAI, AWS Bedrock, Vertex AI, gateways; proxy y CA corporativa; *Test connection* | `016-enterprise-connectivity` | Los pilotos enterprise mueren en "no conecta" |
+| **Protección de datos en el contexto**: `.carameloignore`, redacción de secretos en prompts, vista previa del contexto | `017-context-data-protection` | Que código sensible y secretos no salgan de la máquina |
+| Integraciones de equipo: GitHub Action de analyze/converge en PRs, Azure DevOps Boards, sincronizar estado con Jira | — (backlog) | Specs dentro del proceso de revisión del equipo |
+| Métricas para equipos: lead time por fase, coste por spec, retrabajo | — (backlog) | Demostrar el retorno a quien paga |
+
+**Orden recomendado:** 013 (Quick Spec) y Open VSX primero, porque amplían quién la prueba. Después 016 → 014 → 017 → 015: conectar es el primer bloqueo de un piloto enterprise, la política es lo primero que pide seguridad, y la auditoría se apoya en ambas.
+
+---
+
 ## Orden sugerido de PRs
 
 | # | PR | Fase | Tamaño |

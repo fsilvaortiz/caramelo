@@ -1,0 +1,8 @@
+{
+  "phases": {
+    "requirements": "pending-approval",
+    "design": "pending",
+    "tasks": "pending"
+  },
+  "description": "Add a Quick Spec mode for small changes (bug fixes, small features, refactors): one description produces a short spec, plan and task list in a single step with a single approval, then implement. The full Requirements → Design → Tasks flow stays for large features. Quick specs must remain Spec Kit compatible and be promotable to the full flow."
+}

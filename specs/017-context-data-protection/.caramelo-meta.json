@@ -1,0 +1,8 @@
+{
+  "phases": {
+    "requirements": "pending-approval",
+    "design": "pending",
+    "tasks": "pending"
+  },
+  "description": "Control what source code and data Caramelo sends to the LLM: an ignore file for paths that must never leave the machine, automatic redaction of secrets in prompts, and a preview of exactly what context will be sent."
+}

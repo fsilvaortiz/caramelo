@@ -1,0 +1,8 @@
+{
+  "phases": {
+    "requirements": "pending-approval",
+    "design": "pending",
+    "tasks": "pending"
+  },
+  "description": "Make Caramelo work out of the box with the LLM platforms enterprises actually approve — Azure OpenAI, AWS Bedrock, Google Vertex AI and corporate LLM gateways — and behind corporate networks (HTTP proxies, custom root certificates), with a connection test that explains failures."
+}

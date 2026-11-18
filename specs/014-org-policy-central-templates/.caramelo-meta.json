@@ -1,0 +1,8 @@
+{
+  "phases": {
+    "requirements": "pending-approval",
+    "design": "pending",
+    "tasks": "pending"
+  },
+  "description": "Let an organization govern how Caramelo is used from one place: a policy file in a Git repository (same mechanism as the central constitution) that sets allowed providers/endpoints/models, approval rules the user cannot weaken, required hooks, and company spec/plan/tasks templates."
+}

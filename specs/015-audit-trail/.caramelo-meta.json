@@ -1,0 +1,8 @@
+{
+  "phases": {
+    "requirements": "pending-approval",
+    "design": "pending",
+    "tasks": "pending"
+  },
+  "description": "Record an auditable trail of what Caramelo's AI did: every LLM request (provider, model, tokens, which spec/task), every tool call and every approval decision (asked/auto-approved and why, by whom). Store it locally as an append-only log, let users export it, and optionally forward it to a company endpoint."
+}
