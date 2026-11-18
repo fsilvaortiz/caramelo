@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [0.5.1] - 2026-11-18
+
+**Run the whole spec-driven flow without repeated questions.** Parallel `[P]` tasks no longer cancel each other, every question (shell commands, file writes, optional hooks) has an "always" answer, Run All Tasks reports one summary, and the Workflow Map no longer runs script from a spec folder name.
 
 ### Added
 
