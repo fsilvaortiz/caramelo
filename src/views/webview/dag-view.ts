@@ -3,10 +3,17 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { SPECS_DIR_NAME, PHASE_FILES } from '../../constants.js';
 import { isObject, safeJsonParse } from '../../utils/safe-json.js';
+import { randomBytes } from 'crypto';
 
 export class DagView {
   private panel: vscode.WebviewPanel | undefined;
   private panelDisposables: vscode.Disposable[] = [];
+  /**
+   * Phase files rendered in the current HTML, addressed by index. The
+   * webview only ever sends back an index, so it can open nothing but
+   * these files — never an arbitrary path.
+   */
+  private openable: string[] = [];
 
   constructor(private readonly workspaceUri: vscode.Uri | undefined) {}
 
@@ -32,8 +39,9 @@ export class DagView {
     });
     this.panelDisposables.push(
       this.panel.webview.onDidReceiveMessage((msg) => {
-        if (msg.command === 'openFile' && msg.path) {
-          vscode.commands.executeCommand('vscode.open', vscode.Uri.file(msg.path));
+        const filePath = resolveOpenRequest(msg, this.openable);
+        if (filePath) {
+          vscode.commands.executeCommand('vscode.open', vscode.Uri.file(filePath));
         }
       }),
     );
@@ -57,7 +65,9 @@ export class DagView {
   private refresh(): void {
     if (!this.panel) return;
     const data = this.gatherData();
-    this.panel.webview.html = this.getHtml(data);
+    const { html, openable } = buildDagHtml(data, randomBytes(16).toString('base64'));
+    this.openable = openable;
+    this.panel.webview.html = html;
   }
 
   private gatherData(): DagData {
@@ -111,58 +121,67 @@ export class DagView {
     }
     return data;
   }
+}
 
-  private getHtml(data: DagData): string {
-    const constitutionColor = data.hasConstitution ? '#4CAF50' : '#9E9E9E';
-    const constitutionLabel = data.hasConstitution ? '✓ Constitution' : '○ Constitution';
+/**
+ * Pure renderer. Every workspace-derived string (spec folder names) is
+ * escaped, phase nodes carry an index instead of a file path, and the
+ * page's CSP only runs the script carrying `nonce`.
+ */
+export function buildDagHtml(data: DagData, nonce: string): { html: string; openable: string[] } {
+  const openable: string[] = [];
+  const constitutionColor = data.hasConstitution ? '#4CAF50' : '#9E9E9E';
+  const constitutionLabel = data.hasConstitution ? '✓ Constitution' : '○ Constitution';
 
-    const specNodes = data.specs.map((spec, si) => {
-      const phaseNodes = spec.phases.map((p, pi) => {
-        const color = statusColor(p.status);
-        const icon = statusIcon(p.status);
-        const label = p.type.charAt(0).toUpperCase() + p.type.slice(1);
-        const x = 350 + pi * 180;
-        const y = 80 + si * 120;
-        return { x, y, color, icon, label, filePath: p.filePath, status: p.status };
-      });
+  const specNodes = data.specs.map((spec, si) => {
+    const phaseNodes = spec.phases.map((p, pi) => {
+      const color = statusColor(p.status);
+      const icon = statusIcon(p.status);
+      const label = p.type.charAt(0).toUpperCase() + p.type.slice(1);
+      const x = 350 + pi * 180;
+      const y = 80 + si * 120;
+      openable.push(p.filePath);
+      return { x, y, color, icon, label, index: openable.length - 1 };
+    });
 
-      const taskLabel = spec.tasksTotal > 0 ? ` (${spec.tasksDone}/${spec.tasksTotal})` : '';
+    const taskLabel = spec.tasksTotal > 0 ? ` (${spec.tasksDone}/${spec.tasksTotal})` : '';
 
-      return { name: spec.name, y: 80 + si * 120, phases: phaseNodes, taskLabel };
-    }).filter(Boolean);
+    return { name: spec.name, y: 80 + si * 120, phases: phaseNodes, taskLabel };
+  }).filter(Boolean);
 
-    const svgHeight = Math.max(200, 80 + data.specs.length * 120 + 40);
+  const svgHeight = Math.max(200, 80 + data.specs.length * 120 + 40);
 
-    const nodesSvg = specNodes.map((spec) => {
-      const featureX = 160;
-      const featureY = spec.y;
+  const nodesSvg = specNodes.map((spec) => {
+    const featureX = 160;
+    const featureY = spec.y;
 
-      let svg = `
-        <g class="node feature" transform="translate(${featureX},${featureY})">
-          <rect x="-70" y="-18" width="140" height="36" rx="6" fill="var(--vscode-editor-background)" stroke="var(--vscode-widget-border)" stroke-width="1.5"/>
-          <text text-anchor="middle" dy="5" fill="var(--vscode-foreground)" font-size="11" font-weight="600">${spec.name}${spec.taskLabel}</text>
+    let svg = `
+      <g class="node feature" transform="translate(${featureX},${featureY})">
+        <rect x="-70" y="-18" width="140" height="36" rx="6" fill="var(--vscode-editor-background)" stroke="var(--vscode-widget-border)" stroke-width="1.5"/>
+        <text text-anchor="middle" dy="5" fill="var(--vscode-foreground)" font-size="11" font-weight="600">${escapeHtml(spec.name)}${spec.taskLabel}</text>
+      </g>`;
+
+    // Edge from constitution to feature
+    svg += `<line x1="70" y1="50" x2="${featureX - 70}" y2="${featureY}" stroke="var(--vscode-widget-border)" stroke-width="1.5" stroke-dasharray="4"/>`;
+
+    // Phase nodes + edges
+    let prevX = featureX + 70;
+    for (const phase of spec.phases) {
+      svg += `<line x1="${prevX}" y1="${featureY}" x2="${phase.x - 55}" y2="${phase.y}" stroke="var(--vscode-widget-border)" stroke-width="1.5"/>`;
+      svg += `
+        <g class="node phase" data-index="${phase.index}" style="cursor:pointer">
+          <rect x="${phase.x - 55}" y="${phase.y - 18}" width="110" height="36" rx="6" fill="${phase.color}" opacity="0.15" stroke="${phase.color}" stroke-width="2"/>
+          <text x="${phase.x}" y="${phase.y + 1}" text-anchor="middle" dy="4" fill="${phase.color}" font-size="10" font-weight="600">${phase.icon} ${phase.label}</text>
         </g>`;
+      prevX = phase.x + 55;
+    }
 
-      // Edge from constitution to feature
-      svg += `<line x1="70" y1="50" x2="${featureX - 70}" y2="${featureY}" stroke="var(--vscode-widget-border)" stroke-width="1.5" stroke-dasharray="4"/>`;
+    return svg;
+  }).join('');
 
-      // Phase nodes + edges
-      let prevX = featureX + 70;
-      for (const phase of spec.phases) {
-        svg += `<line x1="${prevX}" y1="${featureY}" x2="${phase.x - 55}" y2="${phase.y}" stroke="var(--vscode-widget-border)" stroke-width="1.5"/>`;
-        svg += `
-          <g class="node phase" data-path="${phase.filePath}" onclick="openFile('${phase.filePath.replace(/'/g, "\\'")}')" style="cursor:pointer">
-            <rect x="${phase.x - 55}" y="${phase.y - 18}" width="110" height="36" rx="6" fill="${phase.color}" opacity="0.15" stroke="${phase.color}" stroke-width="2"/>
-            <text x="${phase.x}" y="${phase.y + 1}" text-anchor="middle" dy="4" fill="${phase.color}" font-size="10" font-weight="600">${phase.icon} ${phase.label}</text>
-          </g>`;
-        prevX = phase.x + 55;
-      }
-
-      return svg;
-    }).join('');
-
-    return `<!DOCTYPE html>
+  const html = `<!DOCTYPE html>
 <html><head>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
 <style>
   body { margin: 0; padding: 16px; background: var(--vscode-editor-background); color: var(--vscode-foreground); font-family: var(--vscode-font-family); overflow: auto; }
   h2 { margin: 0 0 16px; font-size: 1.2em; }
@@ -189,12 +208,27 @@ export class DagView {
   <div class="legend-item"><div class="legend-dot" style="background:#FF9800"></div> Generating</div>
   <div class="legend-item"><div class="legend-dot" style="background:#FFC107"></div> Stale</div>
 </div>
-<script>
+<script nonce="${nonce}">
   const vscode = acquireVsCodeApi();
-  function openFile(path) { vscode.postMessage({ command: 'openFile', path }); }
+  document.addEventListener('click', (event) => {
+    const node = event.target instanceof Element ? event.target.closest('[data-index]') : null;
+    if (node) vscode.postMessage({ command: 'openFile', index: Number(node.getAttribute('data-index')) });
+  });
 </script>
 </body></html>`;
-  }
+  return { html, openable };
+}
+
+/** Maps a webview message to a file the current render allowed, or undefined. */
+export function resolveOpenRequest(msg: unknown, openable: readonly string[]): string | undefined {
+  if (!isObject(msg) || msg.command !== 'openFile') return undefined;
+  const index = msg.index;
+  if (typeof index !== 'number' || !Number.isInteger(index)) return undefined;
+  return openable[index];
+}
+
+export function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 function statusColor(status: string): string {
@@ -217,7 +251,7 @@ function statusIcon(status: string): string {
   }
 }
 
-interface DagData {
+export interface DagData {
   hasConstitution: boolean;
   specs: Array<{
     name: string;

@@ -1,0 +1,8 @@
+{
+  "phases": {
+    "requirements": "pending-approval",
+    "design": "pending",
+    "tasks": "pending"
+  },
+  "description": "Split the monolithic sidebar webviews (providers-view ~1280 lines, workflow-view ~1150) and large command modules (edit-constitution ~840, start-task ~650) into testable state/render/asset pieces, register commands from a declarative table with a test that keeps it in sync with package.json, and update CONTRIBUTING.md to the real project structure. No user-visible behavior change."
+}

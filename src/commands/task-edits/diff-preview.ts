@@ -25,7 +25,7 @@ function ensureRegistered(context?: vscode.ExtensionContext): void {
   registered = true;
 }
 
-export type ConfirmChoice = 'apply-all' | 'apply-all-session' | 'file-by-file' | 'cancel';
+export type ConfirmChoice = 'apply-all' | 'apply-all-session' | 'apply-all-always' | 'file-by-file' | 'cancel';
 
 export interface PreviewOptions {
   context?: vscode.ExtensionContext;
@@ -47,6 +47,11 @@ export async function confirmApplyChoice(count: number, taskText?: string): Prom
         label: '$(check-all) Apply all — don\'t ask again this session',
         description: 'Auto-apply every subsequent task until you reload the window',
         value: 'apply-all-session' as const,
+      },
+      {
+        label: '$(workspace-trusted) Apply all — always allow in this workspace',
+        description: 'Sets caramelo.autoApplyEdits for this workspace',
+        value: 'apply-all-always' as const,
       },
       {
         label: '$(eye) Review file-by-file',

@@ -1,0 +1,8 @@
+{
+  "phases": {
+    "requirements": "pending-approval",
+    "design": "pending",
+    "tasks": "pending"
+  },
+  "description": "Measure unit-test coverage in CI, prevent it from dropping, and add tests for the non-trivial modules that currently have none (analyze, select-provider, create-spec-from-jira, run/approve phase, task-edits diff preview and prompt, codelens providers, specs workspace, templates, jira provider, openai-compatible provider)."
+}

@@ -33,7 +33,13 @@ export class OpenAICompatibleProvider implements LLMProvider {
   private apiKey: string | null = null;
   /** Latest apiKeyHelper output. */
   private helperToken: string | null = null;
-  private abortController: AbortController | null = null;
+  /**
+   * One controller per in-flight request. A provider instance is shared by
+   * every caller (parallel `[P]` tasks, phase generation, validation), so a
+   * new request must never cancel another one; callers cancel their own
+   * request through the `signal` they pass. `dispose()` aborts them all.
+   */
+  private readonly inFlight = new Set<AbortController>();
 
   constructor(
     config: {
@@ -100,9 +106,8 @@ export class OpenAICompatibleProvider implements LLMProvider {
   }
 
   async *chat(messages: LLMMessage[], options?: LLMOptions): AsyncIterable<string> {
-    this.abortController?.abort();
     const controller = new AbortController();
-    this.abortController = controller;
+    this.inFlight.add(controller);
     const signal = options?.signal
       ? anySignal(options.signal, controller.signal)
       : controller.signal;
@@ -115,7 +120,10 @@ export class OpenAICompatibleProvider implements LLMProvider {
       temperature: options?.temperature ?? 0.7,
     });
 
-    const res = await this.postCompletions(body, signal);
+    const res = await this.postCompletions(body, signal).catch((err: unknown) => {
+      this.inFlight.delete(controller);
+      throw err;
+    });
 
     const reader = res.body.getReader();
     try {
@@ -129,9 +137,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
         { timeoutMs: getSseTimeoutMs() },
       );
     } finally {
-      if (this.abortController === controller) {
-        this.abortController = null;
-      }
+      this.inFlight.delete(controller);
     }
   }
 
@@ -199,9 +205,8 @@ export class OpenAICompatibleProvider implements LLMProvider {
   }
 
   async *chatWithTools(req: ProviderToolCallRequest): AsyncIterable<AgentEvent> {
-    this.abortController?.abort();
     const controller = new AbortController();
-    this.abortController = controller;
+    this.inFlight.add(controller);
     const signal = req.signal
       ? anySignal(req.signal, controller.signal)
       : controller.signal;
@@ -215,7 +220,10 @@ export class OpenAICompatibleProvider implements LLMProvider {
     };
     if (req.temperature !== undefined) body.temperature = req.temperature;
 
-    const res = await this.postCompletions(JSON.stringify(body), signal);
+    const res = await this.postCompletions(JSON.stringify(body), signal).catch((err: unknown) => {
+      this.inFlight.delete(controller);
+      throw err;
+    });
 
     // Accumulate partial tool calls by delta `index`. First chunk for each
     // index carries id + function.name; subsequent chunks append to
@@ -343,15 +351,13 @@ export class OpenAICompatibleProvider implements LLMProvider {
       // after [DONE] without a finish_reason chunk.
       yield* flushToolCalls();
     } finally {
-      if (this.abortController === controller) {
-        this.abortController = null;
-      }
+      this.inFlight.delete(controller);
     }
   }
 
   dispose(): void {
-    this.abortController?.abort();
-    this.abortController = null;
+    for (const controller of this.inFlight) controller.abort();
+    this.inFlight.clear();
   }
 }
 

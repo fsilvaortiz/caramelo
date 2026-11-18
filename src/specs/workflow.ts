@@ -207,10 +207,7 @@ export class WorkflowEngine {
     showProgress(`Generating ${phaseType} (agent)…`, () => abortController.abort());
 
     const tools = buildDefaultToolSet({ enableBash: isBashToolEnabled() });
-    const approval = readOnlyAutoBatchedWritesPolicy({
-      isAutoApplyEnabled: () => false,
-      setSessionAutoApply: () => { /* phase gen is one-shot; don't persist */ },
-    });
+    const approval = readOnlyAutoBatchedWritesPolicy();
     // Silence unused-import warning: autoAllAllPolicy is retained as an
     // escape hatch for when we expose a "fast phase gen" setting.
     void autoAllAllPolicy;

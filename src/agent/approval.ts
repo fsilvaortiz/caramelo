@@ -5,6 +5,9 @@ import type {
   ApprovalPolicy,
   ToolCallApproval,
 } from './types.js';
+import { checkAutoApproval, suggestRule } from './bash-allowlist.js';
+import { getCarameloChannel } from '../utils/output-channel.js';
+import { redactString } from '../utils/log.js';
 
 /**
  * Allow everything without prompting. **Tests only** — install this in
@@ -32,8 +35,11 @@ export interface ApprovalHooks {
   /**
    * Per-call bash prompt. Bash is ALWAYS routed through this regardless
    * of which policy is in force — it's the only tool that can run
-   * arbitrary code, so the user MUST confirm every invocation. No code
-   * path may silently auto-execute bash, including auto-all mode.
+   * arbitrary code. The default hook skips the dialog only for what the
+   * user explicitly allowed (saved rules, "don't ask again this session",
+   * read-only commands inside the workspace) and logs every such call to
+   * the Output channel; nothing else runs without a prompt, including in
+   * auto-all mode.
    */
   confirmBash(
     call: ToolCallApproval,
@@ -44,22 +50,26 @@ export interface ApprovalHooks {
 /**
  * Default production policy:
  *  - reads (`readOnly=true`) auto-allowed
- *  - bash ALWAYS per-call, showing the literal command (hard-coded)
+ *  - bash ALWAYS goes through `confirmBash` (per-call prompt unless the
+ *    user allowed it — see `defaultConfirmBash`)
  *  - other writes batched into a single per-turn approval
  *
- * Honours `caramelo.autoApplyEdits` (treated as "allow all writes this
- * run" without a prompt) and a session-scoped override set by the
- * "don't ask again this session" QuickPick option. Auto-apply NEVER
- * upgrades bash approvals — bash always prompts.
+ * By default the write approval is the one shared by every agent run in
+ * the window (tasks, phase generation, hooks): `caramelo.autoApplyEdits`
+ * or the "don't ask again this session" choice — see
+ * `isWriteAutoApproved`. Tests can inject their own. Auto-apply NEVER
+ * upgrades bash approvals.
  */
 export function readOnlyAutoBatchedWritesPolicy(opts: {
-  isAutoApplyEnabled(): boolean;
-  setSessionAutoApply(v: boolean): void;
+  isAutoApplyEnabled?(): boolean;
+  setSessionAutoApply?(v: boolean): void;
   hooks?: Partial<ApprovalHooks>;
   /** Override to include non-bash tools in the always-prompt set. */
   alwaysPromptTools?: Set<string>;
-}): ApprovalPolicy {
-  const hooks = resolveHooks(opts.hooks, opts);
+} = {}): ApprovalPolicy {
+  const isAutoApplyEnabled = opts.isAutoApplyEnabled ?? isWriteAutoApproved;
+  const setSessionAutoApply = opts.setSessionAutoApply ?? setSessionWriteApproval;
+  const hooks = resolveHooks(opts.hooks, { setSessionAutoApply });
   const alwaysPrompt = opts.alwaysPromptTools ?? new Set(['bash']);
 
   return {
@@ -83,7 +93,7 @@ export function readOnlyAutoBatchedWritesPolicy(opts: {
 
       if (writes.length === 0) return out;
 
-      if (opts.isAutoApplyEnabled()) {
+      if (isAutoApplyEnabled()) {
         for (const w of writes) out[w.call.id] = 'allow';
         return out;
       }
@@ -170,8 +180,49 @@ function resolveHooks(
   };
 }
 
+// --- Shared write approval ---------------------------------------------
+
+export const AUTO_APPLY_SETTING = 'caramelo.autoApplyEdits';
+
+/**
+ * Set by "Don't ask again this session" on any write prompt (tasks, phase
+ * generation, hooks, legacy task review). Resets on reload; the
+ * persistent switch is `caramelo.autoApplyEdits`.
+ */
+let sessionAllowWrites = false;
+
+/** Whether agent/task writes may be applied without a prompt right now. */
+export function isWriteAutoApproved(): boolean {
+  return sessionAllowWrites ||
+    vscode.workspace.getConfiguration().get<boolean>(AUTO_APPLY_SETTING, false) === true;
+}
+
+export function setSessionWriteApproval(v: boolean): void {
+  sessionAllowWrites = v;
+}
+
+/** "Always allow in this workspace": sets `caramelo.autoApplyEdits` for the workspace. */
+export async function allowWritesInWorkspace(): Promise<void> {
+  const hasWorkspace = (vscode.workspace.workspaceFolders?.length ?? 0) > 0;
+  const target = hasWorkspace ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+  sessionAllowWrites = true;
+  try {
+    await vscode.workspace.getConfiguration().update(AUTO_APPLY_SETTING, true, target);
+    getCarameloChannel().appendLine(`↪ ${AUTO_APPLY_SETTING} enabled for this ${hasWorkspace ? 'workspace' : 'user'}: writes are applied without asking.`);
+  } catch (err) {
+    getCarameloChannel().appendLine(`✗ could not save ${AUTO_APPLY_SETTING}: ${String(err)} — allowed for this session only.`);
+  }
+}
+
+/** Test hook: forget every session-scoped approval (writes and bash). */
+export function resetSessionApprovals(): void {
+  sessionAllowWrites = false;
+  sessionAllowAllBash = false;
+}
+
 const APPLY_ALL = 'Apply all';
 const APPLY_ALL_SESSION = "Don't ask again this session";
+export const APPLY_ALWAYS = 'Always allow in this workspace';
 const CANCEL_RUN = 'Cancel run';
 
 function defaultConfirmWrites(opts: {
@@ -190,33 +241,112 @@ function defaultConfirmWrites(opts: {
         modal: true,
         detail:
           `${detail}\n\n` +
-          `Tip: set caramelo.autoApplyEdits=true to skip this prompt permanently.`,
+          `"${APPLY_ALWAYS}" sets ${AUTO_APPLY_SETTING} for this workspace. ` +
+          `Your work stays recoverable through the git safety stash.`,
       },
       APPLY_ALL,
       APPLY_ALL_SESSION,
+      APPLY_ALWAYS,
       CANCEL_RUN,
     );
     if (!choice || choice === CANCEL_RUN) {
       return Object.fromEntries(writes.map((w) => [w.call.id, 'abort'] as const));
     }
     if (choice === APPLY_ALL_SESSION) opts.setSessionAutoApply(true);
+    if (choice === APPLY_ALWAYS) await allowWritesInWorkspace();
     return Object.fromEntries(writes.map((w) => [w.call.id, 'allow'] as const));
   };
+}
+
+export const BASH_ALLOW_LIST_SETTING = 'caramelo.agent.bashAllowList';
+export const BASH_READ_ONLY_SETTING = 'caramelo.agent.autoApproveReadOnlyBash';
+const RUN_ONCE = 'Run';
+const RUN_SESSION = "Run — don't ask again this session";
+const SKIP = 'Skip';
+const ABORT_RUN = 'Abort run';
+
+/**
+ * Set by "Run — don't ask again this session": every later bash call in
+ * this VS Code window runs without a prompt. Resets on reload. Each
+ * auto-approved call is still logged to the Output channel.
+ */
+let sessionAllowAllBash = false;
+
+/** Test hook: forget the session-wide bash approval. */
+export function resetBashSessionApproval(): void {
+  sessionAllowAllBash = false;
+}
+
+function readAllowRules(): string[] {
+  const raw = vscode.workspace.getConfiguration().get<unknown>(BASH_ALLOW_LIST_SETTING);
+  return Array.isArray(raw) ? raw.filter((r): r is string => typeof r === 'string' && r.trim().length > 0) : [];
+}
+
+function isReadOnlyAutoApprovalEnabled(): boolean {
+  return vscode.workspace.getConfiguration().get<boolean>(BASH_READ_ONLY_SETTING, true) !== false;
+}
+
+/** Appends `rule` to the workspace allow-list (user settings when no folder is open). */
+async function saveAllowRule(rule: string): Promise<void> {
+  const config = vscode.workspace.getConfiguration();
+  const hasWorkspace = (vscode.workspace.workspaceFolders?.length ?? 0) > 0;
+  const target = hasWorkspace ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+  const inspected = config.inspect<string[]>(BASH_ALLOW_LIST_SETTING);
+  const current = (hasWorkspace ? inspected?.workspaceValue : inspected?.globalValue) ?? [];
+  if (current.includes(rule)) return;
+  try {
+    await config.update(BASH_ALLOW_LIST_SETTING, [...current, rule], target);
+    getCarameloChannel().appendLine(`↪ bash rule saved to ${BASH_ALLOW_LIST_SETTING}: "${redactString(rule)}"`);
+  } catch (err) {
+    getCarameloChannel().appendLine(`✗ could not save bash rule "${redactString(rule)}": ${String(err)}`);
+  }
+}
+
+function logAutoApproved(cmd: string, reason: string): void {
+  getCarameloChannel().appendLine(`↪ bash auto-approved (${reason}): $ ${redactString(truncate(cmd, 200))}`);
 }
 
 function defaultConfirmBash(): ApprovalHooks['confirmBash'] {
   return async (c) => {
     const cmd = String(c.call.arguments.command ?? '(missing)');
+
+    if (sessionAllowAllBash) {
+      logAutoApproved(cmd, 'allowed for this session');
+      return 'allow';
+    }
+    const auto = checkAutoApproval(cmd, {
+      rules: readAllowRules(),
+      allowReadOnly: isReadOnlyAutoApprovalEnabled(),
+    });
+    if (auto.approved) {
+      logAutoApproved(cmd, auto.reason);
+      return 'allow';
+    }
+
+    const rule = suggestRule(cmd);
+    const alwaysAllow = rule ? `Always allow "${truncate(rule, 40)}"` : undefined;
     const cwd = c.call.arguments.cwd ? `  cwd: ${String(c.call.arguments.cwd)}` : '';
+    const buttons = [RUN_ONCE, ...(alwaysAllow ? [alwaysAllow] : []), RUN_SESSION, SKIP, ABORT_RUN];
     const choice = await vscode.window.showWarningMessage(
       `Caramelo agent wants to run:\n\n$ ${truncate(cmd, 300)}${cwd}`,
-      { modal: true },
-      'Run',
-      'Skip',
-      'Abort run',
+      {
+        modal: true,
+        detail: rule
+          ? `"Always allow" saves "${rule}" to this workspace's ${BASH_ALLOW_LIST_SETTING} setting; commands starting with it will run without asking.`
+          : undefined,
+      },
+      ...buttons,
     );
-    if (choice === 'Run') return 'allow';
-    if (choice === 'Skip') return 'deny';
+    if (choice === RUN_ONCE) return 'allow';
+    if (alwaysAllow && choice === alwaysAllow && rule) {
+      await saveAllowRule(rule);
+      return 'allow';
+    }
+    if (choice === RUN_SESSION) {
+      sessionAllowAllBash = true;
+      return 'allow';
+    }
+    if (choice === SKIP) return 'deny';
     return 'abort';
   };
 }

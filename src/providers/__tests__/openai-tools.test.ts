@@ -508,3 +508,34 @@ describe('OpenAICompatibleProvider.capabilities', () => {
     expect(noAuth.capabilities().has('tool-calling')).toBe(true);
   });
 });
+
+describe('OpenAICompatibleProvider concurrent requests', () => {
+  it('lets parallel chat and chatWithTools requests run without cancelling each other', async () => {
+    const signals: AbortSignal[] = [];
+    globalThis.fetch = vi.fn().mockImplementation((_url, init) => {
+      signals.push((init as RequestInit).signal as AbortSignal);
+      return Promise.resolve({
+        ok: true,
+        body: new ReadableStream<Uint8Array>({ start() { /* stays open */ } }),
+      } as unknown as Response);
+    });
+
+    const p = provider();
+    await p.authenticate();
+
+    const first = new AbortController();
+    void (async () => { const it = p.chat([{ role: 'user', content: '1' }], { signal: first.signal })[Symbol.asyncIterator](); while (!(await it.next()).done) { /* drain */ } })().catch(() => {});
+    void collect(p.chatWithTools({ messages: [{ role: 'user', content: '2' }], tools: [readTool] })).catch(() => {});
+    await new Promise((r) => setImmediate(r));
+
+    expect(signals).toHaveLength(2);
+    expect(signals.every((s) => !s.aborted)).toBe(true);
+
+    first.abort();
+    expect(signals[0].aborted).toBe(true);
+    expect(signals[1].aborted).toBe(false);
+
+    p.dispose();
+    expect(signals[1].aborted).toBe(true);
+  });
+});

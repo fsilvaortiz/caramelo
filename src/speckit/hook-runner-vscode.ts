@@ -30,6 +30,34 @@ export function hooksEnabled(): boolean {
   return vscode.workspace.getConfiguration().get<boolean>('caramelo.hooks.run', true);
 }
 
+export const HOOKS_ALWAYS_RUN_SETTING = 'caramelo.hooks.alwaysRun';
+
+/** Key an optional hook is remembered by: `<event>:<command>` (its list index can shift). */
+export function hookKey(hook: Pick<HookEntry, 'event' | 'command'>): string {
+  return `${hook.event}:${hook.command}`;
+}
+
+function alwaysRunKeys(): string[] {
+  const raw = vscode.workspace.getConfiguration().get<unknown>(HOOKS_ALWAYS_RUN_SETTING);
+  return Array.isArray(raw) ? raw.filter((k): k is string => typeof k === 'string') : [];
+}
+
+async function rememberAlwaysRun(hook: HookEntry): Promise<void> {
+  const config = vscode.workspace.getConfiguration();
+  const hasWorkspace = (vscode.workspace.workspaceFolders?.length ?? 0) > 0;
+  const target = hasWorkspace ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+  const inspected = config.inspect<string[]>(HOOKS_ALWAYS_RUN_SETTING);
+  const current = (hasWorkspace ? inspected?.workspaceValue : inspected?.globalValue) ?? [];
+  const key = hookKey(hook);
+  if (current.includes(key)) return;
+  try {
+    await config.update(HOOKS_ALWAYS_RUN_SETTING, [...current, key], target);
+    getCarameloChannel().appendLine(`↪ optional hook ${label(hook)} will run without asking (${HOOKS_ALWAYS_RUN_SETTING}).`);
+  } catch (err) {
+    getCarameloChannel().appendLine(`✗ could not save ${HOOKS_ALWAYS_RUN_SETTING}: ${String(err)}`);
+  }
+}
+
 function label(hook: HookEntry): string {
   return `/${hook.command}${hook.extension ? ` (${hook.extension})` : ''}`;
 }
@@ -58,13 +86,19 @@ export function createVsCodeHookDeps(registry: ProviderRegistry): HookRunnerDeps
     },
 
     async confirmOptional(hook, event) {
+      if (alwaysRunKeys().includes(hookKey(hook))) {
+        getCarameloChannel().appendLine(`↪ optional hook ${label(hook)} auto-approved (${HOOKS_ALWAYS_RUN_SETTING}).`);
+        return true;
+      }
       const detail = [hook.prompt, hook.description].filter(Boolean).join('\n\n');
       const choice = await vscode.window.showInformationMessage(
         `Run optional Spec Kit hook ${label(hook)}? (${event})`,
         { modal: true, detail: detail || undefined },
         'Run',
+        'Always run',
       );
-      return choice === 'Run';
+      if (choice === 'Always run') await rememberAlwaysRun(hook);
+      return choice === 'Run' || choice === 'Always run';
     },
 
     async execute(hook, prompt, ctx, event) {
@@ -101,10 +135,7 @@ export function createVsCodeHookDeps(registry: ProviderRegistry): HookRunnerDeps
             system: SYSTEM_PROMPT,
             messages: [{ role: 'user', content: prompt }],
             tools: buildDefaultToolSet({ enableBash }),
-            approval: readOnlyAutoBatchedWritesPolicy({
-              isAutoApplyEnabled: () => false,
-              setSessionAutoApply: () => { /* per-hook approvals are not persisted */ },
-            }),
+            approval: readOnlyAutoBatchedWritesPolicy(),
             workspaceRoot: ctx.workspaceRoot,
             signal: abort.signal,
             onEvent: pipeToOutputChannel(channel),

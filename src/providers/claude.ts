@@ -33,7 +33,13 @@ export class ClaudeProvider implements LLMProvider {
   private apiKey: string | null = null;
   /** Latest apiKeyHelper output. */
   private helperToken: string | null = null;
-  private abortController: AbortController | null = null;
+  /**
+   * One controller per in-flight request. A provider instance is shared by
+   * every caller (parallel `[P]` tasks, phase generation, validation), so a
+   * new request must never cancel another one; callers cancel their own
+   * request through the `signal` they pass. `dispose()` aborts them all.
+   */
+  private readonly inFlight = new Set<AbortController>();
 
   constructor(
     config: {
@@ -100,10 +106,8 @@ export class ClaudeProvider implements LLMProvider {
   async *chat(messages: LLMMessage[], options?: LLMOptions): AsyncIterable<string> {
     if (!this.apiKey && !this.keyHelper) throw new AuthError(`${this.displayName}: Not authenticated`);
 
-    // Abort any previous in-flight request before starting a new one.
-    this.abortController?.abort();
     const controller = new AbortController();
-    this.abortController = controller;
+    this.inFlight.add(controller);
     const signal = options?.signal
       ? anySignal(options.signal, controller.signal)
       : controller.signal;
@@ -120,7 +124,10 @@ export class ClaudeProvider implements LLMProvider {
     if (systemMessage) body.system = systemMessage.content;
     if (options?.temperature !== undefined) body.temperature = options.temperature;
 
-    const res = await this.postMessages(body, signal);
+    const res = await this.postMessages(body, signal).catch((err: unknown) => {
+      this.inFlight.delete(controller);
+      throw err;
+    });
 
     const reader = res.body.getReader();
     try {
@@ -137,9 +144,7 @@ export class ClaudeProvider implements LLMProvider {
         { timeoutMs: getSseTimeoutMs() },
       );
     } finally {
-      if (this.abortController === controller) {
-        this.abortController = null;
-      }
+      this.inFlight.delete(controller);
     }
   }
 
@@ -221,9 +226,8 @@ export class ClaudeProvider implements LLMProvider {
   async *chatWithTools(req: ProviderToolCallRequest): AsyncIterable<AgentEvent> {
     if (!this.apiKey && !this.keyHelper) throw new AuthError(`${this.displayName}: Not authenticated`);
 
-    this.abortController?.abort();
     const controller = new AbortController();
-    this.abortController = controller;
+    this.inFlight.add(controller);
     const signal = req.signal
       ? anySignal(req.signal, controller.signal)
       : controller.signal;
@@ -241,7 +245,10 @@ export class ClaudeProvider implements LLMProvider {
     if (req.system) body.system = req.system;
     if (req.temperature !== undefined) body.temperature = req.temperature;
 
-    const res = await this.postMessages(body, signal);
+    const res = await this.postMessages(body, signal).catch((err: unknown) => {
+      this.inFlight.delete(controller);
+      throw err;
+    });
 
     const reader = res.body.getReader();
     try {
@@ -340,15 +347,13 @@ export class ClaudeProvider implements LLMProvider {
         }
       }
     } finally {
-      if (this.abortController === controller) {
-        this.abortController = null;
-      }
+      this.inFlight.delete(controller);
     }
   }
 
   dispose(): void {
-    this.abortController?.abort();
-    this.abortController = null;
+    for (const controller of this.inFlight) controller.abort();
+    this.inFlight.clear();
   }
 }
 

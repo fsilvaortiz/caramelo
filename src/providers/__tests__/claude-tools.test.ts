@@ -340,7 +340,7 @@ describe('ClaudeProvider.chatWithTools', () => {
     expect(events.some((e) => e.kind === 'tool_call')).toBe(false);
   });
 
-  it('aborts the in-flight request when a second chatWithTools call starts', async () => {
+  it('does not abort an in-flight request when a second chatWithTools call starts (parallel [P] tasks)', async () => {
     // First call: never finishes (stream stays open).
     const firstStream = new ReadableStream<Uint8Array>({ start() { /* never enqueue */ } });
     const secondStream = streamOf([
@@ -369,10 +369,43 @@ describe('ClaudeProvider.chatWithTools', () => {
     // Let the fetch fire.
     await new Promise((r) => setImmediate(r));
 
-    // Second call — the provider aborts the first in-flight.
+    // Second call runs concurrently and must leave the first one alone.
     await collect(
       provider.chatWithTools({ messages: [{ role: 'user', content: '2' }], tools: [readTool] }),
     );
+    expect(firstSignal?.aborted).toBe(false);
+
+    // dispose() still cancels everything that is in flight.
+    provider.dispose();
     expect(firstSignal?.aborted).toBe(true);
+  });
+
+  it('aborts only the request whose caller signal fires', async () => {
+    const signals: AbortSignal[] = [];
+    globalThis.fetch = vi.fn().mockImplementation((_url, init) => {
+      signals.push((init as RequestInit).signal as AbortSignal);
+      return Promise.resolve({
+        ok: true,
+        body: new ReadableStream<Uint8Array>({ start() { /* stays open */ } }),
+      } as unknown as Response);
+    });
+
+    const provider = new ClaudeProvider(
+      { id: 'c', name: 'Claude', endpoint: 'https://api.anthropic.com', model: 'x', apiKeyId: 'k' },
+      secrets,
+    );
+    await provider.authenticate();
+
+    const a = new AbortController();
+    const b = new AbortController();
+    void collect(provider.chatWithTools({ messages: [{ role: 'user', content: 'a' }], tools: [readTool], signal: a.signal })).catch(() => {});
+    void collect(provider.chatWithTools({ messages: [{ role: 'user', content: 'b' }], tools: [readTool], signal: b.signal })).catch(() => {});
+    await new Promise((r) => setImmediate(r));
+
+    a.abort();
+    expect(signals).toHaveLength(2);
+    expect(signals[0].aborted).toBe(true);
+    expect(signals[1].aborted).toBe(false);
+    provider.dispose();
   });
 });
